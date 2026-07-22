@@ -88,8 +88,15 @@ export interface InvokeResult<TResult = unknown> {
  * LLM configuration
  */
 export interface LLMConfig {
-	baseURL: string
-	model: string
+	/**
+	 * Base URL for OpenAI-compatible endpoints.
+	 * Required when using the built-in OpenAI client (default).
+	 */
+	baseURL?: string
+	/**
+	 * Model identifier. Required for all built-in clients.
+	 */
+	model?: string
 	apiKey?: string
 
 	/**
@@ -122,6 +129,55 @@ export interface LLMConfig {
 	 * The response should follow OpenAI API format.
 	 */
 	customFetch?: typeof globalThis.fetch
+
+	/**
+	 * Inject a custom LLM client. When provided, the LLM class will use it
+	 * instead of the built-in OpenAI or Yiming client.
+	 */
+	client?: LLMClient
+
+	/**
+	 * Built-in provider selection.
+	 * @default 'openai'
+	 */
+	provider?: 'openai' | 'yiming'
+
+	/**
+	 * Yiming AI specific: agent host, e.g. "api.example.com".
+	 * Required when provider is 'yiming'.
+	 */
+	endpointAgent?: string
+
+	/**
+	 * Yiming AI specific: application ID.
+	 */
+	appId?: string
+
+	/**
+	 * Yiming AI specific: transaction code.
+	 */
+	trCode?: string
+
+	/**
+	 * Yiming AI specific: transaction version.
+	 */
+	trVersion?: string
+
+	/**
+	 * Yiming AI specific: tool calling mode, either 'api' or 'system_prompt'.
+	 */
+	toolCallingMode?: 'api' | 'system_prompt'
 }
 
-export type ResolvedLLMConfig = Required<Omit<LLMConfig, 'temperature'>> & { temperature?: number }
+export interface ResolvedLLMConfig {
+	baseURL: string
+	model: string
+	apiKey: string
+	temperature?: number
+	maxRetries: number
+	transformRequestBody: (
+		requestBody: Record<string, unknown>
+	) => Record<string, unknown> | undefined
+	disableNamedToolChoice: boolean
+	customFetch: typeof globalThis.fetch
+}

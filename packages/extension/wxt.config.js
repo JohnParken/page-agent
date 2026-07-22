@@ -11,6 +11,12 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 export default defineConfig({
 	srcDir: 'src',
 	modules: ['@wxt-dev/module-react'],
+	dev: {
+		server: {
+			port: 3000,
+			strictPort: true,
+		},
+	},
 	webExt: {
 		chromiumProfile: chromeProfile,
 		keepProfileChanges: true,
@@ -18,6 +24,10 @@ export default defineConfig({
 	},
 	vite: () => ({
 		plugins: [tailwindcss()],
+		server: {
+			port: 5173,
+			strictPort: true,
+		},
 		define: {
 			__VERSION__: JSON.stringify(pkg.version),
 		},

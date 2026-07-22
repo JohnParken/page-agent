@@ -27,9 +27,17 @@ interface ConfigPanelProps {
 }
 
 export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
+	const [provider, setProvider] = useState<'openai' | 'yiming'>(config?.provider || 'openai')
 	const [baseURL, setBaseURL] = useState(config?.baseURL || DEMO_BASE_URL)
 	const [model, setModel] = useState(config?.model || DEMO_MODEL)
 	const [apiKey, setApiKey] = useState(config?.apiKey)
+	const [endpointAgent, setEndpointAgent] = useState(config?.endpointAgent)
+	const [appId, setAppId] = useState(config?.appId)
+	const [trCode, setTrCode] = useState(config?.trCode)
+	const [trVersion, setTrVersion] = useState(config?.trVersion)
+	const [toolCallingMode, setToolCallingMode] = useState<'api' | 'system_prompt'>(
+		config?.toolCallingMode || 'api'
+	)
 	const [language, setLanguage] = useState<LanguagePreference>(config?.language)
 	const [maxSteps, setMaxSteps] = useState(config?.maxSteps)
 	const [systemInstruction, setSystemInstruction] = useState(config?.systemInstruction ?? '')
@@ -52,9 +60,15 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 	const [prevConfig, setPrevConfig] = useState(config)
 	if (prevConfig !== config) {
 		setPrevConfig(config)
+		setProvider(config?.provider || 'openai')
 		setBaseURL(config?.baseURL || DEMO_BASE_URL)
 		setModel(config?.model || DEMO_MODEL)
 		setApiKey(config?.apiKey)
+		setEndpointAgent(config?.endpointAgent)
+		setAppId(config?.appId)
+		setTrCode(config?.trCode)
+		setTrVersion(config?.trVersion)
+		setToolCallingMode(config?.toolCallingMode || 'api')
 		setLanguage(config?.language)
 		setMaxSteps(config?.maxSteps)
 		setSystemInstruction(config?.systemInstruction ?? '')
@@ -99,9 +113,15 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 		setSaving(true)
 		try {
 			await onSave({
+				provider,
 				apiKey,
 				baseURL,
 				model,
+				endpointAgent,
+				appId,
+				trCode,
+				trVersion,
+				toolCallingMode,
 				language,
 				maxSteps: maxSteps || undefined,
 				systemInstruction: systemInstruction || undefined,
@@ -189,71 +209,174 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 			</a>
 
 			<div className="flex flex-col gap-1.5">
-				<label htmlFor="base-url" className="text-xs text-muted-foreground">
-					Base URL
+				<label htmlFor="provider" className="text-xs text-muted-foreground">
+					Provider
 				</label>
-				<Input
-					id="base-url"
-					placeholder="https://api.openai.com/v1"
-					value={baseURL}
-					onChange={(e) => setBaseURL(e.target.value)}
-					className="text-xs h-8"
-				/>
+				<select
+					id="provider"
+					value={provider}
+					onChange={(e) => setProvider(e.target.value as 'openai' | 'yiming')}
+					className="h-8 text-xs rounded-md border border-input bg-background px-2 cursor-pointer"
+				>
+					<option value="openai">OpenAI Compatible</option>
+					<option value="yiming">Yiming AI</option>
+				</select>
 			</div>
 
-			{/* Testing API notice */}
-			{isTestingEndpoint(baseURL) && (
-				<div className="p-2.5 rounded-md border border-amber-500/30 bg-amber-500/5 text-[11px] text-muted-foreground leading-relaxed">
-					<Scale className="size-3 inline-block mr-1 -mt-0.5 text-amber-600" />
-					You are using our testing API. By using this you agree to the{' '}
-					<a
-						href="https://github.com/alibaba/page-agent/blob/main/docs/terms-and-privacy.md"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="underline hover:text-foreground"
-					>
-						Terms of Use & Privacy Policy
-					</a>
-				</div>
+			{provider === 'openai' && (
+				<>
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="base-url" className="text-xs text-muted-foreground">
+							Base URL
+						</label>
+						<Input
+							id="base-url"
+							placeholder="https://api.openai.com/v1"
+							value={baseURL}
+							onChange={(e) => setBaseURL(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
+
+					{/* Testing API notice */}
+					{isTestingEndpoint(baseURL) && (
+						<div className="p-2.5 rounded-md border border-amber-500/30 bg-amber-500/5 text-[11px] text-muted-foreground leading-relaxed">
+							<Scale className="size-3 inline-block mr-1 -mt-0.5 text-amber-600" />
+							You are using our testing API. By using this you agree to the{' '}
+							<a
+								href="https://github.com/alibaba/page-agent/blob/main/docs/terms-and-privacy.md"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="underline hover:text-foreground"
+							>
+								Terms of Use & Privacy Policy
+							</a>
+						</div>
+					)}
+
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="model" className="text-xs text-muted-foreground">
+							Model
+						</label>
+						<Input
+							id="model"
+							placeholder="gpt-5.1"
+							value={model}
+							onChange={(e) => setModel(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
+
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="api-key" className="text-xs text-muted-foreground">
+							API Key
+						</label>
+						<div className="flex gap-2 items-center">
+							<Input
+								id="api-key"
+								type={showApiKey ? 'text' : 'password'}
+								// placeholder="sk-..."
+								value={apiKey}
+								onChange={(e) => setApiKey(e.target.value)}
+								className="text-xs h-8"
+							/>
+							<Button
+								variant="outline"
+								size="icon"
+								className="h-8 w-8 shrink-0 cursor-pointer"
+								onClick={() => setShowApiKey(!showApiKey)}
+								aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
+							>
+								{showApiKey ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+							</Button>
+						</div>
+					</div>
+				</>
 			)}
 
-			<div className="flex flex-col gap-1.5">
-				<label htmlFor="model" className="text-xs text-muted-foreground">
-					Model
-				</label>
-				<Input
-					id="model"
-					placeholder="gpt-5.1"
-					value={model}
-					onChange={(e) => setModel(e.target.value)}
-					className="text-xs h-8"
-				/>
-			</div>
+			{provider === 'yiming' && (
+				<>
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="endpoint-agent" className="text-xs text-muted-foreground">
+							Endpoint Agent
+						</label>
+						<Input
+							id="endpoint-agent"
+							placeholder="api.example.com"
+							value={endpointAgent}
+							onChange={(e) => setEndpointAgent(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
 
-			<div className="flex flex-col gap-1.5">
-				<label htmlFor="api-key" className="text-xs text-muted-foreground">
-					API Key
-				</label>
-				<div className="flex gap-2 items-center">
-					<Input
-						id="api-key"
-						type={showApiKey ? 'text' : 'password'}
-						// placeholder="sk-..."
-						value={apiKey}
-						onChange={(e) => setApiKey(e.target.value)}
-						className="text-xs h-8"
-					/>
-					<Button
-						variant="outline"
-						size="icon"
-						className="h-8 w-8 shrink-0 cursor-pointer"
-						onClick={() => setShowApiKey(!showApiKey)}
-						aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
-					>
-						{showApiKey ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-					</Button>
-				</div>
-			</div>
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="model" className="text-xs text-muted-foreground">
+							Model
+						</label>
+						<Input
+							id="model"
+							placeholder="your-model-name"
+							value={model}
+							onChange={(e) => setModel(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
+
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="tool-calling-mode" className="text-xs text-muted-foreground">
+							Tool Calling Mode
+						</label>
+						<select
+							id="tool-calling-mode"
+							value={toolCallingMode}
+							onChange={(e) => setToolCallingMode(e.target.value as 'api' | 'system_prompt')}
+							className="h-8 text-xs rounded-md border border-input bg-background px-2 cursor-pointer"
+						>
+							<option value="api">API Mode</option>
+							<option value="system_prompt">System Prompt Mode</option>
+						</select>
+					</div>
+
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="app-id" className="text-xs text-muted-foreground">
+							App ID (Optional)
+						</label>
+						<Input
+							id="app-id"
+							placeholder="your-app-id"
+							value={appId}
+							onChange={(e) => setAppId(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
+
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="tr-code" className="text-xs text-muted-foreground">
+							Tr Code (Optional)
+						</label>
+						<Input
+							id="tr-code"
+							placeholder="your-tr-code"
+							value={trCode}
+							onChange={(e) => setTrCode(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
+
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="tr-version" className="text-xs text-muted-foreground">
+							Tr Version (Optional)
+						</label>
+						<Input
+							id="tr-version"
+							placeholder="your-tr-version"
+							value={trVersion}
+							onChange={(e) => setTrVersion(e.target.value)}
+							className="text-xs h-8"
+						/>
+					</div>
+				</>
+			)}
 
 			<div className="flex flex-col gap-1.5">
 				<label className="text-xs text-muted-foreground">Response Language</label>

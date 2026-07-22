@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { InvokeError, InvokeErrorTypes, LLM } from './index'
+import { InvokeError, InvokeErrorTypes, LLM, YimingAiClient } from './index'
 import type { LLMClient } from './types'
 
 function makeLLM(maxRetries = 2): LLM {
@@ -110,5 +110,53 @@ describe('LLM.invoke retry behavior', () => {
 
 		await expect(llm.invoke([], {}, signal)).resolves.toBe('ok')
 		expect(client.invoke).toHaveBeenCalledTimes(2)
+	})
+})
+
+describe('LLM client selection', () => {
+	it('uses OpenAIClient by default', () => {
+		const llm = new LLM({
+			baseURL: 'http://test.local/v1',
+			model: 'gpt-5',
+		})
+		expect(llm.client.constructor.name).toBe('OpenAIClient')
+	})
+
+	it('uses YimingAiClient when provider is yiming', () => {
+		const llm = new LLM({
+			provider: 'yiming',
+			endpointAgent: 'api.example.com',
+			model: 'my-model',
+		})
+		expect(llm.client).toBeInstanceOf(YimingAiClient)
+	})
+
+	it('uses custom client when provided', () => {
+		const customClient: LLMClient = {
+			invoke: vi.fn(),
+		}
+		const llm = new LLM({
+			model: 'gpt-5',
+			client: customClient,
+		})
+		expect(llm.client).toBe(customClient)
+	})
+
+	it('throws when baseURL is missing without custom client or yiming provider', () => {
+		expect(() => new LLM({ model: 'gpt-5' })).toThrow('baseURL')
+	})
+
+	it('throws when model is missing', () => {
+		expect(() => new LLM({ baseURL: 'http://test.local/v1' })).toThrow('model')
+	})
+
+	it('throws when yiming provider is missing endpointAgent', () => {
+		expect(
+			() =>
+				new LLM({
+					provider: 'yiming',
+					model: 'my-model',
+				})
+		).toThrow('endpointAgent')
 	})
 })

@@ -22,6 +22,7 @@ export function isTestingEndpoint(url: string): boolean {
 }
 
 export function migrateLegacyEndpoint(config: LLMConfig): LLMConfig {
+	if (!config.baseURL) return config
 	const normalized = config.baseURL.replace(/\/+$/, '')
 	if (LEGACY_TESTING_ENDPOINTS.some((ep) => normalized === ep)) {
 		return { ...DEMO_CONFIG }

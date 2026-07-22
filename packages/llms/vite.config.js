@@ -14,7 +14,7 @@ export default defineConfig({
 	plugins: [
 		dts({
 			include: ['src/**/*.ts'],
-			exclude: ['src/**/*.test.ts'],
+			exclude: ['src/**/*.test.ts', 'src/dev-tools/**/*'],
 			bundleTypes: true,
 			compilerOptions: {
 				composite: true,
