@@ -27,7 +27,7 @@ interface ConfigPanelProps {
 }
 
 export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
-	const [provider, setProvider] = useState<'openai' | 'yiming'>(config?.provider || 'openai')
+	const [provider, setProvider] = useState<'openai' | 'tl'>(config?.provider || 'openai')
 	const [baseURL, setBaseURL] = useState(config?.baseURL || DEMO_BASE_URL)
 	const [model, setModel] = useState(config?.model || DEMO_MODEL)
 	const [apiKey, setApiKey] = useState(config?.apiKey)
@@ -215,11 +215,11 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 				<select
 					id="provider"
 					value={provider}
-					onChange={(e) => setProvider(e.target.value as 'openai' | 'yiming')}
+					onChange={(e) => setProvider(e.target.value as 'openai' | 'tl')}
 					className="h-8 text-xs rounded-md border border-input bg-background px-2 cursor-pointer"
 				>
 					<option value="openai">OpenAI Compatible</option>
-					<option value="yiming">Yiming AI</option>
+					<option value="tl">Tl AI</option>
 				</select>
 			</div>
 
@@ -294,7 +294,7 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 				</>
 			)}
 
-			{provider === 'yiming' && (
+			{provider === 'tl' && (
 				<>
 					<div className="flex flex-col gap-1.5">
 						<label htmlFor="endpoint-agent" className="text-xs text-muted-foreground">

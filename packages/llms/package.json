@@ -47,8 +47,8 @@
         "test:live": "vitest run --project llms:live",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js",
-        "start:ym-proxy": "tsx src/dev-tools/YmProxyServer.ts",
-        "test:ym-proxy": "tsx src/dev-tools/test-ym-proxy.ts"
+        "start:tl-proxy": "tsx src/dev-tools/TlProxyServer.ts",
+        "test:tl-proxy": "tsx src/dev-tools/test-tl-proxy.ts"
     },
     "dependencies": {
         "chalk": "^5.6.2"

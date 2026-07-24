@@ -1,6 +1,6 @@
 import { OpenAIClient } from './OpenAIClient'
-import { YimingAiClient } from './YmClient'
-import type { YimingAiConfig } from './YmClient'
+import { TlAiClient } from './TlClient'
+import type { TlAiConfig } from './TlClient'
 import { InvokeError, InvokeErrorTypes } from './errors'
 import type {
 	InvokeOptions,
@@ -12,8 +12,8 @@ import type {
 	Tool,
 } from './types'
 
-export { InvokeError, InvokeErrorTypes, OpenAIClient, YimingAiClient }
-export type { InvokeOptions, InvokeResult, LLMClient, LLMConfig, Message, Tool, YimingAiConfig }
+export { InvokeError, InvokeErrorTypes, OpenAIClient, TlAiClient }
+export type { InvokeOptions, InvokeResult, LLMClient, LLMConfig, Message, Tool, TlAiConfig }
 
 /**
  * LLM module
@@ -28,8 +28,8 @@ export class LLM extends EventTarget {
 
 		if (config.client) {
 			this.client = config.client
-		} else if (config.provider === 'yiming') {
-			this.client = new YimingAiClient({
+		} else if (config.provider === 'tl') {
+			this.client = new TlAiClient({
 				endpointAgent: config.endpointAgent!,
 				model: config.model!,
 				appId: config.appId,
@@ -111,7 +111,7 @@ async function withRetry<T>(
 
 export function parseLLMConfig(config: LLMConfig): ResolvedLLMConfig {
 	// Runtime validation as defensive programming (types already guarantee these)
-	const usesCustomClient = config.client || config.provider === 'yiming'
+	const usesCustomClient = config.client || config.provider === 'tl'
 	if (!config.model) {
 		throw new Error(
 			'[PageAgent] LLM configuration required. Please provide: model. ' +
@@ -120,13 +120,13 @@ export function parseLLMConfig(config: LLMConfig): ResolvedLLMConfig {
 	}
 	if (!config.baseURL && !usesCustomClient) {
 		throw new Error(
-			'[PageAgent] LLM configuration required. Please provide: baseURL, or set provider to "yiming", or pass a custom client. ' +
+			'[PageAgent] LLM configuration required. Please provide: baseURL, or set provider to "tl", or pass a custom client. ' +
 				'See: https://alibaba.github.io/page-agent/docs/features/models'
 		)
 	}
-	if (config.provider === 'yiming' && !config.endpointAgent) {
+	if (config.provider === 'tl' && !config.endpointAgent) {
 		throw new Error(
-			'[PageAgent] Yiming AI configuration required. Please provide: endpointAgent. ' +
+			'[PageAgent] Tl AI configuration required. Please provide: endpointAgent. ' +
 				'See: https://alibaba.github.io/page-agent/docs/features/models'
 		)
 	}

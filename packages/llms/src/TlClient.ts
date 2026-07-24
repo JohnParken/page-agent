@@ -1,22 +1,22 @@
 /**
- * Yiming AI Client
- * Supports session initialization and streaming chat for the chatabc API.
+ * Tl AI Client
+ * Supports session initialization and streaming chat for the chatbbc API.
  */
-import * as z from 'zod/v4'
+import * as z from 'zod'
 
 import { InvokeError, InvokeErrorTypes } from './errors'
 import type { InvokeOptions, InvokeResult, LLMClient, Message, Tool } from './types'
 
 /**
- * Tool calling mode for Yiming AI.
+ * Tool calling mode for Tl AI.
  */
 export type ToolCallingMode = 'api' | 'system_prompt'
 
 /**
- * Configuration for Yiming AI (chatabc) endpoint.
+ * Configuration for Tl AI (chatbbc) endpoint.
  */
-export interface YimingAiConfig {
-	/** Agent host, e.g. "api.example.com". The client calls http://${endpointAgent}/chatabc/... */
+export interface TlAiConfig {
+	/** Agent host, e.g. "api.example.com". The client calls http://${endpointAgent}/chatbbc/... */
 	endpointAgent: string
 	/** Model / prompt name used during session initialization. */
 	model: string
@@ -55,18 +55,18 @@ interface ChatRequest {
 }
 
 /**
- * Client for Yiming AI chatabc API.
+ * Client for Tl AI chatbbc API.
  */
-export class YimingAiClient implements LLMClient {
-	config: Required<Omit<YimingAiConfig, 'customFetch'>> & Pick<YimingAiConfig, 'customFetch'>
+export class TlAiClient implements LLMClient {
+	config: Required<Omit<TlAiConfig, 'customFetch'>> & Pick<TlAiConfig, 'customFetch'>
 	private fetch: typeof globalThis.fetch
 	private sessionId: string | null = null
 
-	constructor(config: YimingAiConfig) {
+	constructor(config: TlAiConfig) {
 		if (!config.endpointAgent || !config.model) {
 			throw new InvokeError(
 				InvokeErrorTypes.CONFIG_ERROR,
-				'YimingAiClient requires endpointAgent and model'
+				'TlAiClient requires endpointAgent and model'
 			)
 		}
 
@@ -86,7 +86,7 @@ export class YimingAiClient implements LLMClient {
 	 * Initialize a session via the init_session endpoint.
 	 */
 	async initSession(): Promise<string> {
-		const url = `http://${this.config.endpointAgent}/chatabc/init_session`
+		const url = `http://${this.config.endpointAgent}/chatbbc/init_session`
 
 		const requestBody: InitSessionRequest = {
 			appId: this.config.appId,
@@ -332,7 +332,7 @@ export class YimingAiClient implements LLMClient {
 		}
 
 		// 3. Call chat endpoint.
-		const url = `http://${this.config.endpointAgent}/chatabc/chat`
+		const url = `http://${this.config.endpointAgent}/chatbbc/chat`
 
 		let response: Response
 		try {

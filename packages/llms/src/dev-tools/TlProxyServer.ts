@@ -1,6 +1,6 @@
 import http from 'http'
 
-import type { Message } from './types'
+import type { Message } from '../types'
 
 interface ProxyConfig {
 	port: number
@@ -44,7 +44,7 @@ class SessionStore {
 	}
 }
 
-export class YmProxyServer {
+export class TlProxyServer {
 	private config: ProxyConfig
 	private server: http.Server
 	private sessionStore: SessionStore
@@ -69,9 +69,9 @@ export class YmProxyServer {
 			}
 
 			try {
-				if (req.url?.includes('/chatabc/init_session')) {
+				if (req.url?.includes('/chatbbc/init_session')) {
 					await this.handleInitSession(req, res)
-				} else if (req.url?.includes('/chatabc/chat')) {
+				} else if (req.url?.includes('/chatbbc/chat')) {
 					await this.handleChat(req, res)
 				} else {
 					res.writeHead(404)
@@ -92,7 +92,7 @@ export class YmProxyServer {
 		const body = await this.getRequestBody<InitSessionRequest>(req)
 
 		console.log('\n' + '='.repeat(80))
-		console.log('[YmProxy] 📥 INIT_SESSION Request')
+		console.log('[TlProxy] 📥 INIT_SESSION Request')
 		console.log('='.repeat(80))
 		console.log('Request Body:', JSON.stringify(body, null, 2))
 
@@ -105,7 +105,7 @@ export class YmProxyServer {
 			},
 		}
 
-		console.log('\n[YmProxy] 📤 INIT_SESSION Response')
+		console.log('\n[TlProxy] 📤 INIT_SESSION Response')
 		console.log('Response Body:', JSON.stringify(responseData, null, 2))
 		console.log('='.repeat(80) + '\n')
 
@@ -118,7 +118,7 @@ export class YmProxyServer {
 		const { session_id, txt, stream } = body.data
 
 		console.log('\n' + '='.repeat(80))
-		console.log('[YmProxy] 📥 CHAT Request')
+		console.log('[TlProxy] 📥 CHAT Request')
 		console.log('='.repeat(80))
 		console.log('Session ID:', session_id)
 		console.log('Stream:', stream)
@@ -128,12 +128,13 @@ export class YmProxyServer {
 		// Parse the chat text to extract messages
 		const messages = this.parseChatText(txt)
 
-		console.log('\n[YmProxy] Parsed Messages:')
+		console.log('\n[TlProxy] Parsed Messages:')
 		messages.forEach((msg, idx) => {
+			const content = msg.content ?? ''
 			console.log(`  [${idx}] role: ${msg.role}`)
-			console.log(`      content length: ${msg.content.length}`)
+			console.log(`      content length: ${content.length}`)
 			console.log(
-				`      content preview: ${msg.content.substring(0, 100)}${msg.content.length > 100 ? '...' : ''}`
+				`      content preview: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`
 			)
 		})
 
@@ -152,7 +153,7 @@ export class YmProxyServer {
 				messages,
 			}
 
-			console.log('\n[YmProxy] 📤 Sending to Qwen API:')
+			console.log('\n[TlProxy] 📤 Sending to Qwen API:')
 			console.log('  URL:', `${this.config.qwenBaseUrl}/chat/completions`)
 			console.log('  Model:', this.config.qwenModel)
 			console.log('  Messages count:', messages.length)
@@ -164,7 +165,7 @@ export class YmProxyServer {
 				body: JSON.stringify(requestBody),
 			})
 
-			console.log('\n[YmProxy] 📥 Qwen API Response:')
+			console.log('\n[TlProxy] 📥 Qwen API Response:')
 			console.log('  Status:', apiResponse.status, apiResponse.statusText)
 
 			if (!apiResponse.ok) {
@@ -177,7 +178,7 @@ export class YmProxyServer {
 			console.log('  Response Body:', JSON.stringify(apiData, null, 2).substring(0, 500) + '...')
 
 			if (stream) {
-				// Streaming response - YmClient expects a plain text stream
+				// Streaming response - TlClient expects a plain text stream
 				res.writeHead(200, { 'Content-Type': 'text/plain' })
 
 				let responseContent = ''
@@ -192,7 +193,7 @@ export class YmProxyServer {
 					})
 				}
 
-				console.log('\n[YmProxy] 📤 Streaming Response to Client:')
+				console.log('\n[TlProxy] 📤 Streaming Response to Client:')
 				console.log('  Content Length:', responseContent.length)
 				console.log('  Content Preview:', responseContent.substring(0, 200) + '...')
 				console.log('='.repeat(80) + '\n')
@@ -220,7 +221,7 @@ export class YmProxyServer {
 					},
 				}
 
-				console.log('\n[YmProxy] 📤 Non-streaming Response to Client:')
+				console.log('\n[TlProxy] 📤 Non-streaming Response to Client:')
 				console.log(
 					'  Response Body:',
 					JSON.stringify(responseData, null, 2).substring(0, 300) + '...'
@@ -231,7 +232,7 @@ export class YmProxyServer {
 				res.end(JSON.stringify(responseData))
 			}
 		} catch (error) {
-			console.error('\n[YmProxy] ❌ Error calling qwen API:')
+			console.error('\n[TlProxy] ❌ Error calling qwen API:')
 			console.error('  Error:', error)
 			console.log('='.repeat(80) + '\n')
 			res.writeHead(500)
@@ -279,14 +280,14 @@ export class YmProxyServer {
 	start(): void {
 		this.server.listen(this.config.port, () => {
 			console.log('='.repeat(60))
-			console.log('🚀 YmProxyServer 已启动!')
+			console.log('🚀 TlProxyServer 已启动!')
 			console.log('='.repeat(60))
 			console.log(`📍 代理地址: http://localhost:${this.config.port}`)
 			console.log(`🔗 转发到 qwen API: ${this.config.qwenBaseUrl}`)
 			console.log(`🤖 使用模型: ${this.config.qwenModel}`)
 			console.log('')
 			console.log('📝 使用方法:')
-			console.log('  在 YimingAiClient 配置中设置:')
+			console.log('  在 TlAiClient 配置中设置:')
 			console.log('  {')
 			console.log(`    endpointAgent: "localhost:${this.config.port}",`)
 			console.log('    model: "your-model-name",')
@@ -300,7 +301,7 @@ export class YmProxyServer {
 
 	stop(): void {
 		this.server.close(() => {
-			console.log('\n[YmProxy] Server stopped')
+			console.log('\n[TlProxy] Server stopped')
 		})
 	}
 }
@@ -315,7 +316,7 @@ if (import.meta.url.endsWith(process.argv[1])) {
 	const qwenBaseUrl = process.env.QWEN_BASE_URL || DEFAULT_QWEN_BASE_URL
 	const qwenModel = process.env.QWEN_MODEL || DEFAULT_QWEN_MODEL
 
-	const proxy = new YmProxyServer({ port, qwenBaseUrl, qwenModel })
+	const proxy = new TlProxyServer({ port, qwenBaseUrl, qwenModel })
 	proxy.start()
 
 	// Handle shutdown

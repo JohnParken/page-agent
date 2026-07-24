@@ -9,7 +9,7 @@ const SYSTEM_PROMPT = fs.readFileSync(
 
 async function testInitSession() {
 	console.log('📥 Testing init_session...')
-	const response = await fetch('http://localhost:3001/chatabc/init_session', {
+	const response = await fetch('http://localhost:3001/chatbbc/init_session', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -31,7 +31,7 @@ async function testInitSession() {
 
 async function testChat(sessionId) {
 	console.log('\n📥 Testing chat...')
-	const response = await fetch('http://localhost:3001/chatabc/chat', {
+	const response = await fetch('http://localhost:3001/chatbbc/chat', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({

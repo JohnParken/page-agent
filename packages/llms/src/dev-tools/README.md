@@ -4,22 +4,22 @@
 
 ## 📁 包含内容
 
-- **YmProxyServer.ts** - Yiming AI 代理服务器，用于测试 YmClient
-- **test-ym-proxy.ts** - 代理服务器的简单测试脚本
-- **YmProxy_README.md** - 代理服务器的详细使用文档
+- **TlProxyServer.ts** - Tl AI 代理服务器，用于测试 TlClient
+- **test-tl-proxy.ts** - 代理服务器的简单测试脚本
+- **TlProxy_README.md** - 代理服务器的详细使用文档
 
 ## 🚀 使用方法
 
-### 启动 YmProxyServer
+### 启动 TlProxyServer
 
 ```bash
-npm run start:ym-proxy
+npm run start:tl-proxy
 ```
 
 ### 测试代理
 
 ```bash
-npm run test:ym-proxy
+npm run test:tl-proxy
 ```
 
 ## 📝 注意事项

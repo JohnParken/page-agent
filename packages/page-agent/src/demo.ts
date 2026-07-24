@@ -29,7 +29,7 @@ if (autoInit) {
 
 		if (currentScriptURL) {
 			const url = currentScriptURL
-			const provider = (url.searchParams.get('provider') as 'openai' | 'yiming') || 'openai'
+			const provider = (url.searchParams.get('provider') as 'openai' | 'tl') || 'openai'
 			const model = url.searchParams.get('model') || DEMO_MODEL
 			const baseURL = url.searchParams.get('baseURL') || DEMO_BASE_URL
 			const apiKey = url.searchParams.get('apiKey') || DEMO_API_KEY
@@ -56,7 +56,7 @@ if (autoInit) {
 		} else {
 			console.log('🚀 page-agent.js no current script detected, using default demo config')
 			config = {
-				provider: (import.meta.env.LLM_PROVIDER as 'openai' | 'yiming') || 'openai',
+				provider: (import.meta.env.LLM_PROVIDER as 'openai' | 'tl') || 'openai',
 				model: import.meta.env.LLM_MODEL_NAME ? import.meta.env.LLM_MODEL_NAME : DEMO_MODEL,
 				baseURL: import.meta.env.LLM_BASE_URL ? import.meta.env.LLM_BASE_URL : DEMO_BASE_URL,
 				apiKey: import.meta.env.LLM_API_KEY ? import.meta.env.LLM_API_KEY : DEMO_API_KEY,

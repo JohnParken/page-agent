@@ -132,7 +132,7 @@ export interface LLMConfig {
 
 	/**
 	 * Inject a custom LLM client. When provided, the LLM class will use it
-	 * instead of the built-in OpenAI or Yiming client.
+	 * instead of the built-in OpenAI or Tl client.
 	 */
 	client?: LLMClient
 
@@ -140,31 +140,31 @@ export interface LLMConfig {
 	 * Built-in provider selection.
 	 * @default 'openai'
 	 */
-	provider?: 'openai' | 'yiming'
+	provider?: 'openai' | 'tl'
 
 	/**
-	 * Yiming AI specific: agent host, e.g. "api.example.com".
-	 * Required when provider is 'yiming'.
+	 * Tl AI specific: agent host, e.g. "api.example.com".
+	 * Required when provider is 'tl'.
 	 */
 	endpointAgent?: string
 
 	/**
-	 * Yiming AI specific: application ID.
+	 * Tl AI specific: application ID.
 	 */
 	appId?: string
 
 	/**
-	 * Yiming AI specific: transaction code.
+	 * Tl AI specific: transaction code.
 	 */
 	trCode?: string
 
 	/**
-	 * Yiming AI specific: transaction version.
+	 * Tl AI specific: transaction version.
 	 */
 	trVersion?: string
 
 	/**
-	 * Yiming AI specific: tool calling mode, either 'api' or 'system_prompt'.
+	 * Tl AI specific: tool calling mode, either 'api' or 'system_prompt'.
 	 */
 	toolCallingMode?: 'api' | 'system_prompt'
 }

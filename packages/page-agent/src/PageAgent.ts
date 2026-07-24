@@ -7,8 +7,8 @@ import { PageController, type PageControllerConfig } from '@page-agent/page-cont
 import { Panel, type PanelConfig } from '@page-agent/ui'
 
 export * from '@page-agent/core'
-export { YimingAiClient } from '@page-agent/llms'
-export type { YimingAiConfig } from '@page-agent/llms'
+export { TlAiClient } from '@page-agent/llms'
+export type { TlAiConfig } from '@page-agent/llms'
 
 export type PageAgentConfig = AgentConfig & PageControllerConfig & Omit<PanelConfig, 'language'>
 

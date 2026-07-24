@@ -1,18 +1,18 @@
-import { YimingAiClient } from './YmClient'
-import { YmProxyServer } from './YmProxyServer'
+import { TlAiClient } from '../TlClient'
+import { TlProxyServer } from './TlProxyServer'
 
 // Configuration
 const PROXY_PORT = 8089
 const QWEN_BASE_URL = 'https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run'
 const QWEN_MODEL = 'qwen3.5-plus'
 
-async function testYmClientWithProxy() {
+async function testTlClientWithProxy() {
 	console.log('='.repeat(60))
-	console.log('Starting YmProxyServer...')
+	console.log('Starting TlProxyServer...')
 	console.log('='.repeat(60))
 
 	// Start the proxy server
-	const proxy = new YmProxyServer({
+	const proxy = new TlProxyServer({
 		port: PROXY_PORT,
 		qwenBaseUrl: QWEN_BASE_URL,
 		qwenModel: QWEN_MODEL,
@@ -23,12 +23,12 @@ async function testYmClientWithProxy() {
 	await new Promise((resolve) => setTimeout(resolve, 1000))
 
 	console.log('\n' + '='.repeat(60))
-	console.log('Testing YimingAiClient with proxy...')
+	console.log('Testing TlAiClient with proxy...')
 	console.log('='.repeat(60))
 
-	// Test YimingAiClient with the proxy
+	// Test TlAiClient with the proxy
 	try {
-		const client = new YimingAiClient({
+		const client = new TlAiClient({
 			endpointAgent: `localhost:${PROXY_PORT}`, // Use http protocol in client
 			model: 'test-model',
 			appId: 'test-app',
@@ -36,16 +36,16 @@ async function testYmClientWithProxy() {
 			trVersion: '1.0',
 		})
 
-		console.log('✓ YimingAiClient created successfully')
+		console.log('✓ TlAiClient created successfully')
 		console.log('  - endpointAgent:', `localhost:${PROXY_PORT}`)
 
 		console.log('\nTesting complete!')
 		console.log('You can now use:')
 		console.log('  - endpointAgent: "localhost:8089"')
-		console.log('  - in your YimingAiClient configuration')
+		console.log('  - in your TlAiClient configuration')
 		console.log('\nPress Ctrl+C to stop the proxy server')
 	} catch (error) {
-		console.error('Error testing YimingAiClient:', error)
+		console.error('Error testing TlAiClient:', error)
 		proxy.stop()
 		process.exit(1)
 	}
@@ -53,5 +53,5 @@ async function testYmClientWithProxy() {
 
 // Only run if this file is executed directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-	testYmClientWithProxy()
+	testTlClientWithProxy()
 }

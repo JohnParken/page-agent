@@ -1,14 +1,14 @@
 /**
- * 简单测试脚本，验证 YmProxyServer 是否正常工作
- * 直接测试代理的 HTTP 端点，不依赖完整的 YmClient
+ * 简单测试脚本，验证 TlProxyServer 是否正常工作
+ * 直接测试代理的 HTTP 端点，不依赖完整的 TlClient
  */
 
 const PROXY_URL = 'http://localhost:8089'
 
 async function testInitSession() {
-	console.log('📡 Testing /chatabc/init_session...')
+	console.log('📡 Testing /chatbbc/init_session...')
 
-	const response = await fetch(`${PROXY_URL}/chatabc/init_session`, {
+	const response = await fetch(`${PROXY_URL}/chatbbc/init_session`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -39,9 +39,9 @@ async function testInitSession() {
 }
 
 async function testChat(sessionId: string) {
-	console.log('\n📡 Testing /chatabc/chat...')
+	console.log('\n📡 Testing /chatbbc/chat...')
 
-	const response = await fetch(`${PROXY_URL}/chatabc/chat`, {
+	const response = await fetch(`${PROXY_URL}/chatbbc/chat`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -70,7 +70,7 @@ async function testChat(sessionId: string) {
 
 async function main() {
 	console.log('='.repeat(60))
-	console.log('🧪 Testing YmProxyServer')
+	console.log('🧪 Testing TlProxyServer')
 	console.log('='.repeat(60))
 
 	try {
@@ -83,12 +83,12 @@ async function main() {
 		console.log('\n' + '='.repeat(60))
 		console.log('🎉 All tests passed!')
 		console.log('='.repeat(60))
-		console.log('\nYmProxyServer is working correctly!')
-		console.log('You can now use it with YimingAiClient.')
+		console.log('\nTlProxyServer is working correctly!')
+		console.log('You can now use it with TlAiClient.')
 	} catch (error) {
 		console.error('\n❌ Test failed:', error)
 		console.log('\nMake sure the proxy server is running:')
-		console.log('  tsx src/YmProxyServer.ts')
+		console.log('  tsx src/TlProxyServer.ts')
 		process.exit(1)
 	}
 }
