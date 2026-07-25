@@ -1,6 +1,7 @@
 import http from 'http'
 
 import type { Message } from '../types'
+import { FileLogger, type LogLevel } from './logger'
 
 interface ProxyConfig {
 	port: number
@@ -48,11 +49,22 @@ export class TlProxyServer {
 	private config: ProxyConfig
 	private server: http.Server
 	private sessionStore: SessionStore
+	private logger: FileLogger
 
 	constructor(config: ProxyConfig) {
 		this.config = config
 		this.sessionStore = new SessionStore()
+		this.logger = new FileLogger({
+			module: 'TlProxy',
+			level: (process.env.TL_PROXY_LOG_LEVEL as LogLevel) || 'info',
+			echoToConsole: process.env.TL_PROXY_LOG_SILENT !== '1',
+		})
 		this.server = this.createServer()
+	}
+
+	/** Expose the logger for ad-hoc inspection/tests. */
+	getLogger(): FileLogger {
+		return this.logger
 	}
 
 	private createServer(): http.Server {
@@ -74,11 +86,12 @@ export class TlProxyServer {
 				} else if (req.url?.includes('/chatbbc/chat')) {
 					await this.handleChat(req, res)
 				} else {
+					this.logger.warn('Unhandled request', req.method, req.url)
 					res.writeHead(404)
 					res.end(JSON.stringify({ error: 'Not found' }))
 				}
 			} catch (error) {
-				console.error('Proxy error:', error)
+				this.logger.error('Proxy error', error)
 				res.writeHead(500)
 				res.end(JSON.stringify({ error: 'Internal server error' }))
 			}
@@ -91,10 +104,8 @@ export class TlProxyServer {
 	): Promise<void> {
 		const body = await this.getRequestBody<InitSessionRequest>(req)
 
-		console.log('\n' + '='.repeat(80))
-		console.log('[TlProxy] 📥 INIT_SESSION Request')
-		console.log('='.repeat(80))
-		console.log('Request Body:', JSON.stringify(body, null, 2))
+		this.logger.info('📥 INIT_SESSION Request')
+		this.logger.debug('INIT_SESSION request body', JSON.stringify(body))
 
 		const sessionId = this.sessionStore.createSession()
 		const responseData = {
@@ -105,9 +116,7 @@ export class TlProxyServer {
 			},
 		}
 
-		console.log('\n[TlProxy] 📤 INIT_SESSION Response')
-		console.log('Response Body:', JSON.stringify(responseData, null, 2))
-		console.log('='.repeat(80) + '\n')
+		this.logger.info('📤 INIT_SESSION Response', sessionId)
 
 		res.writeHead(200)
 		res.end(JSON.stringify(responseData))
@@ -117,25 +126,27 @@ export class TlProxyServer {
 		const body = await this.getRequestBody<ChatRequest>(req)
 		const { session_id, txt, stream } = body.data
 
-		console.log('\n' + '='.repeat(80))
-		console.log('[TlProxy] 📥 CHAT Request')
-		console.log('='.repeat(80))
-		console.log('Session ID:', session_id)
-		console.log('Stream:', stream)
-		console.log('Request Text Length:', txt.length)
-		console.log('Request Text Preview:', txt.substring(0, 200) + (txt.length > 200 ? '...' : ''))
+		this.logger.info('📥 CHAT Request', {
+			sessionId: session_id,
+			stream,
+			textLength: txt.length,
+			text: txt,
+		})
 
 		// Parse the chat text to extract messages
 		const messages = this.parseChatText(txt)
 
-		console.log('\n[TlProxy] Parsed Messages:')
-		messages.forEach((msg, idx) => {
-			const content = msg.content ?? ''
-			console.log(`  [${idx}] role: ${msg.role}`)
-			console.log(`      content length: ${content.length}`)
-			console.log(
-				`      content preview: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`
-			)
+		this.logger.debug('Parsed messages', {
+			count: messages.length,
+			messages: messages.map((msg, idx) => {
+				const content = msg.content ?? ''
+				return {
+					idx,
+					role: msg.role,
+					contentLength: content.length,
+					content: content,
+				}
+			}),
 		})
 
 		try {
@@ -153,11 +164,12 @@ export class TlProxyServer {
 				messages,
 			}
 
-			console.log('\n[TlProxy] 📤 Sending to Qwen API:')
-			console.log('  URL:', `${this.config.qwenBaseUrl}/chat/completions`)
-			console.log('  Model:', this.config.qwenModel)
-			console.log('  Messages count:', messages.length)
-			console.log('  Request Body:', JSON.stringify(requestBody, null, 2).substring(0, 500) + '...')
+			this.logger.info('📤 Sending to Qwen API', {
+				url: `${this.config.qwenBaseUrl}/chat/completions`,
+				model: this.config.qwenModel,
+				messagesCount: messages.length,
+			})
+			this.logger.debug('Qwen request body', JSON.stringify(requestBody))
 
 			const apiResponse = await fetch(`${this.config.qwenBaseUrl}/chat/completions`, {
 				method: 'POST',
@@ -165,17 +177,19 @@ export class TlProxyServer {
 				body: JSON.stringify(requestBody),
 			})
 
-			console.log('\n[TlProxy] 📥 Qwen API Response:')
-			console.log('  Status:', apiResponse.status, apiResponse.statusText)
+			this.logger.info('📥 Qwen API Response', {
+				status: apiResponse.status,
+				statusText: apiResponse.statusText,
+			})
 
 			if (!apiResponse.ok) {
 				const errorText = await apiResponse.text()
-				console.error('  Error Body:', errorText)
+				this.logger.error('Qwen API error body', errorText)
 				throw new Error(`API request failed: ${apiResponse.statusText}`)
 			}
 
 			const apiData = await apiResponse.json()
-			console.log('  Response Body:', JSON.stringify(apiData, null, 2).substring(0, 500) + '...')
+			this.logger.debug('Qwen response body', JSON.stringify(apiData))
 
 			if (stream) {
 				// Streaming response - TlClient expects a plain text stream
@@ -193,10 +207,10 @@ export class TlProxyServer {
 					})
 				}
 
-				console.log('\n[TlProxy] 📤 Streaming Response to Client:')
-				console.log('  Content Length:', responseContent.length)
-				console.log('  Content Preview:', responseContent.substring(0, 200) + '...')
-				console.log('='.repeat(80) + '\n')
+				this.logger.info('📤 Streaming Response to Client', {
+					contentLength: responseContent.length,
+					content: responseContent,
+				})
 
 				res.write(responseContent)
 				res.end()
@@ -221,20 +235,15 @@ export class TlProxyServer {
 					},
 				}
 
-				console.log('\n[TlProxy] 📤 Non-streaming Response to Client:')
-				console.log(
-					'  Response Body:',
-					JSON.stringify(responseData, null, 2).substring(0, 300) + '...'
-				)
-				console.log('='.repeat(80) + '\n')
+				this.logger.info('📤 Non-streaming Response to Client', {
+					body: responseData,
+				})
 
 				res.writeHead(200)
 				res.end(JSON.stringify(responseData))
 			}
 		} catch (error) {
-			console.error('\n[TlProxy] ❌ Error calling qwen API:')
-			console.error('  Error:', error)
-			console.log('='.repeat(80) + '\n')
+			this.logger.error('❌ Error calling qwen API', error)
 			res.writeHead(500)
 			res.end(JSON.stringify({ error: 'Failed to call qwen API' }))
 		}
@@ -279,29 +288,34 @@ export class TlProxyServer {
 
 	start(): void {
 		this.server.listen(this.config.port, () => {
-			console.log('='.repeat(60))
-			console.log('🚀 TlProxyServer 已启动!')
-			console.log('='.repeat(60))
-			console.log(`📍 代理地址: http://localhost:${this.config.port}`)
-			console.log(`🔗 转发到 qwen API: ${this.config.qwenBaseUrl}`)
-			console.log(`🤖 使用模型: ${this.config.qwenModel}`)
-			console.log('')
-			console.log('📝 使用方法:')
-			console.log('  在 TlAiClient 配置中设置:')
-			console.log('  {')
-			console.log(`    endpointAgent: "localhost:${this.config.port}",`)
-			console.log('    model: "your-model-name",')
-			console.log('    ...')
-			console.log('  }')
-			console.log('')
-			console.log('⏹️  按 Ctrl+C 停止服务器')
-			console.log('='.repeat(60))
+			const banner = [
+				''.padEnd(60, '='),
+				'🚀 TlProxyServer 已启动!',
+				''.padEnd(60, '='),
+				`📍 代理地址: http://localhost:${this.config.port}`,
+				`🔗 转发到 qwen API: ${this.config.qwenBaseUrl}`,
+				`🤖 使用模型: ${this.config.qwenModel}`,
+				`📝 日志目录: ${this.logger.logDir}`,
+				'',
+				'📝 使用方法:',
+				'  在 TlAiClient 配置中设置:',
+				'  {',
+				`    endpointAgent: "localhost:${this.config.port}",`,
+				'    model: "your-model-name",',
+				'    ...',
+				'  }',
+				'',
+				'⏹️  按 Ctrl+C 停止服务器',
+				''.padEnd(60, '='),
+			].join('\n')
+			this.logger.info(banner)
 		})
 	}
 
 	stop(): void {
-		this.server.close(() => {
-			console.log('\n[TlProxy] Server stopped')
+		this.server.close(async () => {
+			this.logger.info('Server stopped')
+			await this.logger.close()
 		})
 	}
 }
@@ -319,14 +333,13 @@ if (import.meta.url.endsWith(process.argv[1])) {
 	const proxy = new TlProxyServer({ port, qwenBaseUrl, qwenModel })
 	proxy.start()
 
-	// Handle shutdown
-	process.on('SIGINT', () => {
+	// Handle shutdown — give the logger a chance to flush its buffer.
+	const shutdown = async () => {
 		proxy.stop()
+		await proxy.getLogger().close()
 		process.exit(0)
-	})
+	}
 
-	process.on('SIGTERM', () => {
-		proxy.stop()
-		process.exit(0)
-	})
+	process.on('SIGINT', shutdown)
+	process.on('SIGTERM', shutdown)
 }
