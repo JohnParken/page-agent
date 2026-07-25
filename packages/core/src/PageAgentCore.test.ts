@@ -310,6 +310,56 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 		})
 	})
 
+	describe('system_prompt tool injection', () => {
+		it('injects the <tools> block even when a customSystemPrompt is used', async () => {
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
+				)
+				.mockResolvedValueOnce(doneResponse('all done'))
+
+			const agent = createAgent(fetchMock, {
+				provider: 'tl',
+				endpointAgent: 'localhost:8089',
+				toolCallingMode: 'system_prompt',
+				customSystemPrompt: 'custom system prompt',
+			})
+
+			await agent.execute('do something')
+
+			expect(fetchMock).toHaveBeenCalledTimes(2)
+
+			const chatCall = fetchMock.mock.calls[1]
+			const chatUrl = chatCall[0] as string
+			const chatBody = JSON.parse(chatCall[1]!.body as string) as { data: { txt: string } }
+			const chatText = chatBody.data.txt
+
+			expect(chatUrl).toContain('/chatbbc/chat')
+			expect(chatText).toContain('custom system prompt')
+			expect(chatText).toContain('<tools>')
+			expect(chatText).toContain('</tools>')
+			expect(chatText).toContain('"type": "function"')
+		})
+
+		it('does not inject the <tools> block for non-system_prompt modes with a customSystemPrompt', async () => {
+			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
+
+			const agent = createAgent(fetchMock, {
+				customSystemPrompt: 'custom system prompt',
+			})
+
+			await agent.execute('do something')
+
+			const requestBody = JSON.parse((fetchMock.mock.calls[0][1]!.body as string) ?? '{}') as {
+				messages: { role: string; content: string }[]
+			}
+			const systemContent = requestBody.messages.find((m) => m.role === 'system')?.content ?? ''
+
+			expect(systemContent).toContain('custom system prompt')
+			expect(systemContent).not.toContain('<tools>')
+		})
+	})
+
 	describe('cancellation edge cases', () => {
 		it('rejects a new task while a stop is still settling', async () => {
 			const fetchMock = createFetchMock().mockResolvedValueOnce(waitResponse())

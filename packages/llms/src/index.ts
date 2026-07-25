@@ -143,7 +143,7 @@ export function parseLLMConfig(config: LLMConfig): ResolvedLLMConfig {
 		model: config.model || '',
 		apiKey: config.apiKey || '',
 		temperature: config.temperature,
-		maxRetries: config.maxRetries ?? 2,
+		maxRetries: config.maxRetries ?? 0,
 		transformRequestBody: config.transformRequestBody ?? ((requestBody) => requestBody),
 		disableNamedToolChoice: config.disableNamedToolChoice ?? false,
 		customFetch: (config.customFetch ?? fetch).bind(globalThis), // fetch will be illegal unless bound

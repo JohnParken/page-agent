@@ -9,6 +9,7 @@ import chalk from 'chalk'
 import * as z from 'zod/v4'
 
 import SYSTEM_PROMPT from './prompts/system_prompt.md?raw'
+import SYSTEM_PROMPT_TOOLS from './prompts/system_prompt_tools.md?raw'
 import { tools } from './tools'
 import type {
 	AgentActivity,
@@ -470,20 +471,64 @@ export class PageAgentCore extends EventTarget {
 	}
 
 	/**
-	 * Get system prompt, dynamically replace language settings based on configured language
+	 * Get system prompt, dynamically replace language settings based on configured language.
+	 *
+	 * In `system_prompt` tool-calling mode, tool definitions are injected dynamically
+	 * as a `<tools>` block (JSON Schema) generated from the live `this.tools` map,
+	 * so that any runtime tool additions/removals (customTools, execute_javascript
+	 * toggle, ask_user toggle, etc.) are reflected accurately.
+	 *
+	 * In other modes, only the macro-tool output-format documentation is appended;
+	 * the actual tool schemas are delivered to the LLM via the native function-calling API.
 	 */
 	#getSystemPrompt(): string {
+		let prompt: string
+
 		if (this.config.customSystemPrompt) {
-			return this.config.customSystemPrompt
+			prompt = this.config.customSystemPrompt
+		} else {
+			const targetLanguage = this.config.language === 'zh-CN' ? '中文' : 'English'
+			const systemPrompt = SYSTEM_PROMPT.replace(
+				/Default working language: \*\*.*?\*\*/,
+				`Default working language: **${targetLanguage}**`
+			)
+
+			// MacroTool output-format documentation is always included for the default prompt
+			prompt = `${systemPrompt}\n\n${SYSTEM_PROMPT_TOOLS}`
 		}
 
-		const targetLanguage = this.config.language === 'zh-CN' ? '中文' : 'English'
-		const systemPrompt = SYSTEM_PROMPT.replace(
-			/Default working language: \*\*.*?\*\*/,
-			`Default working language: **${targetLanguage}**`
-		)
+		// In system_prompt tool-calling mode, inject the dynamic <tools> block.
+		// This also applies when a customSystemPrompt is provided (e.g. MultiPageAgent)
+		// so that tool schemas are still available to the model.
+		if (this.config.provider === 'tl' && this.config.toolCallingMode === 'system_prompt') {
+			prompt += `\n\n${this.#buildToolsBlock()}`
+		}
 
-		return systemPrompt
+		return prompt
+	}
+
+	/**
+	 * Build the `<tools>` block string for system_prompt tool-calling mode.
+	 *
+	 * Each tool is rendered as a JSON object following the OpenAI function-tool
+	 * shape: `{ type: "function", function: { name, description, parameters } }`,
+	 * where `parameters` is the JSON Schema converted from the tool's Zod
+	 * `inputSchema` via `z.toJSONSchema()`.
+	 */
+	#buildToolsBlock(): string {
+		const toolDescriptors: object[] = []
+		for (const [name, t] of this.tools.entries()) {
+			toolDescriptors.push({
+				type: 'function',
+				function: {
+					name,
+					description: t.description,
+					parameters: z.toJSONSchema(t.inputSchema as z.ZodType),
+				},
+			})
+		}
+		const toolsJson = JSON.stringify(toolDescriptors, null, 2)
+		return `<tools>\n${toolsJson}\n</tools>`
 	}
 
 	/**

@@ -55,6 +55,63 @@ interface ChatRequest {
 }
 
 /**
+ * Extract `{ toolName, toolArgs }` from a parsed response object.
+ *
+ * Recognized shapes (checked in order):
+ * 1. `{ tool_name: "...", parameters|args: {...} }`          — legacy Tl shape
+ * 2. `{ name: "...", arguments: {...} }`                       — OpenAI tool_call shape
+ * 3. `{ action: { "<tool>": {...} }, ...reflection fields }`   — PageAgent MacroTool shape
+ * 4. `{ action: "<tool>", parameters|args: {...} }`            — legacy string-action shape
+ *
+ * For shape 3, if the inner tool name is not registered but an `AgentOutput`
+ * macro tool exists, the entire object is returned as `AgentOutput`'s args
+ * so PageAgentCore can still drive the macro-tool execution path.
+ *
+ * Returns `null` when no recognizable tool call is present.
+ */
+function extractToolCall(
+	obj: any,
+	tools: Record<string, Tool>
+): { toolName: string; toolArgs: unknown } | null {
+	if (!obj || typeof obj !== 'object') return null
+
+	// 1) { tool_name, parameters|args }
+	if (typeof obj.tool_name === 'string') {
+		return { toolName: obj.tool_name, toolArgs: obj.parameters ?? obj.args ?? {} }
+	}
+
+	// 2) { name, arguments }
+	if (typeof obj.name === 'string') {
+		return { toolName: obj.name, toolArgs: obj.arguments ?? {} }
+	}
+
+	// 3) { action: { <tool>: {...} } }
+	if (obj.action && typeof obj.action === 'object') {
+		const actionKeys = Object.keys(obj.action)
+		if (actionKeys.length === 0) return null
+		const extractedToolName = actionKeys[0]
+		const extractedToolArgs = obj.action[extractedToolName]
+
+		if (tools[extractedToolName]) {
+			return { toolName: extractedToolName, toolArgs: extractedToolArgs }
+		}
+		if (tools.AgentOutput) {
+			// Macro tool case: hand the whole reflection+action object to AgentOutput
+			return { toolName: 'AgentOutput', toolArgs: obj }
+		}
+		// Fallback: surface the unknown name so the caller emits a clear error
+		return { toolName: extractedToolName, toolArgs: extractedToolArgs }
+	}
+
+	// 4) { action: "<tool>", parameters|args }
+	if (typeof obj.action === 'string') {
+		return { toolName: obj.action, toolArgs: obj.parameters ?? obj.args ?? {} }
+	}
+
+	return null
+}
+
+/**
  * Client for Tl AI chatbbc API.
  */
 export class TlAiClient implements LLMClient {
@@ -165,37 +222,31 @@ export class TlAiClient implements LLMClient {
 	}
 
 	/**
-	 * Convert Zod schema to JSON Schema for tool description.
+	 * Convert a Zod schema to a JSON Schema object.
+	 * Uses `z.toJSONSchema()` from zod/v4 when available; falls back to a
+	 * permissive empty object schema on failure so tool registration never
+	 * breaks the request pipeline.
 	 */
 	private zodToJsonSchema(schema: z.ZodTypeAny): any {
 		try {
-			// We'll create a simplified JSON Schema representation
-			const result: any = {}
-
-			// For simplicity, let's handle common Zod types
-			// In a real implementation, you'd want to use a proper Zod to JSON Schema converter
-			result.type = 'object'
-			result.properties = {}
-			result.required = []
-
-			return result
+			return z.toJSONSchema(schema)
 		} catch (e) {
+			console.warn('[TlAiClient] zodToJsonSchema fallback used:', e)
 			return { type: 'object', properties: {} }
 		}
 	}
 
 	/**
-	 * Format tools into a system prompt for tool calling via system message.
-	 * Note: In our system, tools are packed into a single "AgentOutput" macro tool.
+	 * Format tools into a system prompt fragment for `system_prompt` tool-calling mode.
+	 *
+	 * Each tool is rendered as an OpenAI-style function-tool descriptor and wrapped
+	 * in a `<tools>` block. The PageAgentCore already injects its own `<tools>` block
+	 * (generated from the live tools map) into the system message, so this method
+	 * returns an empty string to avoid duplicating tool definitions.
+	 *
+	 * Kept for backward compatibility with the `formatToolsToSystemPrompt` contract.
 	 */
 	private formatToolsToSystemPrompt(tools: Record<string, Tool>): string {
-		// In PageAgentCore, all tools are packed into a single "AgentOutput" macro tool
-		// The system_prompt.md already contains instructions on how to output the JSON
-		// So we don't need to add additional tool descriptions here, just make sure
-		// the system prompt is properly included.
-
-		// Return empty string because system_prompt.md already contains everything needed
-		// including output format instructions.
 		return ''
 	}
 
@@ -237,35 +288,39 @@ export class TlAiClient implements LLMClient {
 		}
 
 		try {
-			// Strip markdown code fences if present (e.g. ```json ... ```)
 			let cleaned = accumulatedContent.trim()
+
+			// 1) Strip markdown code fences if present (e.g. ```json ... ```)
 			cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '')
 
-			const responseObj: any = JSON.parse(cleaned)
-
-			// Extract tool name from the action object.
-			// qwen returns action as { "done": { success, text } } or { "click": { index } } etc.
-			let toolName: string
-			let toolArgs: unknown
-
-			if (responseObj.tool_name && typeof responseObj.tool_name === 'string') {
-				toolName = responseObj.tool_name
-				toolArgs = responseObj.parameters || responseObj.args || {}
-			} else if (responseObj.action && typeof responseObj.action === 'object') {
-				const actionKeys = Object.keys(responseObj.action)
-				toolName = actionKeys[0]
-				toolArgs = responseObj.action[toolName]
-			} else if (typeof responseObj.action === 'string') {
-				toolName = responseObj.action
-				toolArgs = responseObj.parameters || responseObj.args || {}
-			} else {
-				toolName = Object.keys(tools)[0]
-				toolArgs = {}
+			// 2) Prefer <tool_call>...</tool_call> payload when present.
+			//    Supports two inner shapes:
+			//      a) { "name": "<tool>", "arguments": {...} }              (OpenAI style)
+			//      b) { "action": { "<tool>": {...} }, ...reflection fields } (MacroTool style)
+			const toolCallRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i
+			const toolCallMatch = toolCallRe.exec(cleaned)
+			if (toolCallMatch) {
+				const inner = toolCallMatch[1].trim()
+				const innerObj: any = JSON.parse(inner)
+				const parsed = extractToolCall(innerObj, tools)
+				if (parsed) return parsed
 			}
 
-			return { toolName, toolArgs }
+			// 3) Fall back to plain JSON (with or without surrounding text).
+			const responseObj: any = JSON.parse(cleaned)
+			const parsed = extractToolCall(responseObj, tools)
+			if (parsed) return parsed
+
+			// 4) Unparseable shape — surface a clear error.
+			throw new InvokeError(
+				InvokeErrorTypes.INVALID_RESPONSE,
+				'Response JSON did not contain a recognizable tool call',
+				undefined,
+				{ content: accumulatedContent }
+			)
 		} catch (error: unknown) {
 			if ((error as any)?.name === 'AbortError') throw error
+			if (error instanceof InvokeError) throw error
 
 			const firstToolName = Object.keys(tools)[0]
 			if (!firstToolName) {
