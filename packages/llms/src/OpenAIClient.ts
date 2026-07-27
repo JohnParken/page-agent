@@ -70,15 +70,29 @@ export class OpenAIClient implements LLMClient {
 		}
 		const finalRequestBody = transformedBody ?? requestBody
 
+		const url = `${this.config.baseURL}/chat/completions`
+		const requestHeaders: Record<string, string> = {
+			'Content-Type': 'application/json',
+		}
+		if (this.config.apiKey) {
+			requestHeaders.Authorization = `Bearer ${this.config.apiKey}`
+		}
+
+		console.info(
+			'[OpenAIClient] Request payload:',
+			JSON.stringify(
+				{ url, method: 'POST', headers: requestHeaders, body: finalRequestBody },
+				null,
+				2
+			)
+		)
+
 		// 2. Call API
 		let response: Response
 		try {
-			response = await this.fetch(`${this.config.baseURL}/chat/completions`, {
+			response = await this.fetch(url, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					...(this.config.apiKey && { Authorization: `Bearer ${this.config.apiKey}` }),
-				},
+				headers: requestHeaders,
 				body: JSON.stringify(finalRequestBody),
 				signal: abortSignal,
 			})
@@ -138,6 +152,15 @@ export class OpenAIClient implements LLMClient {
 				error
 			)
 		}
+
+		console.info(
+			'[OpenAIClient] Response payload:',
+			JSON.stringify(
+				{ status: response.status, statusText: response.statusText, body: data },
+				null,
+				2
+			)
+		)
 
 		const choice = data.choices?.[0]
 		if (!choice) {
