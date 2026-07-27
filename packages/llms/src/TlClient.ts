@@ -252,11 +252,17 @@ export class TlAiClient implements LLMClient {
 
 	/**
 	 * Parse a streaming response body and extract the tool call.
+	 *
+	 * If `normalizeResponse` is provided, the preliminary extraction is wrapped into
+	 * an OpenAI-style response and passed to it, mirroring `OpenAIClient` behavior.
+	 * This allows callers (e.g. `PageAgentCore`) to reuse the same `autoFixer`
+	 * normalization logic for both clients.
 	 */
 	private async parseStreamingResponse(
 		response: Response,
 		tools: Record<string, Tool>,
-		abortSignal?: AbortSignal
+		abortSignal?: AbortSignal,
+		normalizeResponse?: (response: any) => any
 	): Promise<{ toolName: string; toolArgs: unknown }> {
 		const reader = response.body?.getReader()
 		if (!reader) {
@@ -299,39 +305,105 @@ export class TlAiClient implements LLMClient {
 			//      b) { "action": { "<tool>": {...} }, ...reflection fields } (MacroTool style)
 			const toolCallRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i
 			const toolCallMatch = toolCallRe.exec(cleaned)
+
+			let preliminary: { toolName: string; toolArgs: unknown } | null = null
 			if (toolCallMatch) {
 				const inner = toolCallMatch[1].trim()
 				const innerObj: any = JSON.parse(inner)
-				const parsed = extractToolCall(innerObj, tools)
-				if (parsed) return parsed
+				preliminary = extractToolCall(innerObj, tools)
 			}
 
 			// 3) Fall back to plain JSON (with or without surrounding text).
-			const responseObj: any = JSON.parse(cleaned)
-			const parsed = extractToolCall(responseObj, tools)
-			if (parsed) return parsed
+			if (!preliminary) {
+				const responseObj: any = JSON.parse(cleaned)
+				preliminary = extractToolCall(responseObj, tools)
+			}
 
-			// 4) Unparseable shape — surface a clear error.
-			throw new InvokeError(
-				InvokeErrorTypes.INVALID_RESPONSE,
-				'Response JSON did not contain a recognizable tool call',
-				undefined,
-				{ content: accumulatedContent }
-			)
-		} catch (error: unknown) {
-			if ((error as any)?.name === 'AbortError') throw error
-			if (error instanceof InvokeError) throw error
-
-			const firstToolName = Object.keys(tools)[0]
-			if (!firstToolName) {
+			if (!preliminary) {
+				// 4) Unparseable shape — surface a clear error.
 				throw new InvokeError(
 					InvokeErrorTypes.INVALID_RESPONSE,
-					'No tools available and response is not JSON',
+					'Response JSON did not contain a recognizable tool call',
 					undefined,
 					{ content: accumulatedContent }
 				)
 			}
-			return { toolName: firstToolName, toolArgs: {} }
+
+			// 5) If the caller supplied a normalizeResponse (e.g. PageAgentCore's autoFixer),
+			//    wrap the preliminary extraction in an OpenAI-style payload and let it fix
+			//    common format issues, missing action fields, primitive action inputs, etc.
+			if (normalizeResponse) {
+				const openaiFormat = {
+					choices: [
+						{
+							index: 0,
+							message: {
+								role: 'assistant' as const,
+								tool_calls: [
+									{
+										type: 'function' as const,
+										function: {
+											name: preliminary.toolName,
+											arguments: JSON.stringify(preliminary.toolArgs ?? {}),
+										},
+									},
+								],
+							},
+						},
+					],
+				}
+
+				let normalized: any
+				try {
+					normalized = normalizeResponse(openaiFormat)
+				} catch (error: unknown) {
+					if ((error as any)?.name === 'AbortError') throw error
+					throw new InvokeError(
+						InvokeErrorTypes.INVALID_RESPONSE,
+						'normalizeResponse failed to normalize the tool call',
+						error,
+						{ content: accumulatedContent, preliminary }
+					)
+				}
+
+				const normalizedToolCall = normalized?.choices?.[0]?.message?.tool_calls?.[0]?.function
+				if (!normalizedToolCall || typeof normalizedToolCall.name !== 'string') {
+					throw new InvokeError(
+						InvokeErrorTypes.INVALID_RESPONSE,
+						'normalizeResponse did not return a valid tool call',
+						undefined,
+						{ content: accumulatedContent, preliminary, normalized }
+					)
+				}
+
+				let normalizedArgs: unknown = {}
+				if (normalizedToolCall.arguments) {
+					try {
+						normalizedArgs = JSON.parse(normalizedToolCall.arguments)
+					} catch (error: unknown) {
+						throw new InvokeError(
+							InvokeErrorTypes.INVALID_TOOL_ARGS,
+							'Failed to parse normalized tool arguments as JSON',
+							error,
+							{ rawArgs: normalizedToolCall.arguments }
+						)
+					}
+				}
+
+				return { toolName: normalizedToolCall.name, toolArgs: normalizedArgs }
+			}
+
+			return preliminary
+		} catch (error: unknown) {
+			if ((error as any)?.name === 'AbortError') throw error
+			if (error instanceof InvokeError) throw error
+
+			throw new InvokeError(
+				InvokeErrorTypes.INVALID_RESPONSE,
+				`Failed to parse streaming response: ${(error as Error)?.message}`,
+				error,
+				{ content: accumulatedContent }
+			)
 		}
 	}
 
@@ -339,7 +411,7 @@ export class TlAiClient implements LLMClient {
 		messages: Message[],
 		tools: Record<string, Tool>,
 		abortSignal?: AbortSignal,
-		_options?: InvokeOptions
+		options?: InvokeOptions
 	): Promise<InvokeResult> {
 		abortSignal?.throwIfAborted()
 
@@ -444,7 +516,12 @@ export class TlAiClient implements LLMClient {
 		}
 
 		// 5. Parse streaming response.
-		const { toolName, toolArgs } = await this.parseStreamingResponse(response, tools, abortSignal)
+		const { toolName, toolArgs } = await this.parseStreamingResponse(
+			response,
+			tools,
+			abortSignal,
+			options?.normalizeResponse
+		)
 
 		// 6. Validate tool exists.
 		const tool = tools[toolName]
