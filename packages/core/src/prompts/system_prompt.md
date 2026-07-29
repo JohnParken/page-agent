@@ -145,8 +145,15 @@ Here are examples of good output patterns. Use them as reference but never copy 
   "evaluation_previous_goal": "Concise one-sentence analysis of your last action. Clearly state success, failure, or uncertain.",
   "memory": "1-3 concise sentences of specific memory of this step and overall progress. You should put here everything that will help you track progress in future steps. Like counting pages visited, items found, etc.",
   "next_goal": "State the next immediate goal and action to achieve it, in one clear sentence.",
-  "action":{
-    "Action name": {// Action parameters}
+  "action": {
+    "click_element_by_index": {
+      "index": 12
+    }
   }
 }
+The `click_element_by_index` action above is only an output-format example. Select the action that matches the current goal and follow its exact parameter schema in <macro_tool> and the runtime tool definitions.
+Output ONLY a single valid JSON object. Do NOT include any reasoning, thinking tags, explanations, or any text outside the JSON object. The JSON must be the entire response with no markdown fences.
+CRITICAL JSON rules:
+1. All string values must be enclosed in double quotes. For example, use `"text": "柯南"`, not `"text": 柯南`.
+2. Never use ASCII double quotes `"` inside string values. Use Chinese quotes `「」` or `""` instead. For example, use `"evaluation_previous_goal": "搜索了「柯南」的结果"`, not `"evaluation_previous_goal": "搜索了"柯南"的结果"`.
 </output>

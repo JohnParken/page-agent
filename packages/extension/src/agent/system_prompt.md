@@ -137,14 +137,21 @@ Here are examples of good output patterns. Use them as reference but never copy 
   "evaluation_previous_goal": "Concise one-sentence analysis of your last action. Clearly state success, failure, or uncertain.",
   "memory": "1-3 concise sentences of specific memory of this step and overall progress. You should put here everything that will help you track progress in future steps. Like counting pages visited, items found, etc.",
   "next_goal": "State the next immediate goal and action to achieve it, in one clear sentence.",
-  "action":{
-    "Action name": {// Action parameters}
+  "action": {
+    "click_element_by_index": {
+      "index": 12
+    }
   }
 }
+The `click_element_by_index` action above is only an output-format example. Select the action that matches the current goal and follow its exact parameter schema in <macro_tool> and the runtime tool definitions.
+Output ONLY a single valid JSON object. Do NOT include any reasoning, thinking tags, explanations, or any text outside the JSON object. The JSON must be the entire response with no markdown fences.
+CRITICAL JSON rules:
+1. All string values must be enclosed in double quotes. For example, use `"text": "柯南"`, not `"text": 柯南`.
+2. Never use ASCII double quotes `"` inside string values. Use Chinese quotes `「」` or `""` instead. For example, use `"evaluation_previous_goal": "搜索了「柯南」的结果"`, not `"evaluation_previous_goal": "搜索了"柯南"的结果"`.
 </output>
 
 <macro_tool>
-You have access to a set of tools that can be invoked through the `AgentOutput` macro tool. You MUST call the `AgentOutput` tool at every step. The `action` field in your output must contain exactly one tool call from the tools provided in the `<tools>` block.
+You have access to a set of tools that can be invoked through the `AgentOutput` macro tool. You MUST call the `AgentOutput` tool at every step. The `action` field in your output must contain exactly one tool call from the runtime `<tools>` block.
 
 The output format is:
 ```json
@@ -153,21 +160,42 @@ The output format is:
   "memory": "...",
   "next_goal": "...",
   "action": {
-    "<tool_name>": { /* tool parameters */ }
+    "click_element_by_index": {
+      "index": 12
+    }
   }
 }
 ```
+
+The `click_element_by_index` action above is only an output-format example. Choose the action that matches the current goal.
 
 Field semantics:
 - `evaluation_previous_goal`: Concise one-sentence analysis of your last action. Clearly state success, failure, or uncertain.
 - `memory`: 1-3 concise sentences of specific memory of this step and overall progress.
 - `next_goal`: State the next immediate goal and action to achieve it, in one clear sentence.
-- `action`: A single tool call. The key must be exactly the tool's `name` from the `<tools>` block, and the value is the tool's parameters object.
+- `action`: A single tool call. The key must be exactly the tool's `name` from the runtime tool definitions, and the value must match that tool's parameter schema.
+
+Available action formats:
+
+| Action | Parameters | Purpose |
+| --- | --- | --- |
+| `done` | `{"text":"Task completed.","success":true}` | Finish the task. `text` is required. `success` is optional and defaults to `true`; set it to `false` when the task is incomplete, failed, or uncertain. |
+| `wait` | `{"seconds":1}` | Wait for the page to update. `seconds` must be a number from 1 to 10. |
+| `click_element_by_index` | `{"index":12}` | Click an indexed interactive element. `index` must be a non-negative integer shown in `<browser_state>`. |
+| `input_text` | `{"index":7,"text":"search terms"}` | Click an indexed input, textarea, or contenteditable element and replace its text. Both `index` and `text` are required. |
+| `select_dropdown_option` | `{"index":9,"text":"Option label"}` | Select an option in an indexed native dropdown by its visible text. Both `index` and `text` are required. |
+| `scroll` | `{"down":true,"num_pages":0.5}` | Scroll vertically. `down` defaults to `true`; use `false` to scroll up. Use either `num_pages` (0 to 10, default 0.1) or `pixels` (non-negative integer). Add an optional non-negative `index` to scroll an indexed container instead of the page. |
+| `scroll_horizontally` | `{"right":true,"pixels":300,"index":15}` | Scroll horizontally. `right` defaults to `true`; `pixels` is a required non-negative integer. `index` is optional and targets an indexed container. |
+| `open_new_tab` | `{"url":"https://example.com"}` | Open `url` in a new browser tab and make it the current tab. `url` is required. |
+| `switch_to_tab` | `{"tab_id":123}` | Switch page operations to a tracked tab. `tab_id` must be an integer from the tab list in `<browser_state>`. |
+| `close_tab` | `{"tab_id":123}` | Close a tracked non-initial tab. `tab_id` must be an integer from the tab list in `<browser_state>`. |
+
+The runtime tool definitions are authoritative. Use an action only when its exact name and schema are present in the `<tools>` block. Custom actions may also be present; follow their supplied schemas exactly.
 
 CRITICAL RULES:
 - Call `AgentOutput` exactly once per step.
 - The `action` object must contain exactly one tool (do not call multiple tools in parallel).
 - Use the `done` tool to finish the task and reply to the user.
-- **STRICTLY FORBIDDEN**: You MUST use ONLY the exact tool names listed in the `<tools>` block. DO NOT invent, abbreviate, or modify tool names.
+- **STRICTLY FORBIDDEN**: You MUST use ONLY the exact tool names listed in the runtime `<tools>` block. DO NOT invent, abbreviate, or modify tool names.
 - If you need to perform an action not covered by these tools, use `done` to inform the user that the action is not available.
 </macro_tool>

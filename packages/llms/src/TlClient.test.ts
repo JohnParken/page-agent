@@ -59,7 +59,9 @@ function setupSession(fetchMock: ReturnType<typeof vi.fn>, sessionId = 'session_
 	fetchMock.mockResolvedValueOnce(jsonResponse(initSessionBody(sessionId)))
 }
 
-function getLastSentBody(fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+function getLastSentBody(fetchMock: ReturnType<typeof vi.fn>): {
+	data: { session_id: string }
+} {
 	const calls = fetchMock.mock.calls
 	const init = calls[calls.length - 1][1] as RequestInit
 	return JSON.parse(init.body as string)
@@ -161,21 +163,32 @@ describe('TlAiClient.invoke — success', () => {
 // ---------- normalizeResponse ----------
 
 describe('TlAiClient.invoke — normalizeResponse', () => {
-	it('calls normalizeResponse with an OpenAI-style payload and uses the normalized tool call', async () => {
+	it('calls normalizeResponse with raw content as message.content and uses the normalized tool call', async () => {
 		const { client, fetchMock } = makeClient()
 		const tool = makeTool()
 		setupSession(fetchMock)
-		fetchMock.mockResolvedValueOnce(
-			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'raw' } }))
-		)
+		const rawContent = JSON.stringify({ tool_name: 'greet', parameters: { name: 'raw' } })
+		fetchMock.mockResolvedValueOnce(chatResponse(rawContent))
 
-		const normalizeResponse = vi.fn<Required<InvokeOptions>['normalizeResponse']>((res) => {
-			const clone = structuredClone(res)
-			clone.choices[0].message.tool_calls[0].function.arguments = JSON.stringify({
-				name: 'normalized',
-			})
-			return clone
-		})
+		const normalizeResponse = vi.fn<Required<InvokeOptions>['normalizeResponse']>(() => ({
+			choices: [
+				{
+					index: 0,
+					message: {
+						role: 'assistant',
+						tool_calls: [
+							{
+								type: 'function',
+								function: {
+									name: 'greet',
+									arguments: JSON.stringify({ name: 'normalized' }),
+								},
+							},
+						],
+					},
+				},
+			],
+		}))
 
 		const result = await client.invoke([], { greet: tool }, signal, { normalizeResponse })
 
@@ -187,15 +200,7 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 						index: 0,
 						message: expect.objectContaining({
 							role: 'assistant',
-							tool_calls: [
-								{
-									type: 'function',
-									function: {
-										name: 'greet',
-										arguments: JSON.stringify({ name: 'raw' }),
-									},
-								},
-							],
+							content: rawContent,
 						}),
 					}),
 				],
@@ -210,15 +215,28 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 		const greetTool = makeTool()
 		const otherTool = makeTool()
 		setupSession(fetchMock)
-		fetchMock.mockResolvedValueOnce(
-			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'original' } }))
-		)
+		const rawContent = JSON.stringify({ tool_name: 'greet', parameters: { name: 'original' } })
+		fetchMock.mockResolvedValueOnce(chatResponse(rawContent))
 
-		const normalizeResponse = vi.fn<Required<InvokeOptions>['normalizeResponse']>((res) => {
-			res.choices[0].message.tool_calls[0].function.name = 'other'
-			res.choices[0].message.tool_calls[0].function.arguments = JSON.stringify({ name: 'switched' })
-			return res
-		})
+		const normalizeResponse = vi.fn<Required<InvokeOptions>['normalizeResponse']>(() => ({
+			choices: [
+				{
+					index: 0,
+					message: {
+						role: 'assistant',
+						tool_calls: [
+							{
+								type: 'function',
+								function: {
+									name: 'other',
+									arguments: JSON.stringify({ name: 'switched' }),
+								},
+							},
+						],
+					},
+				},
+			],
+		}))
 
 		const result = await client.invoke([], { greet: greetTool, other: otherTool }, signal, {
 			normalizeResponse,
@@ -319,10 +337,22 @@ describe('TlAiClient.invoke — errors', () => {
 
 		await expect(
 			client.invoke([], { greet: makeTool() }, signal, {
-				normalizeResponse: (res) => {
-					res.choices[0].message.tool_calls[0].function.arguments = 'not-json'
-					return res
-				},
+				normalizeResponse: () => ({
+					choices: [
+						{
+							index: 0,
+							message: {
+								role: 'assistant',
+								tool_calls: [
+									{
+										type: 'function',
+										function: { name: 'greet', arguments: 'not-json' },
+									},
+								],
+							},
+						},
+					],
+				}),
 			})
 		).rejects.toMatchObject({
 			name: 'InvokeError',

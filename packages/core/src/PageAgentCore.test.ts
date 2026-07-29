@@ -311,6 +311,35 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 	})
 
 	describe('system_prompt tool injection', () => {
+		it('documents concrete parameter formats for every built-in action', async () => {
+			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
+			const agent = createAgent(fetchMock, { customSystemPrompt: undefined })
+
+			await agent.execute('do something')
+
+			const requestBody = JSON.parse((fetchMock.mock.calls[0][1]!.body as string) ?? '{}') as {
+				messages: { role: string; content: string }[]
+			}
+			const systemContent = requestBody.messages.find((m) => m.role === 'system')?.content ?? ''
+
+			for (const actionName of [
+				'done',
+				'wait',
+				'ask_user',
+				'click_element_by_index',
+				'input_text',
+				'select_dropdown_option',
+				'scroll',
+				'scroll_horizontally',
+				'execute_javascript',
+			]) {
+				expect(systemContent).toContain(`\`${actionName}\``)
+			}
+			expect(systemContent).toContain('{"index":7,"text":"search terms"}')
+			expect(systemContent).toContain('{"down":true,"num_pages":0.5}')
+			expect(systemContent).not.toContain('"param1"')
+		})
+
 		it('injects the <tools> block even when a customSystemPrompt is used', async () => {
 			const fetchMock = createFetchMock()
 				.mockResolvedValueOnce(
