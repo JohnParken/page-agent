@@ -29,3 +29,10 @@ export class PageAgent extends PageAgentCore {
 		})
 	}
 }
+
+declare global {
+	interface Window {
+		pageAgent?: PageAgent
+		PageAgent: typeof PageAgent
+	}
+}

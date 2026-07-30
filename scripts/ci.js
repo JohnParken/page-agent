@@ -6,8 +6,9 @@
  *   node scripts/ci.js            # run all checks
  *   node scripts/ci.js --no-build # skip build step
  */
-import chalk from 'chalk'
 import { execSync } from 'child_process'
+
+import chalk from 'chalk'
 
 import { parallelTask } from './parallel-task.js'
 

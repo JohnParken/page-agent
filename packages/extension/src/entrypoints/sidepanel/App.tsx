@@ -1,10 +1,10 @@
 import { History, Send, Settings, Square } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { ActivityCard, EventCard } from '@/components/cards'
 import { ConfigPanel } from '@/components/ConfigPanel'
 import { HistoryDetail } from '@/components/HistoryDetail'
 import { HistoryList } from '@/components/HistoryList'
-import { ActivityCard, EventCard } from '@/components/cards'
 import { EmptyState, Logo, MotionOverlay, StatusDot } from '@/components/misc'
 import { Button } from '@/components/ui/button'
 import {

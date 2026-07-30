@@ -1,27 +1,80 @@
-import eslintReact from '@eslint-react/eslint-plugin'
 import js from '@eslint/js'
-import { defineConfig, globalIgnores } from 'eslint/config'
+import importPlugin from 'eslint-plugin-import'
+import react from 'eslint-plugin-react'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
-export default defineConfig([
-	globalIgnores([
-		'**/dist',
-		'**/node_modules',
-		'packages/*/src/components/ui',
-		'**/.wxt',
-		'**/.output',
-	]),
+const typescriptFiles = ['**/*.{ts,tsx}']
+
+const scopeToTypescript = (configs) =>
+	configs.map((config) => ({
+		...config,
+		files: typescriptFiles,
+	}))
+
+const importRules = {
+	'import/order': [
+		'error',
+		{
+			groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index', 'object', 'type'],
+			pathGroups: [
+				{
+					pattern: '@/**',
+					group: 'internal',
+					position: 'before',
+				},
+				{
+					pattern: '**/*.css',
+					group: 'index',
+					position: 'after',
+				},
+			],
+			pathGroupsExcludedImportTypes: ['builtin'],
+			'newlines-between': 'always',
+			alphabetize: {
+				order: 'asc',
+				caseInsensitive: true,
+			},
+			warnOnUnassignedImports: false,
+		},
+	],
+	'sort-imports': [
+		'error',
+		{
+			ignoreCase: true,
+			ignoreDeclarationSort: true,
+			ignoreMemberSort: false,
+		},
+	],
+}
+
+export default [
 	{
-		files: ['**/*.{ts,tsx}'],
-		extends: [
-			js.configs.recommended,
-			tseslint.configs.recommended,
-			...tseslint.configs.recommendedTypeChecked,
-			...tseslint.configs.strictTypeChecked,
-			...tseslint.configs.stylisticTypeChecked,
-			eslintReact.configs['recommended-typescript'],
+		ignores: [
+			'**/dist',
+			'**/node_modules',
+			'packages/*/src/components/ui',
+			'**/.wxt',
+			'**/.output',
 		],
+	},
+	{
+		files: ['**/*.{js,jsx,ts,tsx}'],
+		plugins: {
+			import: importPlugin,
+		},
+		rules: importRules,
+	},
+	{
+		...js.configs.recommended,
+		files: typescriptFiles,
+	},
+	...scopeToTypescript(tseslint.configs.recommended),
+	...scopeToTypescript(tseslint.configs.recommendedTypeChecked),
+	...scopeToTypescript(tseslint.configs.strictTypeChecked),
+	...scopeToTypescript(tseslint.configs.stylisticTypeChecked),
+	{
+		files: typescriptFiles,
 		languageOptions: {
 			parserOptions: {
 				projectService: true,
@@ -30,6 +83,8 @@ export default defineConfig([
 			globals: globals.browser,
 		},
 		rules: {
+			'no-constant-condition': 'off',
+			'no-extra-semi': 'off',
 			'@typescript-eslint/no-non-null-assertion': 'off',
 			'@typescript-eslint/no-unsafe-assignment': 'off',
 			'@typescript-eslint/no-unsafe-member-access': 'off',
@@ -54,10 +109,27 @@ export default defineConfig([
 			'@typescript-eslint/no-unnecessary-type-parameters': 'off',
 			'@typescript-eslint/require-await': 'off',
 			'@typescript-eslint/no-deprecated': 'off',
-			'@eslint-react/dom-no-missing-button-type': 'off',
-			'@eslint-react/no-nested-component-definitions': 'off',
-			'@eslint-react/no-array-index-key': 'off',
-			'@eslint-react/dom-no-dangerously-set-innerhtml': 'off',
 		},
 	},
-])
+	{
+		files: ['**/*.{jsx,tsx}'],
+		plugins: {
+			react,
+		},
+		settings: {
+			react: {
+				version: 'detect',
+			},
+		},
+		rules: {
+			...react.configs.recommended.rules,
+			'react/button-has-type': 'off',
+			'react/display-name': 'off',
+			'react/jsx-uses-react': 'off',
+			'react/no-array-index-key': 'off',
+			'react/no-danger': 'off',
+			'react/prop-types': 'off',
+			'react/react-in-jsx-scope': 'off',
+		},
+	},
+]

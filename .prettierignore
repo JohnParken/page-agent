@@ -1,6 +1,11 @@
 # Prompt templates (formatted manually for LLM readability)
 *prompt.md
 
+# Agent instruction metadata
+.agents
+.trae
+**/AGENTS.md
+
 # Generated
 packages/extension/.wxt
 

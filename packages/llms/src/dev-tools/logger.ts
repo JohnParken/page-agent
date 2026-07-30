@@ -1,4 +1,4 @@
-import { WriteStream, createWriteStream, promises as fs } from 'fs'
+import { createWriteStream, promises as fs, WriteStream } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 

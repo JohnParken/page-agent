@@ -1,11 +1,3 @@
-import type {
-	AgentActivity,
-	AgentErrorEvent,
-	AgentStepEvent,
-	HistoricalEvent,
-	ObservationEvent,
-	RetryEvent,
-} from '@page-agent/core'
 import {
 	CheckCircle,
 	Eye,
@@ -21,6 +13,15 @@ import {
 import { Fragment, useState } from 'react'
 
 import { cn } from '@/lib/utils'
+
+import type {
+	AgentActivity,
+	AgentErrorEvent,
+	AgentStepEvent,
+	HistoricalEvent,
+	ObservationEvent,
+	RetryEvent,
+} from '@page-agent/core'
 
 // Result card for done action
 function ResultCard({

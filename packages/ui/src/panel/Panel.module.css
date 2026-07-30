@@ -243,6 +243,15 @@
 	}
 }
 
+.expanded .historySectionWrapper {
+	padding-top: 8px;
+	visibility: visible;
+}
+
+.expanded .historySectionWrapper .historySection {
+	max-height: min(500px, calc(100vh - 200px - var(--height)));
+}
+
 .historySectionWrapper {
 	position: absolute;
 	width: var(--history-width);
@@ -275,11 +284,6 @@
 			0 2px 12px 0 rgba(57, 182, 255, 0.1);
 	} */
 
-	.expanded & {
-		padding-top: 8px;
-		visibility: visible;
-	}
-
 	.historySection {
 		position: relative;
 		overflow-y: auto;
@@ -289,10 +293,6 @@
 		padding-inline: 8px;
 
 		transition: max-height 0.2s;
-
-		.expanded & {
-			max-height: min(500px, calc(100vh - 200px - var(--height)));
-		}
 
 		.historyItem {
 			/* backdrop-filter: blur(10px); */

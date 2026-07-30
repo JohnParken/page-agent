@@ -8,11 +8,12 @@
  * 1. cleanup
  * 2. build everything in parallel (libs + website + extension)
  */
-import chalk from 'chalk'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+
+import chalk from 'chalk'
 
 import { parallelTask } from './parallel-task.js'
 

@@ -1,10 +1,10 @@
-import tailwindcss from '@tailwindcss/vite'
-import react from '@vitejs/plugin-react'
-import { config as dotenvConfig } from 'dotenv'
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+
+import react from '@vitejs/plugin-react'
+import { config as dotenvConfig } from 'dotenv'
 import { defineConfig } from 'vite'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -13,7 +13,7 @@ const pageAgentPkg = JSON.parse(
 )
 
 // Load .env from repo root
-dotenvConfig({ path: resolve(__dirname, '../../.env'), quiet: true })
+dotenvConfig({ path: resolve(__dirname, '../../.env') })
 
 // All SPA routes that need index.html copies for direct access on static hosts
 const SPA_ROUTES = [
@@ -42,7 +42,7 @@ const SITE_URL = 'https://alibaba.github.io/page-agent'
 function spaRoutes() {
 	return {
 		name: 'spa-routes',
-		closeBundle() {
+		writeBundle() {
 			const dist = resolve(__dirname, 'dist')
 			const src = join(dist, 'index.html')
 			for (const route of SPA_ROUTES) {
@@ -72,7 +72,7 @@ function spaRoutes() {
 export default defineConfig(({ mode }) => ({
 	base: '/page-agent/',
 	clearScreen: false,
-	plugins: [react(), tailwindcss(), spaRoutes()],
+	plugins: [react(), spaRoutes()],
 	build: {
 		chunkSizeWarningLimit: 2000,
 		cssCodeSplit: true,

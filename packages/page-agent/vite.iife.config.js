@@ -1,14 +1,17 @@
 // @ts-check
-import { config as dotenvConfig } from 'dotenv'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
+
+import { config as dotenvConfig } from 'dotenv'
+import { visualizer } from 'rollup-plugin-visualizer'
 import { defineConfig } from 'vite'
-import cssInjectedByJsPlugin from 'vite-plugin-css-injected-by-js'
+
+import { injectCssByJs } from '../../scripts/vite-css-injected-by-js.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // Load .env from repo root
-dotenvConfig({ path: resolve(__dirname, '../../.env'), quiet: true })
+dotenvConfig({ path: resolve(__dirname, '../../.env') })
 
 // UMD Bundle for CDN
 // - alias all local packages so that they can be build in
@@ -16,8 +19,16 @@ dotenvConfig({ path: resolve(__dirname, '../../.env'), quiet: true })
 // - no d.ts. dts does not work with monorepo aliasing
 export default defineConfig(() => ({
 	plugins: [
-		cssInjectedByJsPlugin({ relativeCSSInjection: true }),
-		// analyzer()
+		injectCssByJs('page-agent-demo'),
+		...(process.env.ANALYZE === 'true'
+			? [
+					visualizer({
+						filename: resolve(__dirname, 'dist/iife/bundle-stats.html'),
+						gzipSize: true,
+						brotliSize: true,
+					}),
+				]
+			: []),
 	],
 	publicDir: false,
 	build: {

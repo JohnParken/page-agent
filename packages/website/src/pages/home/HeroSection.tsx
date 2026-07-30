@@ -1,4 +1,3 @@
-import type { PageAgent as PageAgentType } from 'page-agent'
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'wouter'
 
@@ -14,6 +13,8 @@ import {
 	DEMO_MODEL,
 } from '../../constants'
 import { useLanguage } from '../../i18n/context'
+
+import type { PageAgent as PageAgentType } from 'page-agent'
 
 let pageAgentModule: Promise<typeof import('page-agent')> | null = null
 

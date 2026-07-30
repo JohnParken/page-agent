@@ -1,5 +1,6 @@
-import chalk from 'chalk'
 import { spawn } from 'child_process'
+
+import chalk from 'chalk'
 
 /**
  * Run multiple shell commands in parallel with progress reporting.

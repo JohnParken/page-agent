@@ -1,5 +1,6 @@
-import type { HistoricalEvent } from '@page-agent/core'
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb'
+
+import type { HistoricalEvent } from '@page-agent/core'
 
 const DB_NAME = 'page-agent-ext'
 const DB_VERSION = 1

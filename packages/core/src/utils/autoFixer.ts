@@ -234,6 +234,7 @@ function repairUnescapedQuotes(str: string): string {
 
 			// Collect string content until we find the real end
 			let stringContent = ''
+			let hasOpenReplacementQuote = false
 			while (i < str.length) {
 				const innerChar = str[i]
 
@@ -261,42 +262,11 @@ function repairUnescapedQuotes(str: string): string {
 						i++
 						break
 					} else {
-						// This is an unescaped quote inside the string
-						// Find the next quote that is structural
-						let j = i + 1
-						let foundEnd = false
-						while (j < str.length) {
-							if (str[j] === '\\') {
-								j += 2
-								continue
-							}
-							if (str[j] === '"') {
-								const afterThisQuote = str.slice(j + 1).trimStart()
-								const isEnd =
-									afterThisQuote === '' ||
-									afterThisQuote.startsWith(',') ||
-									afterThisQuote.startsWith('}') ||
-									afterThisQuote.startsWith(']') ||
-									afterThisQuote.startsWith(':')
-
-								if (isEnd) {
-									// Found the real end, replace the unescaped quote
-									stringContent += '「' + str.slice(i + 1, j) + '」'
-									i = j + 1
-									foundEnd = true
-									break
-								}
-							}
-							j++
-						}
-						if (!foundEnd) {
-							// Couldn't find end, just escape this quote
-							stringContent += '\\"'
-							i++
-						} else {
-							// Successfully found and replaced, break out of inner loop
-							break
-						}
+						// Replace each unescaped quote independently so paired quotes do not
+						// consume the actual closing quote of the JSON string.
+						stringContent += hasOpenReplacementQuote ? '」' : '「'
+						hasOpenReplacementQuote = !hasOpenReplacementQuote
+						i++
 						continue
 					}
 				}

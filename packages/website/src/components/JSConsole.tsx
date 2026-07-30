@@ -5,7 +5,6 @@
 import { KeyboardEvent, useEffect, useImperativeHandle, useRef, useState } from 'react'
 
 import HighlightSyntax from './HighlightSyntax'
-
 import styles from './JSConsole.module.css'
 
 // 全局console拦截管理器

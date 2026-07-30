@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { exec } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { platform } from 'node:os'
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import * as z from 'zod/v4'
 
 import { HubBridge } from './hub-bridge.js'

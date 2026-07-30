@@ -30,22 +30,22 @@
 
 ## ✨ Features
 
-- **🎯 轻松集成**
-    - 无需 `浏览器插件` / `Python` / `无头浏览器`，纯页面内 JavaScript
-- **📖 基于文本的 DOM 操作**
-    - 无需截图，无需多模态模型或特殊权限
-- **🧠 自备 LLM**
-    - 支持多数主流模型，包括本地部署模型。参见[支持的模型](https://alibaba.github.io/page-agent/docs/features/models)。
-- 🐙 可选的 [Chrome 扩展](https://alibaba.github.io/page-agent/docs/features/chrome-extension)，支持跨页面任务
-    - [MCP Server (Beta)](https://alibaba.github.io/page-agent/docs/features/mcp-server)
+-   **🎯 轻松集成**
+    -   无需 `浏览器插件` / `Python` / `无头浏览器`，纯页面内 JavaScript
+-   **📖 基于文本的 DOM 操作**
+    -   无需截图，无需多模态模型或特殊权限
+-   **🧠 自备 LLM**
+    -   支持多数主流模型，包括本地部署模型。参见[支持的模型](https://alibaba.github.io/page-agent/docs/features/models)。
+-   🐙 可选的 [Chrome 扩展](https://alibaba.github.io/page-agent/docs/features/chrome-extension)，支持跨页面任务
+    -   [MCP Server (Beta)](https://alibaba.github.io/page-agent/docs/features/mcp-server)
 
 ## 💡 应用场景
 
-- **SaaS AI Copilot** — 几行代码为你的产品加上 AI 副驾驶，无需重写后端。
-- **智能表单填写** — 把 20 次点击变成一句话。ERP、CRM、管理后台的最佳拍档。
-- **无障碍增强** — 用自然语言让任何网页无障碍。语音指令、屏幕阅读器，零门槛。
-- **跨页面 Agent** — 通过可选的 [Chrome 扩展](https://alibaba.github.io/page-agent/docs/features/chrome-extension)，让你自己的 Web Agent 跨标签页工作。
-- 通过 MCP 为现有 Agent 加入浏览器控制能力。
+-   **SaaS AI Copilot** — 几行代码为你的产品加上 AI 副驾驶，无需重写后端。
+-   **智能表单填写** — 把 20 次点击变成一句话。ERP、CRM、管理后台的最佳拍档。
+-   **无障碍增强** — 用自然语言让任何网页无障碍。语音指令、屏幕阅读器，零门槛。
+-   **跨页面 Agent** — 通过可选的 [Chrome 扩展](https://alibaba.github.io/page-agent/docs/features/chrome-extension)，让你自己的 Web Agent 跨标签页工作。
+-   通过 MCP 为现有 Agent 加入浏览器控制能力。
 
 ## 🚀 快速开始
 

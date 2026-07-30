@@ -1,9 +1,8 @@
 import { Motion } from 'ai-motion'
 
 import { isPageDark } from './checkDarkMode'
-
-import styles from './SimulatorMask.module.css'
 import cursorStyles from './cursor.module.css'
+import styles from './SimulatorMask.module.css'
 
 export class SimulatorMask extends EventTarget {
 	shown: boolean = false

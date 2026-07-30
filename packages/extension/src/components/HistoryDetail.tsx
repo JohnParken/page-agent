@@ -2,7 +2,7 @@ import { ArrowLeft, RotateCcw, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { type SessionRecord, deleteSession, getSession } from '@/lib/db'
+import { deleteSession, getSession, type SessionRecord } from '@/lib/db'
 
 import { EventCard } from './cards'
 

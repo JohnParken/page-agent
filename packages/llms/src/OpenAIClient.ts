@@ -4,6 +4,8 @@
 import * as z from 'zod/v4'
 
 import { InvokeError, InvokeErrorTypes } from './errors'
+import { modelPatch, zodToOpenAITool } from './utils'
+
 import type {
 	InvokeOptions,
 	InvokeResult,
@@ -12,7 +14,6 @@ import type {
 	ResolvedLLMConfig,
 	Tool,
 } from './types'
-import { modelPatch, zodToOpenAITool } from './utils'
 
 /**
  * Client for OpenAI compatible APIs

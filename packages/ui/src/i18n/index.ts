@@ -1,9 +1,9 @@
 import {
+	locales,
 	type SupportedLanguage,
 	type TranslationKey,
 	type TranslationParams,
 	type TranslationSchema,
-	locales,
 } from './locales'
 
 export class I18n {

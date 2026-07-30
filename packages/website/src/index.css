@@ -1,11 +1,6 @@
-@config '../tailwind.config.js';
-@import 'tailwindcss';
-@import 'tw-animate-css';
-
-@custom-variant dark (&:is(.dark *));
-
-/* 启用 class-based dark mode for Tailwind v4 */
-@variant dark (.dark &);
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
 	--background: oklch(1 0 0);
@@ -62,12 +57,6 @@ html.dark,
 		--foreground: #ededed;
 	}
 } */
-
-/* 添加 Tailwind 自定义颜色 */
-@theme {
-	--color-background: var(--background);
-	--color-foreground: var(--foreground);
-}
 
 body {
 	background: var(--background);
@@ -300,129 +289,6 @@ td {
 
 .scrollbar-hide::-webkit-scrollbar {
 	display: none; /* Chrome, Safari and Opera */
-}
-
-/* shadcn */
-@theme inline {
-	--radius-sm: calc(var(--radius) - 4px);
-	--radius-md: calc(var(--radius) - 2px);
-	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) + 4px);
-	--radius-2xl: calc(var(--radius) + 8px);
-	--radius-3xl: calc(var(--radius) + 12px);
-	--radius-4xl: calc(var(--radius) + 16px);
-	--color-background: var(--background);
-	--color-foreground: var(--foreground);
-	--color-card: var(--card);
-	--color-card-foreground: var(--card-foreground);
-	--color-popover: var(--popover);
-	--color-popover-foreground: var(--popover-foreground);
-	--color-primary: var(--primary);
-	--color-primary-foreground: var(--primary-foreground);
-	--color-secondary: var(--secondary);
-	--color-secondary-foreground: var(--secondary-foreground);
-	--color-muted: var(--muted);
-	--color-muted-foreground: var(--muted-foreground);
-	--color-accent: var(--accent);
-	--color-accent-foreground: var(--accent-foreground);
-	--color-destructive: var(--destructive);
-	--color-border: var(--border);
-	--color-input: var(--input);
-	--color-ring: var(--ring);
-	--color-chart-1: var(--chart-1);
-	--color-chart-2: var(--chart-2);
-	--color-chart-3: var(--chart-3);
-	--color-chart-4: var(--chart-4);
-	--color-chart-5: var(--chart-5);
-	--color-sidebar: var(--sidebar);
-	--color-sidebar-foreground: var(--sidebar-foreground);
-	--color-sidebar-primary: var(--sidebar-primary);
-	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-	--color-sidebar-accent: var(--sidebar-accent);
-	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-	--color-sidebar-border: var(--sidebar-border);
-	--color-sidebar-ring: var(--sidebar-ring);
-
-	/* magic ui */
-	--animate-blink-cursor: blink-cursor 1.2s step-end infinite;
-	@keyframes blink-cursor {
-		0%,
-		49% {
-			opacity: 1;
-		}
-		50%,
-		100% {
-			opacity: 0;
-		}
-	}
-	--animate-aurora: aurora 8s ease-in-out infinite alternate;
-	@keyframes aurora {
-		0% {
-			background-position: 0% 50%;
-			transform: rotate(-5deg) scale(0.9);
-		}
-		25% {
-			background-position: 50% 100%;
-			transform: rotate(5deg) scale(1.1);
-		}
-		50% {
-			background-position: 100% 50%;
-			transform: rotate(-3deg) scale(0.95);
-		}
-		75% {
-			background-position: 50% 0%;
-			transform: rotate(3deg) scale(1.05);
-		}
-		100% {
-			background-position: 0% 50%;
-			transform: rotate(-5deg) scale(0.9);
-		}
-	}
-	--animate-shiny-text: shiny-text 8s infinite;
-	@keyframes shiny-text {
-		0%,
-		90%,
-		100% {
-			background-position: calc(-100% - var(--shiny-width)) 0;
-		}
-		30%,
-		60% {
-			background-position: calc(100% + var(--shiny-width)) 0;
-		}
-	}
-	--animate-gradient: gradient 8s linear infinite;
-	@keyframes gradient {
-		to {
-			background-position: var(--bg-size, 300%) 0;
-		}
-	}
-	--animate-background-position-spin: background-position-spin 3000ms infinite alternate;
-	@keyframes background-position-spin {
-		0% {
-			background-position: top center;
-		}
-		100% {
-			background-position: bottom center;
-		}
-	}
-	--animate-marquee: marquee var(--duration) infinite linear;
-	--animate-marquee-vertical: marquee-vertical var(--duration) linear infinite;
-	@keyframes marquee {
-		from {
-			transform: translateX(0);
-		}
-		to {
-			transform: translateX(calc(-100% - var(--gap)));
-		}
-	}
-	@keyframes marquee-vertical {
-		from {
-			transform: translateY(0);
-		}
-		to {
-			transform: translateY(calc(-100% - var(--gap)));
-		}
-	}
 }
 
 /* shadcn dark mode */

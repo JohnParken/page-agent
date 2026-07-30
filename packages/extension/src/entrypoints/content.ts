@@ -27,14 +27,29 @@ export default defineContentScript({
 
 			console.log('[PageAgentExt]: Auth tokens match. Exposing agent to page.')
 
-			// add isolated world script
-			exposeAgentToPage().then(
-				// add main-world script
-				() => injectScript('/main-world.js')
-			)
+			// Add the isolated-world handler before exposing the page-world API.
+			void exposeAgentToPage()
+				.then(() => injectMainWorldScript('/main-world.js'))
+				.catch((error) => console.error('[PageAgentExt]: Failed to expose agent to page.', error))
 		})
 	},
 })
+
+function injectMainWorldScript(path: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const script = document.createElement('script')
+		script.src = chrome.runtime.getURL(path.replace(/^\//, ''))
+		script.onload = () => {
+			script.remove()
+			resolve()
+		}
+		script.onerror = () => {
+			script.remove()
+			reject(new Error(`Failed to inject ${path}`))
+		}
+		;(document.head ?? document.documentElement).append(script)
+	})
+}
 
 async function exposeAgentToPage() {
 	const { MultiPageAgent } = await import('@/agent/MultiPageAgent')

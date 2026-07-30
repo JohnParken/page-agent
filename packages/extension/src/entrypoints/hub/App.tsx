@@ -164,7 +164,11 @@ function HubConfig() {
 			</h3>
 			<div className="group/hub relative">
 				<label
-					className={`flex items-center justify-between p-3 rounded-md border cursor-pointer text-xs ${allowAll ? 'bg-amber-500/10 border-amber-500/30 text-amber-600' : 'bg-muted/50 text-muted-foreground'}`}
+					className={`flex items-center justify-between p-3 rounded-md border cursor-pointer text-xs ${
+						allowAll
+							? 'bg-amber-500/10 border-amber-500/30 text-amber-600'
+							: 'bg-muted/50 text-muted-foreground'
+					}`}
 				>
 					Auto-approve connections
 					<Switch

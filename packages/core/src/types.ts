@@ -1,8 +1,7 @@
-import type { LLMConfig } from '@page-agent/llms'
-
 // @note circular dependency but okay
 import type { PageAgentCore } from './PageAgentCore'
 import type { PageAgentTool } from './tools'
+import type { LLMConfig } from '@page-agent/llms'
 
 /** Supported UI languages */
 export type SupportedLanguage = 'en-US' | 'zh-CN'
@@ -255,7 +254,11 @@ export interface AgentErrorEvent {
  * Union type for all history events
  */
 export type HistoricalEvent =
-	AgentStepEvent | ObservationEvent | UserTakeoverEvent | RetryEvent | AgentErrorEvent
+	| AgentStepEvent
+	| ObservationEvent
+	| UserTakeoverEvent
+	| RetryEvent
+	| AgentErrorEvent
 
 /**
  * Agent lifecycle status.

@@ -2,7 +2,6 @@
  * Copyright (C) 2025 Alibaba Group Holding Limited
  * All rights reserved.
  */
-import type { InteractiveElementDomNode } from './dom/dom_tree/type'
 import {
 	clickPointer,
 	disablePassThrough,
@@ -15,6 +14,8 @@ import {
 	movePointerToElement,
 	waitFor,
 } from './utils'
+
+import type { InteractiveElementDomNode } from './dom/dom_tree/type'
 
 /**
  * Get the HTMLElement by index from a selectorMap.
@@ -337,9 +338,9 @@ export async function scrollVertically(scroll_amount: number, element?: HTMLElem
 	const canScroll = (el: HTMLElement | null): boolean =>
 		Boolean(
 			el &&
-			/(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY) &&
-			el.scrollHeight > el.clientHeight &&
-			bigEnough(el)
+				/(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY) &&
+				el.scrollHeight > el.clientHeight &&
+				bigEnough(el)
 		)
 
 	// @deprecated Heuristic container search.
@@ -401,17 +402,25 @@ export async function scrollVertically(scroll_amount: number, element?: HTMLElem
 
 		if (Math.abs(scrolled) < 1) {
 			return dy > 0
-				? `⚠️ ${warningMsg} Already at the bottom of container (${el!.tagName}), cannot scroll down further.`
-				: `⚠️ ${warningMsg} Already at the top of container (${el!.tagName}), cannot scroll up further.`
+				? `⚠️ ${warningMsg} Already at the bottom of container (${
+						el!.tagName
+					}), cannot scroll down further.`
+				: `⚠️ ${warningMsg} Already at the top of container (${
+						el!.tagName
+					}), cannot scroll up further.`
 		}
 
 		const reachedBottom = dy > 0 && scrollAfter >= scrollMax - 1
 		const reachedTop = dy < 0 && scrollAfter <= 1
 
 		if (reachedBottom)
-			return `✅ ${warningMsg} Scrolled container (${el!.tagName}) by ${scrolled}px. Reached the bottom.`
+			return `✅ ${warningMsg} Scrolled container (${
+				el!.tagName
+			}) by ${scrolled}px. Reached the bottom.`
 		if (reachedTop)
-			return `✅ ${warningMsg} Scrolled container (${el!.tagName}) by ${scrolled}px. Reached the top.`
+			return `✅ ${warningMsg} Scrolled container (${
+				el!.tagName
+			}) by ${scrolled}px. Reached the top.`
 		return `✅ ${warningMsg} Scrolled container (${el!.tagName}) by ${scrolled}px.`
 	}
 }
@@ -482,9 +491,9 @@ export async function scrollHorizontally(scroll_amount: number, element?: HTMLEl
 	const canScroll = (el: HTMLElement | null): boolean =>
 		Boolean(
 			el &&
-			/(auto|scroll|overlay)/.test(getComputedStyle(el).overflowX) &&
-			el.scrollWidth > el.clientWidth &&
-			bigEnough(el)
+				/(auto|scroll|overlay)/.test(getComputedStyle(el).overflowX) &&
+				el.scrollWidth > el.clientWidth &&
+				bigEnough(el)
 		)
 
 	// @deprecated Same heuristic container search as scrollVertically.
@@ -538,17 +547,25 @@ export async function scrollHorizontally(scroll_amount: number, element?: HTMLEl
 
 		if (Math.abs(scrolled) < 1) {
 			return dx > 0
-				? `⚠️ ${warningMsg} Already at the right edge of container (${el!.tagName}), cannot scroll right further.`
-				: `⚠️ ${warningMsg} Already at the left edge of container (${el!.tagName}), cannot scroll left further.`
+				? `⚠️ ${warningMsg} Already at the right edge of container (${
+						el!.tagName
+					}), cannot scroll right further.`
+				: `⚠️ ${warningMsg} Already at the left edge of container (${
+						el!.tagName
+					}), cannot scroll left further.`
 		}
 
 		const reachedRight = dx > 0 && scrollAfter >= scrollMax - 1
 		const reachedLeft = dx < 0 && scrollAfter <= 1
 
 		if (reachedRight)
-			return `✅ ${warningMsg} Scrolled container (${el!.tagName}) by ${scrolled}px. Reached the right edge.`
+			return `✅ ${warningMsg} Scrolled container (${
+				el!.tagName
+			}) by ${scrolled}px. Reached the right edge.`
 		if (reachedLeft)
-			return `✅ ${warningMsg} Scrolled container (${el!.tagName}) by ${scrolled}px. Reached the left edge.`
+			return `✅ ${warningMsg} Scrolled container (${
+				el!.tagName
+			}) by ${scrolled}px. Reached the left edge.`
 		return `✅ ${warningMsg} Scrolled container (${el!.tagName}) horizontally by ${scrolled}px.`
 	}
 }

@@ -3,7 +3,6 @@ import { Router } from 'wouter'
 
 import { LanguageProvider } from './i18n/context'
 import { default as PagesRouter } from './router'
-
 import './index.css'
 
 // Redirect legacy hash routes (e.g. /#/docs/foo) to clean paths

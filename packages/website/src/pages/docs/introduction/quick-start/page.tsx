@@ -119,8 +119,16 @@ import { PageAgent } from 'page-agent'`}
 						{isZh ? '3. 开始使用' : '3. Start Using'}
 					</h3>
 					<CodeEditor
-						code={`// ${isZh ? '程序化执行自然语言指令' : 'Execute natural language instructions programmatically'}
-await agent.execute('${isZh ? '点击提交按钮，然后填写用户名为张三' : 'Click submit button, then fill username as John'}');
+						code={`// ${
+							isZh
+								? '程序化执行自然语言指令'
+								: 'Execute natural language instructions programmatically'
+						}
+await agent.execute('${
+							isZh
+								? '点击提交按钮，然后填写用户名为张三'
+								: 'Click submit button, then fill username as John'
+						}');
 
 // ${isZh ? '或者' : 'Or:'}
 // ${isZh ? '显示对话框让用户输入指令' : 'Show panel for user to input instructions'}

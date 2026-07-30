@@ -1,8 +1,8 @@
 // @ts-check
-import chalk from 'chalk'
 import { dirname, resolve } from 'path'
-import dts from 'unplugin-dts/vite'
 import { fileURLToPath } from 'url'
+
+import chalk from 'chalk'
 import { defineConfig } from 'vite'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -11,19 +11,6 @@ console.log(chalk.cyan(`📦 Building @page-agent/llms`))
 
 export default defineConfig({
 	clearScreen: false,
-	plugins: [
-		dts({
-			include: ['src/**/*.ts'],
-			exclude: ['src/**/*.test.ts', 'src/dev-tools/**/*'],
-			bundleTypes: true,
-			compilerOptions: {
-				composite: true,
-				noEmit: false,
-				emitDeclarationOnly: true,
-				declaration: true,
-			},
-		}),
-	],
 	publicDir: false,
 	build: {
 		lib: {

@@ -20,10 +20,10 @@ The `click_element_by_index` action above is only an output-format example. Choo
 
 Field semantics:
 
-- `evaluation_previous_goal`: Concise one-sentence analysis of your last action. Clearly state success, failure, or uncertain.
-- `memory`: 1-3 concise sentences of specific memory of this step and overall progress.
-- `next_goal`: State the next immediate goal and action to achieve it, in one clear sentence.
-- `action`: A single tool call. The key must be exactly the tool's `name` from the runtime tool definitions, and the value must match that tool's parameter schema.
+-   `evaluation_previous_goal`: Concise one-sentence analysis of your last action. Clearly state success, failure, or uncertain.
+-   `memory`: 1-3 concise sentences of specific memory of this step and overall progress.
+-   `next_goal`: State the next immediate goal and action to achieve it, in one clear sentence.
+-   `action`: A single tool call. The key must be exactly the tool's `name` from the runtime tool definitions, and the value must match that tool's parameter schema.
 
 Built-in action formats:
 
@@ -43,13 +43,13 @@ The runtime tool definitions are authoritative. Some built-in actions may be dis
 
 CRITICAL RULES:
 
-- Call `AgentOutput` exactly once per step.
-- The `action` object must contain exactly one tool (do not call multiple tools in parallel).
-- Use the `done` tool to finish the task and reply to the user.
-- **STRICTLY FORBIDDEN**: You MUST use ONLY an exact tool name from the runtime tool definitions. DO NOT invent, abbreviate, or modify tool names. For example:
-    - ✅ CORRECT: `click_element_by_index`
-    - ❌ WRONG: `click`, `click_element`, `clickElement`
-    - ✅ CORRECT: `input_text`
-    - ❌ WRONG: `input`, `type_text`, `typeText`
-- If you need to perform an action not covered by these tools, use `done` to inform the user that the action is not available.
-  </macro_tool>
+-   Call `AgentOutput` exactly once per step.
+-   The `action` object must contain exactly one tool (do not call multiple tools in parallel).
+-   Use the `done` tool to finish the task and reply to the user.
+-   **STRICTLY FORBIDDEN**: You MUST use ONLY an exact tool name from the runtime tool definitions. DO NOT invent, abbreviate, or modify tool names. For example:
+    -   ✅ CORRECT: `click_element_by_index`
+    -   ❌ WRONG: `click`, `click_element`, `clickElement`
+    -   ✅ CORRECT: `input_text`
+    -   ❌ WRONG: `input`, `type_text`, `typeText`
+-   If you need to perform an action not covered by these tools, use `done` to inform the user that the action is not available.
+    </macro_tool>

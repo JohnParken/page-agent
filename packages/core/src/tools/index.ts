@@ -4,8 +4,9 @@
  */
 import * as z from 'zod/v4'
 
-import type { PageAgentCore } from '../PageAgentCore'
 import { waitFor } from '../utils'
+
+import type { PageAgentCore } from '../PageAgentCore'
 
 /**
  * Per-invocation context passed to every tool execution.

@@ -9,6 +9,7 @@ For contribution rules and expectations, see [../CONTRIBUTING.md](../CONTRIBUTIN
 ### Development Setup
 
 1. **Prerequisites**
+
     - `macOS` / `Linux` / `WSL`
     - `node.js ^22.13 || >=24` with `npm >= 11`
     - An editor that supports `ts/eslint/prettier`
@@ -28,17 +29,17 @@ This is a **monorepo** with npm workspaces.
 
 Published packages:
 
-- **Page Agent** (`packages/page-agent/`) - Main entry with built-in UI Panel (npm: `page-agent`)
-- **MCP** (`packages/mcp/`) - MCP server for browser control via Page Agent extension (npm: `@page-agent/mcp`)
-- **Core** (`packages/core/`) - Core agent logic without UI (npm: `@page-agent/core`)
-- **LLMs** (`packages/llms/`) - LLM client with reflection-before-action mental model
-- **Page Controller** (`packages/page-controller/`) - DOM operations and visual feedback, independent of LLM
-- **UI** (`packages/ui/`) - Panel and i18n, decoupled from PageAgent
+-   **Page Agent** (`packages/page-agent/`) - Main entry with built-in UI Panel (npm: `page-agent`)
+-   **MCP** (`packages/mcp/`) - MCP server for browser control via Page Agent extension (npm: `@page-agent/mcp`)
+-   **Core** (`packages/core/`) - Core agent logic without UI (npm: `@page-agent/core`)
+-   **LLMs** (`packages/llms/`) - LLM client with reflection-before-action mental model
+-   **Page Controller** (`packages/page-controller/`) - DOM operations and visual feedback, independent of LLM
+-   **UI** (`packages/ui/`) - Panel and i18n, decoupled from PageAgent
 
 Applications:
 
-- **Extension** (`packages/extension/`) - Browser extension (WXT + React)
-- **Website** (`packages/website/`) - React docs, landing page, and dev playground (private)
+-   **Extension** (`packages/extension/`) - Browser extension (WXT + React)
+-   **Website** (`packages/website/`) - React docs, landing page, and dev playground (private)
 
 > Source-first monorepo with `npm workspaces + ts references + vite alias`. Library `package.json` exports point to `src/*.ts` during development, and point to `dist/*.js` when published. `workspaces` in root `package.json` must be in topological order.
 
@@ -50,7 +51,7 @@ If your AI assistant does not support [AGENTS.md](https://agents.md/). Add an al
 
 ### Test With Your Own LLM API
 
-- Create a `.env` file in the repo root with your LLM API config
+-   Create a `.env` file in the repo root with your LLM API config
 
     ```env
     LLM_MODEL_NAME=gpt-5.2
@@ -58,7 +59,7 @@ If your AI assistant does not support [AGENTS.md](https://agents.md/). Add an al
     LLM_BASE_URL=https://api.your-llm-provider.com/v1
     ```
 
-- **Ollama example** (tested on 0.15 + qwen3:14b, RTX3090 24GB):
+-   **Ollama example** (tested on 0.15 + qwen3:14b, RTX3090 24GB):
 
     ```env
     LLM_BASE_URL="http://localhost:11434/v1"
@@ -68,8 +69,8 @@ If your AI assistant does not support [AGENTS.md](https://agents.md/). Add an al
 
     > @see https://alibaba.github.io/page-agent/docs/features/models#ollama for configuration
 
-- **Restart the dev server** to load new env vars
-- If not provided, the demo will use the free testing proxy by default. By using it, you agree to its [terms](./terms-and-privacy.md).
+-   **Restart the dev server** to load new env vars
+-   If not provided, the demo will use the free testing proxy by default. By using it, you agree to its [terms](./terms-and-privacy.md).
 
 ### Extension Development
 
@@ -78,23 +79,23 @@ npm run dev:ext
 npm run build:ext
 ```
 
-- Update `packages/extension/docs/extension_api.md` for API integration details
+-   Update `packages/extension/docs/extension_api.md` for API integration details
 
 ### Testing on Other Websites
 
-- Start and serve a local `iife` script
+-   Start and serve a local `iife` script
 
     ```bash
     npm run dev:demo # Serving IIFE with auto rebuild at http://localhost:5174/page-agent.demo.js
     ```
 
-- Add a new bookmark
+-   Add a new bookmark
 
     ```javascript
     javascript:(function(){var s=document.createElement('script');s.src=`http://localhost:5174/page-agent.demo.js?lang=en-US&t=${Math.random()}`;s.onload=()=>console.log(%27PageAgent ready!%27);document.head.appendChild(s);})();
     ```
 
-- Click the bookmark on any page to load Page-Agent
+-   Click the bookmark on any page to load Page-Agent
 
 > Warning: AK in your local `.env` will be inlined in the iife script. Be very careful when you distribute the script.
 

@@ -15,10 +15,11 @@ import {
 	selectOptionElement,
 } from './actions'
 import * as dom from './dom'
-import type { FlatDomTree, InteractiveElementDomNode } from './dom/dom_tree/type'
 import { getPageInfo } from './dom/getPageInfo'
 import { patchReact } from './patches/react'
 import { isAnchorElement } from './utils'
+
+import type { FlatDomTree, InteractiveElementDomNode } from './dom/dom_tree/type'
 
 /**
  * Configuration for PageController
@@ -139,7 +140,13 @@ export class PageController extends EventTarget {
 		// Build header: page info + scroll position hint
 		const titleLine = `Current Page: [${title}](${url})`
 
-		const pageInfoLine = `Page info: ${pi.viewport_width}x${pi.viewport_height}px viewport, ${pi.page_width}x${pi.page_height}px total page size, ${pi.pages_above.toFixed(1)} pages above, ${pi.pages_below.toFixed(1)} pages below, ${pi.total_pages.toFixed(1)} total pages, at ${(pi.current_page_position * 100).toFixed(0)}% of page`
+		const pageInfoLine = `Page info: ${pi.viewport_width}x${pi.viewport_height}px viewport, ${
+			pi.page_width
+		}x${pi.page_height}px total page size, ${pi.pages_above.toFixed(
+			1
+		)} pages above, ${pi.pages_below.toFixed(1)} pages below, ${pi.total_pages.toFixed(
+			1
+		)} total pages, at ${(pi.current_page_position * 100).toFixed(0)}% of page`
 
 		const elementsLabel =
 			viewportExpansion === -1
@@ -149,7 +156,9 @@ export class PageController extends EventTarget {
 		const hasContentAbove = pi.pixels_above > 4
 		const scrollHintAbove =
 			hasContentAbove && viewportExpansion !== -1
-				? `... ${pi.pixels_above} pixels above (${pi.pages_above.toFixed(1)} pages) - scroll to see more ...`
+				? `... ${pi.pixels_above} pixels above (${pi.pages_above.toFixed(
+						1
+					)} pages) - scroll to see more ...`
 				: '[Start of page]'
 
 		const header = `${titleLine}\n${pageInfoLine}\n\n${elementsLabel}\n\n${scrollHintAbove}`
@@ -158,7 +167,9 @@ export class PageController extends EventTarget {
 		const hasContentBelow = pi.pixels_below > 4
 		const footer =
 			hasContentBelow && viewportExpansion !== -1
-				? `... ${pi.pixels_below} pixels below (${pi.pages_below.toFixed(1)} pages) - scroll to see more ...`
+				? `... ${pi.pixels_below} pixels below (${pi.pages_below.toFixed(
+						1
+					)} pages) - scroll to see more ...`
 				: '[End of page]'
 
 		return { url, title, header, content, footer }

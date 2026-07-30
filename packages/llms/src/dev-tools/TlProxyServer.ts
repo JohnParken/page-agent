@@ -1,7 +1,8 @@
 import http from 'http'
 
-import type { Message } from '../types'
 import { FileLogger, type LogLevel } from './logger'
+
+import type { Message } from '../types'
 
 interface ProxyConfig {
 	port: number

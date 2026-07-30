@@ -1,7 +1,6 @@
 import { Suspense } from 'react'
 import { Route, Switch } from 'wouter'
 
-import DocsLayout from './Layout'
 import CustomUIDocs from './advanced/custom-ui/page'
 import PageAgentCoreDocs from './advanced/page-agent-core/page'
 // Advanced
@@ -21,6 +20,7 @@ import Limitations from './introduction/limitations/page'
 import Overview from './introduction/overview/page'
 import QuickStart from './introduction/quick-start/page'
 import Troubleshooting from './introduction/troubleshooting/page'
+import DocsLayout from './Layout'
 
 function DocsPage({ children }: { children: React.ReactNode }) {
 	return (

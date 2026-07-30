@@ -1,9 +1,10 @@
 import { I18n, type SupportedLanguage } from '../i18n'
 import { truncate } from '../utils'
-import { createCard, createReflectionLines } from './cards'
-import type { AgentActivity, PanelAgentAdapter } from './types'
 
+import { createCard, createReflectionLines } from './cards'
 import styles from './Panel.module.css'
+
+import type { AgentActivity, PanelAgentAdapter } from './types'
 
 /**
  * Panel configuration
@@ -412,10 +413,14 @@ export class Panel {
 					<div class="${styles.statusText}">${this.#i18n.t('ui.panel.ready')}</div>
 				</div>
 				<div class="${styles.controls}">
-					<button class="${styles.controlButton} ${styles.expandButton}" title="${this.#i18n.t('ui.panel.expand')}">
+					<button class="${styles.controlButton} ${styles.expandButton}" title="${this.#i18n.t(
+						'ui.panel.expand'
+					)}">
 						▼
 					</button>
-					<button class="${styles.controlButton} ${styles.stopButton}" title="${this.#i18n.t('ui.panel.close')}">
+					<button class="${styles.controlButton} ${styles.stopButton}" title="${this.#i18n.t(
+						'ui.panel.close'
+					)}">
 						X
 					</button>
 				</div>

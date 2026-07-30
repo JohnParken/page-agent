@@ -1,8 +1,8 @@
 import { type AgentConfig, PageAgentCore } from '@page-agent/core'
 
 import { RemotePageController } from './RemotePageController'
-import { TabsController } from './TabsController'
 import SYSTEM_PROMPT from './system_prompt.md?raw'
+import { TabsController } from './TabsController'
 import { createTabTools } from './tabTools'
 
 /** Detect user language from browser settings */

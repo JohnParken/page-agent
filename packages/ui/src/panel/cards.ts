@@ -18,7 +18,9 @@ interface CardOptions {
 export function createCard({ icon, content, meta, type }: CardOptions): string {
 	const typeClass = type ? styles[type] : ''
 	const contentHtml = Array.isArray(content)
-		? `<div class="${styles.reflectionLines}">${content.map((line) => `<span>${escapeHtml(line)}</span>`).join('')}</div>`
+		? `<div class="${styles.reflectionLines}">${content
+				.map((line) => `<span>${escapeHtml(line)}</span>`)
+				.join('')}</div>`
 		: `<span>${escapeHtml(content)}</span>`
 
 	return `

@@ -598,12 +598,14 @@ export default (
 					isAnyRectVisible = true
 
 					// Viewport check for this rect
-					if (!(
-						rect.bottom < -viewportExpansion ||
-						rect.top > window.innerHeight + viewportExpansion ||
-						rect.right < -viewportExpansion ||
-						rect.left > window.innerWidth + viewportExpansion
-					)) {
+					if (
+						!(
+							rect.bottom < -viewportExpansion ||
+							rect.top > window.innerHeight + viewportExpansion ||
+							rect.right < -viewportExpansion ||
+							rect.left > window.innerWidth + viewportExpansion
+						)
+					) {
 						isAnyRectInViewport = true
 						break // Found a visible rect in viewport, no need to check others
 					}
@@ -983,10 +985,12 @@ export default (
 				rect.height > 0 &&
 				!(
 					// Only check non-empty rects
-					rect.bottom < -viewportExpansion ||
-					rect.top > window.innerHeight + viewportExpansion ||
-					rect.right < -viewportExpansion ||
-					rect.left > window.innerWidth + viewportExpansion
+					(
+						rect.bottom < -viewportExpansion ||
+						rect.top > window.innerHeight + viewportExpansion ||
+						rect.right < -viewportExpansion ||
+						rect.left > window.innerWidth + viewportExpansion
+					)
 				)
 			) {
 				isAnyRectInViewport = true
@@ -1099,12 +1103,14 @@ export default (
 		for (const rect of rects) {
 			if (rect.width === 0 || rect.height === 0) continue // Skip empty rects
 
-			if (!(
-				rect.bottom < -viewportExpansion ||
-				rect.top > window.innerHeight + viewportExpansion ||
-				rect.right < -viewportExpansion ||
-				rect.left > window.innerWidth + viewportExpansion
-			)) {
+			if (
+				!(
+					rect.bottom < -viewportExpansion ||
+					rect.top > window.innerHeight + viewportExpansion ||
+					rect.right < -viewportExpansion ||
+					rect.left > window.innerWidth + viewportExpansion
+				)
+			) {
 				return true // Found at least one rect in the viewport
 			}
 		}

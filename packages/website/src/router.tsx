@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useLayoutEffect } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect } from 'react'
 import { Route, Switch, useLocation } from 'wouter'
 
 import Footer from './components/Footer'

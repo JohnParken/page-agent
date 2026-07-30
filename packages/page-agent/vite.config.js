@@ -1,29 +1,17 @@
 // @ts-check
 import { dirname, resolve } from 'path'
-import dts from 'unplugin-dts/vite'
 import { fileURLToPath } from 'url'
+
 import { defineConfig } from 'vite'
-import cssInjectedByJsPlugin from 'vite-plugin-css-injected-by-js'
+
+import { injectCssByJs } from '../../scripts/vite-css-injected-by-js.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // ES Module for NPM Package
 export default defineConfig({
 	clearScreen: false,
-	plugins: [
-		dts({
-			include: ['src/**/*.ts'],
-			exclude: ['src/**/*.test.ts'],
-			bundleTypes: true,
-			compilerOptions: {
-				composite: true,
-				noEmit: false,
-				emitDeclarationOnly: true,
-				declaration: true,
-			},
-		}),
-		cssInjectedByJsPlugin({ relativeCSSInjection: true }),
-	],
+	plugins: [injectCssByJs('page-agent')],
 	publicDir: false,
 	build: {
 		lib: {

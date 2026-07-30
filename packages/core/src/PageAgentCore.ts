@@ -4,13 +4,14 @@
  * All rights reserved.
  */
 import { InvokeError, LLM, type Tool } from '@page-agent/llms'
-import type { BrowserState, PageController } from '@page-agent/page-controller'
 import chalk from 'chalk'
 import * as z from 'zod/v4'
 
 import SYSTEM_PROMPT from './prompts/system_prompt.md?raw'
 import SYSTEM_PROMPT_TOOLS from './prompts/system_prompt_tools.md?raw'
 import { tools } from './tools'
+import { assert, fetchLlmsTxt, normalizeResponse, suppress, uid, waitFor } from './utils'
+
 import type {
 	AgentActivity,
 	AgentConfig,
@@ -22,7 +23,7 @@ import type {
 	MacroToolInput,
 	MacroToolResult,
 } from './types'
-import { assert, fetchLlmsTxt, normalizeResponse, suppress, uid, waitFor } from './utils'
+import type { BrowserState, PageController } from '@page-agent/page-controller'
 
 export { tool, type PageAgentTool, type ToolContext } from './tools'
 export type * from './types'

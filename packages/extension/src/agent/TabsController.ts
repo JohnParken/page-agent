@@ -283,7 +283,9 @@ export class TabsController {
 		for (const tab of this.tabs) {
 			const { title, url } = await this.getTabInfo(tab.id)
 			summaries.push(
-				`| ${tab.id} | ${url} | ${title} | ${tab.status ?? '-'} | ${this.currentTabId === tab.id ? '✅' : ''} |`
+				`| ${tab.id} | ${url} | ${title} | ${tab.status ?? '-'} | ${
+					this.currentTabId === tab.id ? '✅' : ''
+				} |`
 			)
 		}
 		if (!this.tabs.length) {

@@ -13,10 +13,11 @@
  *   { type: "result", success: boolean, data: string }
  *   { type: "error", message: string }
  */
-import type { ExecutionResult } from '@page-agent/core'
 import { useEffect, useRef, useState } from 'react'
 
 import type { ExtConfig } from '@/agent/useAgent'
+
+import type { ExecutionResult } from '@page-agent/core'
 
 // --- Protocol types ---
 

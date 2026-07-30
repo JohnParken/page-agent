@@ -382,7 +382,9 @@ export default function TroubleshootingPage() {
 
 							{/* Symptom callout */}
 							<div
-								className={`border-l-4 px-4 py-3 rounded-r-lg mb-6 ${SYMPTOM_COLORS[section.color]}`}
+								className={`border-l-4 px-4 py-3 rounded-r-lg mb-6 ${
+									SYMPTOM_COLORS[section.color]
+								}`}
 							>
 								<span className="text-xs font-semibold uppercase tracking-wider opacity-70">
 									{isZh ? '症状' : 'Symptom'}

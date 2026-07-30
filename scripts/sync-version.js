@@ -6,11 +6,12 @@
  *   node scripts/sync-version.js        # Sync current version from root
  *   node scripts/sync-version.js 0.1.0  # Set root version, then sync all packages
  */
-import chalk from 'chalk'
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { exit } from 'process'
 import { fileURLToPath } from 'url'
+
+import chalk from 'chalk'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = join(__dirname, '..')

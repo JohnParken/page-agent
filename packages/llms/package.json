@@ -42,7 +42,7 @@
     },
     "homepage": "https://alibaba.github.io/page-agent/",
     "scripts": {
-        "build": "vite build",
+        "build": "vite build && tsup --config tsup.config.js",
         "test": "vitest run --project llms",
         "test:live": "vitest run --project llms:live",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
@@ -51,7 +51,7 @@
         "test:tl-proxy": "tsx src/dev-tools/test-tl-proxy.ts"
     },
     "dependencies": {
-        "chalk": "^5.6.2"
+        "chalk": "^5.3.0"
     },
     "peerDependencies": {
         "zod": "^3.25.0 || ^4.0.0"

@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { type SessionRecord, clearSessions, deleteSession, listSessions } from '@/lib/db'
+import { clearSessions, deleteSession, listSessions, type SessionRecord } from '@/lib/db'
 import { downloadHistoryExport } from '@/lib/history-export'
 
 function timeAgo(ts: number): string {

@@ -1,5 +1,6 @@
-import tailwindcss from '@tailwindcss/vite'
 import { mkdirSync, readFileSync } from 'node:fs'
+
+import react from '@vitejs/plugin-react'
 import { defineConfig } from 'wxt'
 
 const chromeProfile = '.wxt/chrome-data'
@@ -10,7 +11,7 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 // See https://wxt.dev/api/config.html
 export default defineConfig({
 	srcDir: 'src',
-	modules: ['@wxt-dev/module-react'],
+	publicDir: '../public',
 	dev: {
 		server: {
 			port: 3000,
@@ -23,7 +24,7 @@ export default defineConfig({
 		chromiumArgs: ['--hide-crash-restore-bubble'],
 	},
 	vite: () => ({
-		plugins: [tailwindcss()],
+		plugins: [react()],
 		server: {
 			port: 5173,
 			strictPort: true,

@@ -6,10 +6,10 @@
  * - switch_to_tab: Switch to an existing tab
  * - close_tab: Close a tab (optionally switch to another)
  */
-import type { ToolContext } from '@page-agent/core'
-import * as z from 'zod/v4'
+import * as z from 'zod-v4/v4'
 
 import type { TabsController } from './TabsController'
+import type { ToolContext } from '@page-agent/core'
 
 /** Tool definition compatible with PageAgentCore customTools */
 interface TabTool {

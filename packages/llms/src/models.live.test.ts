@@ -19,18 +19,21 @@
  *   TESTING_DEEPSEEK_KEY=...
  *   TESTING_ALIYUN_KEY=...
  */
-import { config as dotenvConfig } from 'dotenv'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
+
+import { config as dotenvConfig } from 'dotenv'
 import { describe, expect, it } from 'vitest'
 import * as z from 'zod/v4'
 
 import { OpenAIClient } from './OpenAIClient'
+
 import { parseLLMConfig } from './index'
+
 import type { Message, Tool } from './types'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-dotenvConfig({ path: resolve(__dirname, '../../../.env'), quiet: true })
+dotenvConfig({ path: resolve(__dirname, '../../../.env') })
 
 const TEST_TIMEOUT = 30_000
 

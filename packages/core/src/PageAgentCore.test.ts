@@ -1,9 +1,10 @@
-import type { BrowserState, PageController } from '@page-agent/page-controller'
 import { describe, expect, it, vi } from 'vitest'
 import * as z from 'zod/v4'
 
 import { PageAgentCore, tool } from './PageAgentCore'
+
 import type { ExecutionResult } from './types'
+import type { BrowserState, PageController } from '@page-agent/page-controller'
 
 type TestFetch = (...args: Parameters<typeof globalThis.fetch>) => Promise<Response>
 

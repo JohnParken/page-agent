@@ -8,11 +8,11 @@ Integrate the Page Agent extension into your web app and trigger multi-page brow
 
 Primary channel:
 
-- Chrome Web Store: https://chromewebstore.google.com/detail/page-agent-ext/akldabonmimlicnjlflnapfeklbfemhj
+-   Chrome Web Store: https://chromewebstore.google.com/detail/page-agent-ext/akldabonmimlicnjlflnapfeklbfemhj
 
 Latest updates are often published earlier on:
 
-- GitHub Releases: https://github.com/alibaba/page-agent/releases
+-   GitHub Releases: https://github.com/alibaba/page-agent/releases
 
 ### 2. Install type definitions (recommended)
 
@@ -26,9 +26,9 @@ The token allows your page JS to call the extension API (`window.PAGE_AGENT_EXT`
 
 Why token-based access is required:
 
-- The extension has broad browser permissions (page access, navigation, multi-tab control).
-- If abused, it can harm user privacy and security.
-- Users must explicitly provide the token only to applications they trust.
+-   The extension has broad browser permissions (page access, navigation, multi-tab control).
+-   If abused, it can harm user privacy and security.
+-   Users must explicitly provide the token only to applications they trust.
 
 Setup:
 
@@ -98,7 +98,7 @@ Stop the current task.
 
 ## Limitations
 
-- **Normal browser windows only.** This extension relies on tab group API which does not work for pop-up window or PWA App window.
+-   **Normal browser windows only.** This extension relies on tab group API which does not work for pop-up window or PWA App window.
 
 ## Types
 

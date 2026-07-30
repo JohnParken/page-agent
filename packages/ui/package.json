@@ -41,7 +41,7 @@
     },
     "homepage": "https://alibaba.github.io/page-agent/",
     "scripts": {
-        "build": "vite build",
+        "build": "vite build && tsup --config tsup.config.js",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js"
     }

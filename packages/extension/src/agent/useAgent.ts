@@ -1,6 +1,11 @@
 /**
  * React hook for using AgentController
  */
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import { DEMO_CONFIG, migrateLegacyEndpoint } from './constants'
+import { MultiPageAgent } from './MultiPageAgent'
+
 import type {
 	AgentActivity,
 	AgentStatus,
@@ -9,10 +14,6 @@ import type {
 	SupportedLanguage,
 } from '@page-agent/core'
 import type { LLMConfig } from '@page-agent/llms'
-import { useCallback, useEffect, useRef, useState } from 'react'
-
-import { MultiPageAgent } from './MultiPageAgent'
-import { DEMO_CONFIG, migrateLegacyEndpoint } from './constants'
 
 /** Language preference: undefined means follow system */
 export type LanguagePreference = SupportedLanguage | undefined

@@ -10,10 +10,10 @@ For local development workflows, setup, local LLM config, extension development,
 
 ### Opening Issues
 
-- Use the GitHub issue tracker to report bugs or request features
-- Search existing issues before creating new ones
-- Provide clear reproduction steps for bugs
-- Include browser version and environment details
+-   Use the GitHub issue tracker to report bugs or request features
+-   Search existing issues before creating new ones
+-   Provide clear reproduction steps for bugs
+-   Include browser version and environment details
 
 ### Code Contributions
 
@@ -26,17 +26,17 @@ For local development workflows, setup, local LLM config, extension development,
 
 ### Vibe Coding with AI
 
-- Vibe coding is **NOT** allowed for the core lib or the extension!!!
-- Vibe coding is **RECOMMENDED** when maintaining **the demo, the website, the UI and tests**.
-- Make sure your AI references `AGENTS.md` and `website/AGENTS.md` for better quality.
-- Review anything AI wrote before make a commit. You are the author of anything you commit. NOT AI.
+-   Vibe coding is **NOT** allowed for the core lib or the extension!!!
+-   Vibe coding is **RECOMMENDED** when maintaining **the demo, the website, the UI and tests**.
+-   Make sure your AI references `AGENTS.md` and `website/AGENTS.md` for better quality.
+-   Review anything AI wrote before make a commit. You are the author of anything you commit. NOT AI.
 
 ## 🚫 What We Don't Accept
 
-- Breaking changes and large PRs without prior discussion
-- Heavy dependencies to core libs
-- Dependencies or code with licenses incompatible with MIT
-- Bot or AI-generated pull requests without meaningful human involvement
+-   Breaking changes and large PRs without prior discussion
+-   Heavy dependencies to core libs
+-   Dependencies or code with licenses incompatible with MIT
+-   Bot or AI-generated pull requests without meaningful human involvement
 
 ## 📄 Legal
 

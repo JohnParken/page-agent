@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as z from 'zod/v4'
 
-import { TlAiClient } from './TlClient'
 import { InvokeError, InvokeErrorTypes } from './errors'
+import { TlAiClient } from './TlClient'
+
 import type { InvokeOptions, Tool } from './types'
 
 // ---------- Fixtures ----------

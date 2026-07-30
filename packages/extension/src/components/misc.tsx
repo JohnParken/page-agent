@@ -1,4 +1,3 @@
-import type { AgentStatus } from '@page-agent/core'
 import { Motion } from 'ai-motion'
 import { BookOpen, Globe } from 'lucide-react'
 import { useEffect, useRef } from 'react'
@@ -6,6 +5,8 @@ import { siGithub } from 'simple-icons'
 
 import { TypingAnimation } from '@/components/ui/typing-animation'
 import { cn } from '@/lib/utils'
+
+import type { AgentStatus } from '@page-agent/core'
 
 // Status dot indicator
 export function StatusDot({ status }: { status: AgentStatus }) {

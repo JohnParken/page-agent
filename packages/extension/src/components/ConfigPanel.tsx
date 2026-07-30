@@ -165,7 +165,9 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 							userAuthToken
 								? showToken
 									? userAuthToken
-									: `${userAuthToken.slice(0, 4)}${'•'.repeat(userAuthToken.length - 8)}${userAuthToken.slice(-4)}`
+									: `${userAuthToken.slice(0, 4)}${'•'.repeat(
+											userAuthToken.length - 8
+										)}${userAuthToken.slice(-4)}`
 								: 'Loading...'
 						}
 						className="text-xs h-8 font-mono bg-background"

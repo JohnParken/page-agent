@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as z from 'zod/v4'
 
-import { OpenAIClient } from './OpenAIClient'
 import { InvokeError, InvokeErrorTypes } from './errors'
+import { OpenAIClient } from './OpenAIClient'
+
 import { parseLLMConfig } from './index'
+
 import type { LLMConfig, Tool } from './types'
 
 // ---------- Fixtures ----------

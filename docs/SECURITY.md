@@ -18,32 +18,32 @@ Please do not report security vulnerabilities through public GitHub issues, disc
 
 Use GitHub's private vulnerability reporting flow:
 
-- Open https://github.com/alibaba/page-agent/security/policy
-- Click `Report a vulnerability`
+-   Open https://github.com/alibaba/page-agent/security/policy
+-   Click `Report a vulnerability`
 
 If private reporting is unavailable, open a minimal public issue only to request a private contact channel. Do not include exploit details.
 
 ## What to Include
 
-- Affected package or feature
-- Exact version, commit, or build
-- Browser, OS, and runtime environment
-- Reproduction steps or a proof of concept
-- Expected impact
+-   Affected package or feature
+-   Exact version, commit, or build
+-   Browser, OS, and runtime environment
+-   Reproduction steps or a proof of concept
+-   Expected impact
 
 ## Scope
 
 We prioritize reports that show a real security boundary failure, such as:
 
-- Unauthorized access to data, tokens, or extension capabilities
-- Bypassing explicit safety constraints
-- Sensitive data exposure caused by default behavior
+-   Unauthorized access to data, tokens, or extension capabilities
+-   Bypassing explicit safety constraints
+-   Sensitive data exposure caused by default behavior
 
 The following usually do not qualify by themselves:
 
-- Unsafe custom integrations that ignore documented safeguards
-- Intentionally embedding secrets into client-side builds
-- Reports against unsupported older versions
+-   Unsafe custom integrations that ignore documented safeguards
+-   Intentionally embedding secrets into client-side builds
+-   Reports against unsupported older versions
 
 ## Disclosure
 

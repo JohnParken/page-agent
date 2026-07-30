@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs'
 import http from 'node:http'
 import { fileURLToPath } from 'node:url'
+
 import { WebSocketServer } from 'ws'
 
 const EXT_ID = 'akldabonmimlicnjlflnapfeklbfemhj'
