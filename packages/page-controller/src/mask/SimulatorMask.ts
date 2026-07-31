@@ -1,13 +1,9 @@
-import { Motion } from 'ai-motion'
-
-import { isPageDark } from './checkDarkMode'
 import cursorStyles from './cursor.module.css'
 import styles from './SimulatorMask.module.css'
 
 export class SimulatorMask extends EventTarget {
 	shown: boolean = false
 	wrapper = document.createElement('div')
-	motion: Motion | null = null
 
 	#disposed = false
 
@@ -26,18 +22,6 @@ export class SimulatorMask extends EventTarget {
 		this.wrapper.className = styles.wrapper
 		this.wrapper.setAttribute('data-browser-use-ignore', 'true')
 		this.wrapper.setAttribute('data-page-agent-ignore', 'true')
-
-		try {
-			const motion = new Motion({
-				mode: isPageDark() ? 'dark' : 'light',
-				styles: { position: 'absolute', inset: '0' },
-			})
-			this.motion = motion
-			this.wrapper.appendChild(motion.element)
-			motion.autoResize(this.wrapper)
-		} catch (e) {
-			console.warn('[SimulatorMask] Motion overlay unavailable:', e)
-		}
 
 		// Capture all mouse, keyboard, and wheel events
 		this.wrapper.addEventListener('click', (e) => {
@@ -178,8 +162,6 @@ export class SimulatorMask extends EventTarget {
 		if (this.shown || this.#disposed) return
 
 		this.shown = true
-		this.motion?.start()
-		this.motion?.fadeIn()
 
 		this.wrapper.classList.add(styles.visible)
 
@@ -196,19 +178,13 @@ export class SimulatorMask extends EventTarget {
 		if (!this.shown || this.#disposed) return
 
 		this.shown = false
-		this.motion?.fadeOut()
-		this.motion?.pause()
 
 		this.#cursor.classList.remove(cursorStyles.clicking)
-
-		setTimeout(() => {
-			this.wrapper.classList.remove(styles.visible)
-		}, 800) // Match the animation duration
+		this.wrapper.classList.remove(styles.visible)
 	}
 
 	dispose() {
 		this.#disposed = true
-		this.motion?.dispose()
 		this.wrapper.remove()
 		this.dispatchEvent(new Event('dispose'))
 	}

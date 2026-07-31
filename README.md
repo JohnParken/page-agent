@@ -38,7 +38,6 @@ The GUI Agent Living in Your Webpage. One script gives any web page its own AI a
 -   **🧠 Bring your own LLMs**
     -   Works with most mainstream models, including locally deployed ones. See [supported models](https://alibaba.github.io/page-agent/docs/features/models).
 -   **🐙 Optional [chrome extension](https://alibaba.github.io/page-agent/docs/features/chrome-extension) for multi-page tasks.**
-    -   And an [MCP Server (Beta)](https://alibaba.github.io/page-agent/docs/features/mcp-server) to control it from outside
 
 ## 💡 Use Cases
 
@@ -46,7 +45,6 @@ The GUI Agent Living in Your Webpage. One script gives any web page its own AI a
 -   **Smart Form Filling** — Turn 20-click workflows into one sentence. Perfect for ERP, CRM, and admin systems.
 -   **Accessibility** — Make any web app accessible through natural language. Voice commands, screen readers, zero barrier.
 -   **Multi-page Agent** — Extend your own web agent's reach across browser tabs via the [Chrome extension](https://alibaba.github.io/page-agent/docs/features/chrome-extension).
--   **MCP** - Allow your agent clients to control your browser.
 
 ## 🚀 Quick Start
 

@@ -48,22 +48,7 @@ export default function App() {
 
 				<div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
 					<div className="text-xs text-muted-foreground leading-relaxed space-y-2">
-						<p>
-							Page Agent Hub lets local apps (e.g. MCP servers) control the Page Agent extension via
-							WebSocket.
-						</p>
-						<p>
-							Check out the official{' '}
-							<a
-								href="https://github.com/alibaba/page-agent/tree/main/packages/mcp"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="underline hover:text-foreground"
-							>
-								MCP server package
-							</a>
-							.
-						</p>
+						<p>Page Agent Hub lets local apps control the Page Agent extension via WebSocket.</p>
 					</div>
 
 					<HubConfig />

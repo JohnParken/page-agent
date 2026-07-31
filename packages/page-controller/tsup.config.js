@@ -6,5 +6,5 @@ export default defineConfig({
 	format: ['esm'],
 	dts: { only: true },
 	clean: false,
-	external: ['ai-motion', /^@page-agent\//],
+	external: [/^@page-agent\//],
 })

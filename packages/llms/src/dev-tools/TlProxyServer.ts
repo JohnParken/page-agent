@@ -1,6 +1,6 @@
 import http from 'http'
 
-import { FileLogger, type LogLevel } from './logger'
+import { FileLogger, type LogLevel } from './logger.ts'
 
 import type { Message } from '../types'
 

@@ -2,11 +2,10 @@
 /**
  * Full build pipeline. Equivalent to:
  *   npm run cleanup && npm run build --workspaces --if-present
- *                    && npm run build:website -w @page-agent/website
  *                    && npm run zip -w @page-agent/ext
  *
  * 1. cleanup
- * 2. build everything in parallel (libs + website + extension)
+ * 2. build everything in parallel (libraries + extension)
  */
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
@@ -34,13 +33,10 @@ const tasks = rootPkg.workspaces
 	})
 	.filter(Boolean)
 
-tasks.push(
-	{
-		label: '@page-agent/website',
-		command: 'npm run build:website',
-		cwd: join(rootDir, 'packages/website'),
-	},
-	{ label: '@page-agent/ext', command: 'npm run zip', cwd: join(rootDir, 'packages/extension') }
-)
+tasks.push({
+	label: '@page-agent/ext',
+	command: 'npm run zip',
+	cwd: join(rootDir, 'packages/extension'),
+})
 
 await parallelTask(tasks, { timeoutMs: 120_000 })

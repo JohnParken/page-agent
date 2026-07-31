@@ -3,7 +3,7 @@
  * 直接测试代理的 HTTP 端点，不依赖完整的 TlClient
  */
 
-const PROXY_URL = 'http://localhost:8089'
+const PROXY_URL = process.env.PROXY_URL || 'http://localhost:8089'
 
 async function testInitSession() {
 	console.log('📡 Testing /chatbbc/init_session...')
@@ -88,7 +88,7 @@ async function main() {
 	} catch (error) {
 		console.error('\n❌ Test failed:', error)
 		console.log('\nMake sure the proxy server is running:')
-		console.log('  tsx src/TlProxyServer.ts')
+		console.log('  npm run start:tl-proxy')
 		process.exit(1)
 	}
 }

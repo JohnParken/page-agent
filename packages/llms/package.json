@@ -47,8 +47,8 @@
         "test:live": "vitest run --project llms:live",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js",
-        "start:tl-proxy": "TL_PROXY_LOG_LEVEL=debug tsx src/dev-tools/TlProxyServer.ts",
-        "test:tl-proxy": "tsx src/dev-tools/test-tl-proxy.ts"
+        "start:tl-proxy": "TL_PROXY_LOG_LEVEL=debug node src/dev-tools/TlProxyServer.ts",
+        "test:tl-proxy": "node src/dev-tools/test-tl-proxy.ts"
     },
     "dependencies": {
         "chalk": "^5.3.0"
@@ -57,7 +57,6 @@
         "zod": "^3.25.0 || ^4.0.0"
     },
     "devDependencies": {
-        "tsx": "^4.19.0",
         "zod": "^4.4.3"
     }
 }

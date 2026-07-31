@@ -1,6 +1,4 @@
-import { Motion } from 'ai-motion'
 import { BookOpen, Globe } from 'lucide-react'
-import { useEffect, useRef } from 'react'
 import { siGithub } from 'simple-icons'
 
 import { TypingAnimation } from '@/components/ui/typing-animation'
@@ -40,55 +38,15 @@ export function Logo({ className }: { className?: string }) {
 	return <img src="/assets/page-agent-256.webp" alt="Page Agent" className={cn('', className)} />
 }
 
-// Full-screen ai-motion glow overlay, shown only while running
+// Full-screen CSS glow overlay, shown only while running
 export function MotionOverlay({ active }: { active: boolean }) {
-	const containerRef = useRef<HTMLDivElement>(null)
-	const motionRef = useRef<Motion | null>(null)
-
-	useEffect(() => {
-		try {
-			const mode = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-			const motion = new Motion({
-				mode,
-				borderWidth: 4,
-				borderRadius: 14,
-				glowWidth: mode === 'dark' ? 120 : 60,
-				styles: { position: 'absolute', inset: '0' },
-			})
-			motionRef.current = motion
-			containerRef.current!.appendChild(motion.element)
-			motion.autoResize(containerRef.current!)
-		} catch (e) {
-			console.warn('[MotionOverlay] Motion unavailable:', e)
-		}
-
-		return () => {
-			motionRef.current?.dispose()
-			motionRef.current = null
-		}
-	}, [])
-
-	useEffect(() => {
-		const motion = motionRef.current
-		if (!motion) return
-
-		let disposed = false
-		if (active) {
-			motion.start()
-			motion.fadeIn()
-		} else {
-			motion.fadeOut().then(() => !disposed && motion.pause())
-		}
-		return () => {
-			disposed = true
-		}
-	}, [active])
-
 	return (
 		<div
-			ref={containerRef}
-			className="pointer-events-none absolute inset-0 z-10 opacity-60 overflow-hidden"
-			style={{ display: active ? undefined : 'none' }}
+			aria-hidden="true"
+			className={cn(
+				'agent-motion-overlay pointer-events-none absolute inset-0 z-10 rounded-[14px] transition-opacity duration-300',
+				active ? 'opacity-60' : 'hidden opacity-0'
+			)}
 		/>
 	)
 }

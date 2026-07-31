@@ -45,8 +45,5 @@
         "test": "vitest run",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js"
-    },
-    "dependencies": {
-        "ai-motion": "^0.4.8"
     }
 }

@@ -37,11 +37,7 @@ dotenvConfig({ path: resolve(__dirname, '../../../.env') })
 
 const TEST_TIMEOUT = 30_000
 
-/**
- * Mirrors `packages/website/src/pages/docs/features/models/page.tsx`.
- * This package cannot depend on the website, so the list is duplicated here.
- * Keep both lists in sync manually when models are added or renamed.
- */
+/** Supported models exercised by the live compatibility suite. */
 const MODEL_GROUPS: Record<string, string[]> = {
 	Qwen: [
 		'qwen3.7-max',

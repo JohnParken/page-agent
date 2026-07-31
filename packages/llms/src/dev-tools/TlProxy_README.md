@@ -12,17 +12,11 @@
 
 ## 快速开始
 
-### 1. 安装 tsx（如果还没有）
-
-```bash
-npm install -g tsx
-```
-
-### 2. 启动代理服务器
+### 1. 启动代理服务器
 
 ```bash
 cd packages/llms
-tsx src/TlProxyServer.ts
+npm run start:tl-proxy
 ```
 
 或者使用环境变量配置：
@@ -31,10 +25,12 @@ tsx src/TlProxyServer.ts
 PROXY_PORT=8089 \
 QWEN_BASE_URL=https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run \
 QWEN_MODEL=qwen3.5-plus \
-tsx src/TlProxyServer.ts
+npm run start:tl-proxy
 ```
 
-### 3. 在 TlAiClient 中使用代理
+该脚本使用项目要求的 Node.js 版本原生运行 TypeScript，不需要额外安装 `tsx`。
+
+### 2. 在 TlAiClient 中使用代理
 
 将 `endpointAgent` 设置为代理服务器地址：
 
@@ -51,7 +47,7 @@ const client = new TlAiClient({
 })
 ```
 
-### 4. 在浏览器扩展中使用
+### 3. 在浏览器扩展中使用
 
 在 ConfigPanel 中：
 
@@ -78,6 +74,7 @@ TlClient → TlProxyServer (localhost:8089) → qwen3.5-plus API
 | 变量                  | 默认值                                                   | 说明                                          |
 | --------------------- | -------------------------------------------------------- | --------------------------------------------- |
 | `PROXY_PORT`          | 8089                                                     | 代理服务器监听端口                            |
+| `PROXY_URL`           | http://localhost:8089                                    | `test:tl-proxy` 使用的代理地址                |
 | `QWEN_BASE_URL`       | https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run | 后端 qwen API 地址                            |
 | `QWEN_MODEL`          | qwen3.5-plus                                             | 使用的模型名称                                |
 | `TL_PROXY_LOG_LEVEL`  | `info`                                                   | 日志级别：`debug` / `info` / `warn` / `error` |

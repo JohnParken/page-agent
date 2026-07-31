@@ -21,14 +21,14 @@ For local development workflows, setup, local LLM config, extension development,
 2. Update documentation as needed
 3. Add JSDoc for public APIs
 4. Build and lint everything
-5. Test in our demo website, and on other websites if applicable
+5. Test with the local demo and on other websites if applicable
 6. Include screenshots for UI changes
 
 ### Vibe Coding with AI
 
 -   Vibe coding is **NOT** allowed for the core lib or the extension!!!
--   Vibe coding is **RECOMMENDED** when maintaining **the demo, the website, the UI and tests**.
--   Make sure your AI references `AGENTS.md` and `website/AGENTS.md` for better quality.
+-   Vibe coding is **RECOMMENDED** when maintaining **the demo, the UI and tests**.
+-   Make sure your AI references `AGENTS.md` for better quality.
 -   Review anything AI wrote before make a commit. You are the author of anything you commit. NOT AI.
 
 ## 🚫 What We Don't Accept

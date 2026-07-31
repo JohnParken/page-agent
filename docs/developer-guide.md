@@ -19,7 +19,7 @@ For contribution rules and expectations, see [../CONTRIBUTING.md](../CONTRIBUTIN
 
     ```bash
     npm i            # Or `npm ci` if you don't want to change the lockfile
-    npm start        # Start website dev server
+    npm start        # Start extension dev server
     npm run build    # Build everything
     ```
 
@@ -30,7 +30,6 @@ This is a **monorepo** with npm workspaces.
 Published packages:
 
 -   **Page Agent** (`packages/page-agent/`) - Main entry with built-in UI Panel (npm: `page-agent`)
--   **MCP** (`packages/mcp/`) - MCP server for browser control via Page Agent extension (npm: `@page-agent/mcp`)
 -   **Core** (`packages/core/`) - Core agent logic without UI (npm: `@page-agent/core`)
 -   **LLMs** (`packages/llms/`) - LLM client with reflection-before-action mental model
 -   **Page Controller** (`packages/page-controller/`) - DOM operations and visual feedback, independent of LLM
@@ -39,7 +38,6 @@ Published packages:
 Applications:
 
 -   **Extension** (`packages/extension/`) - Browser extension (WXT + React)
--   **Website** (`packages/website/`) - React docs, landing page, and dev playground (private)
 
 > Source-first monorepo with `npm workspaces + ts references + vite alias`. Library `package.json` exports point to `src/*.ts` during development, and point to `dist/*.js` when published. `workspaces` in root `package.json` must be in topological order.
 
@@ -101,6 +99,4 @@ npm run build:ext
 
 ### Adding Documentation
 
-Ask an AI to help you add documentation to the `website/` package. Follow the existing style.
-
-> Our AGENTS.md file and guardrails are designed for this purpose. But please be careful and review anything AI generated.
+Add project documentation under `docs/` and keep README links in sync. Review all generated content before committing it.

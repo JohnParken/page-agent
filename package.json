@@ -9,9 +9,7 @@
         "packages/llms",
         "packages/core",
         "packages/page-agent",
-        "packages/mcp",
-        "packages/extension",
-        "packages/website"
+        "packages/extension"
     ],
     "description": "AI-powered UI agent for web applications",
     "author": "Simon<gaomeng1900>",
@@ -26,12 +24,11 @@
         "npm": "^11.6.3"
     },
     "scripts": {
-        "start": "npm run dev --workspace=@page-agent/website",
+        "start": "npm run dev:ext",
         "dev:ext": "npm run dev -w @page-agent/ext",
         "dev:demo": "npm run dev:demo --workspace=page-agent",
         "build": "node scripts/build.js",
         "build:libs": "node scripts/build-libs.js",
-        "build:website": "npm run build:website --workspace=@page-agent/website",
         "build:ext": "npm run zip -w @page-agent/ext",
         "version": "node scripts/sync-version.js",
         "postpublish": "npm run postpublish --workspaces --if-present",

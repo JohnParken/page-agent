@@ -24,7 +24,7 @@ export default defineConfig({
 		},
 		outDir: resolve(__dirname, 'dist', 'lib'),
 		rollupOptions: {
-			external: ['@page-agent/*', 'ai-motion'],
+			external: ['@page-agent/*'],
 			onwarn: function (message, handler) {
 				if (message.code === 'EVAL') return
 				handler(message)
