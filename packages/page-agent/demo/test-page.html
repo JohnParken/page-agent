@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>PageAgent IIFE 单页测试</title>
+		<style>
+			:root {
+				font-family:
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				color: #172033;
+				background: #f3f6fb;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				min-height: 100vh;
+				padding: 48px 20px;
+			}
+
+			main {
+				width: min(720px, 100%);
+				margin: 0 auto;
+			}
+
+			h1 {
+				margin: 0 0 8px;
+				font-size: 28px;
+			}
+
+			.description {
+				margin: 0 0 24px;
+				color: #5c667a;
+			}
+
+			.card {
+				padding: 28px;
+				border: 1px solid #dce3ee;
+				border-radius: 16px;
+				background: #ffffff;
+				box-shadow: 0 12px 32px rgb(42 55 81 / 8%);
+			}
+
+			.form-grid {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 20px;
+			}
+
+			.field {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+
+			.field.full-width {
+				grid-column: 1 / -1;
+			}
+
+			label {
+				font-size: 14px;
+				font-weight: 600;
+			}
+
+			input,
+			select {
+				width: 100%;
+				height: 42px;
+				padding: 0 12px;
+				border: 1px solid #bac5d6;
+				border-radius: 8px;
+				background: #ffffff;
+				color: inherit;
+				font: inherit;
+			}
+
+			input:focus,
+			select:focus {
+				border-color: #2563eb;
+				outline: 3px solid rgb(37 99 235 / 14%);
+			}
+
+			.actions {
+				display: flex;
+				gap: 12px;
+				margin-top: 24px;
+			}
+
+			button {
+				min-width: 96px;
+				height: 40px;
+				padding: 0 18px;
+				border: 0;
+				border-radius: 8px;
+				font: inherit;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			button[type='submit'] {
+				background: #2563eb;
+				color: #ffffff;
+			}
+
+			button[type='reset'] {
+				background: #e8edf5;
+				color: #344054;
+			}
+
+			.result {
+				min-height: 64px;
+				margin: 24px 0 0;
+				padding: 14px;
+				border-radius: 8px;
+				background: #f6f8fc;
+				color: #44506a;
+				white-space: pre-wrap;
+			}
+
+			.tasks {
+				margin-top: 20px;
+				padding: 20px 24px;
+				border-radius: 12px;
+				background: #eaf1ff;
+			}
+
+			.tasks h2 {
+				margin: 0 0 10px;
+				font-size: 16px;
+			}
+
+			.tasks ol {
+				margin: 0;
+				padding-left: 20px;
+				color: #44506a;
+				line-height: 1.8;
+			}
+
+			@media (max-width: 600px) {
+				.form-grid {
+					grid-template-columns: 1fr;
+				}
+
+				.field.full-width {
+					grid-column: auto;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>PageAgent IIFE 单页测试</h1>
+			<p class="description">使用下面的表单验证输入、选择、点击和表单提交能力。</p>
+
+			<section class="card" aria-labelledby="form-title">
+				<h2 id="form-title">用户信息</h2>
+				<form id="test-form">
+					<div class="form-grid">
+						<div class="field">
+							<label for="name">姓名</label>
+							<input id="name" name="name" type="text" placeholder="请输入姓名" required />
+						</div>
+
+						<div class="field">
+							<label for="email">邮箱</label>
+							<input id="email" name="email" type="email" placeholder="name@example.com" required />
+						</div>
+
+						<div class="field">
+							<label for="department">部门</label>
+							<select id="department" name="department" required>
+								<option value="">请选择部门</option>
+								<option value="engineering">研发部</option>
+								<option value="product">产品部</option>
+								<option value="operations">运营部</option>
+							</select>
+						</div>
+
+						<div class="field">
+							<label for="city">办公城市</label>
+							<select id="city" name="city" required>
+								<option value="">请选择城市</option>
+								<option value="hangzhou">杭州</option>
+								<option value="shanghai">上海</option>
+								<option value="beijing">北京</option>
+							</select>
+						</div>
+					</div>
+
+					<div class="actions">
+						<button type="submit">提交</button>
+						<button type="reset">重置</button>
+					</div>
+				</form>
+
+				<pre id="result" class="result" aria-live="polite">等待提交表单。</pre>
+			</section>
+
+			<section class="tasks">
+				<h2>建议测试指令</h2>
+				<ol>
+					<li>在姓名中输入“张三”，邮箱中输入“zhangsan@example.com”。</li>
+					<li>选择研发部和杭州。</li>
+					<li>提交表单，并确认页面显示提交结果。</li>
+					<li>点击重置按钮。</li>
+				</ol>
+			</section>
+		</main>
+
+		<script>
+			const form = document.querySelector('#test-form')
+			const result = document.querySelector('#result')
+
+			form.addEventListener('submit', (event) => {
+				event.preventDefault()
+				const values = Object.fromEntries(new FormData(form))
+				result.textContent = `提交成功：\n${JSON.stringify(values, null, 2)}`
+			})
+
+			form.addEventListener('reset', () => {
+				result.textContent = '表单已重置。'
+			})
+		</script>
+
+		<!-- This script auto-initializes PageAgent with the built-in demo configuration. -->
+		<script src="./page-agent.demo.js?lang=zh-CN"></script>
+	</body>
+</html>

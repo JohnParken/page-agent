@@ -30,7 +30,7 @@ export default defineConfig(() => ({
 				]
 			: []),
 	],
-	publicDir: false,
+	publicDir: resolve(__dirname, 'demo'),
 	build: {
 		lib: {
 			entry: resolve(__dirname, 'src/demo.ts'),
