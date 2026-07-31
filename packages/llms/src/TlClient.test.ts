@@ -75,7 +75,13 @@ const signal = new AbortController().signal
 describe('TlAiClient.invoke — request construction', () => {
 	const tools = { greet: makeTool() }
 
-	it('calls init_session first and reuses session_id for chat', async () => {
+	it('defaults to system_prompt tool calling mode', () => {
+		const { client } = makeClient()
+
+		expect(client.config.toolCallingMode).toBe('system_prompt')
+	})
+
+	it('calls init_session before chat and uses its session_id', async () => {
 		const { client, fetchMock } = makeClient()
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(
@@ -90,22 +96,27 @@ describe('TlAiClient.invoke — request construction', () => {
 		expect(getLastSentBody(fetchMock).data.session_id).toBe('session_123')
 	})
 
-	it('skips init_session when session already initialized', async () => {
+	it('initializes a fresh session before every chat', async () => {
 		const { client, fetchMock } = makeClient()
-		setupSession(fetchMock)
+		setupSession(fetchMock, 'session_1')
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'world' } }))
 		)
 		await client.invoke([], tools, signal)
 
-		fetchMock.mockClear()
+		setupSession(fetchMock, 'session_2')
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'again' } }))
 		)
 		await client.invoke([], tools, signal)
 
-		expect(fetchMock).toHaveBeenCalledTimes(1)
-		expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8089/chatbbc/chat')
+		expect(fetchMock).toHaveBeenCalledTimes(4)
+		expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8089/chatbbc/init_session')
+		expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:8089/chatbbc/chat')
+		expect(fetchMock.mock.calls[2][0]).toBe('http://localhost:8089/chatbbc/init_session')
+		expect(fetchMock.mock.calls[3][0]).toBe('http://localhost:8089/chatbbc/chat')
+		expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string).data.session_id).toBe('session_1')
+		expect(JSON.parse(fetchMock.mock.calls[3][1]!.body as string).data.session_id).toBe('session_2')
 	})
 })
 

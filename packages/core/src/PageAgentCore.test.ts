@@ -312,7 +312,30 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 	})
 
 	describe('system_prompt tool injection', () => {
-		it('documents concrete parameter formats for every built-in action', async () => {
+		it('defaults Tl provider to system_prompt mode and injects tool schemas', async () => {
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
+				)
+				.mockResolvedValueOnce(doneResponse('all done'))
+
+			const agent = createAgent(fetchMock, {
+				provider: 'tl',
+				endpointAgent: 'localhost:8089',
+				customSystemPrompt: 'custom system prompt',
+			})
+
+			expect(agent.config.toolCallingMode).toBe('system_prompt')
+			await agent.execute('do something')
+
+			const chatBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
+				data: { txt: string }
+			}
+			expect(chatBody.data.txt).toContain('<tools>')
+			expect(chatBody.data.txt).toContain('"type": "function"')
+		})
+
+		it('documents concrete parameter formats for every enabled built-in action', async () => {
 			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
 			const agent = createAgent(fetchMock, { customSystemPrompt: undefined })
 
@@ -323,22 +346,44 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			}
 			const systemContent = requestBody.messages.find((m) => m.role === 'system')?.content ?? ''
 
+			// Enabled by default: always documented
 			for (const actionName of [
 				'done',
 				'wait',
-				'ask_user',
 				'click_element_by_index',
 				'input_text',
 				'select_dropdown_option',
 				'scroll',
 				'scroll_horizontally',
-				'execute_javascript',
 			]) {
 				expect(systemContent).toContain(`\`${actionName}\``)
+			}
+			// Disabled by default: never advertised (ask_user has no callback, execute_javascript is gated)
+			for (const actionName of ['ask_user', 'execute_javascript']) {
+				expect(systemContent).not.toContain(`\`${actionName}\``)
 			}
 			expect(systemContent).toContain('{"index":7,"text":"search terms"}')
 			expect(systemContent).toContain('{"down":true,"num_pages":0.5}')
 			expect(systemContent).not.toContain('"param1"')
+		})
+
+		it('documents conditionally-enabled actions when enabled', async () => {
+			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
+			const agent = createAgent(fetchMock, {
+				customSystemPrompt: undefined,
+				experimentalScriptExecutionTool: true,
+			})
+			agent.onAskUser = async () => 'yes'
+
+			await agent.execute('do something')
+
+			const requestBody = JSON.parse((fetchMock.mock.calls[0][1]!.body as string) ?? '{}') as {
+				messages: { role: string; content: string }[]
+			}
+			const systemContent = requestBody.messages.find((m) => m.role === 'system')?.content ?? ''
+
+			expect(systemContent).toContain('`ask_user`')
+			expect(systemContent).toContain('`execute_javascript`')
 		})
 
 		it('injects the <tools> block even when a customSystemPrompt is used', async () => {

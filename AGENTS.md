@@ -5,7 +5,6 @@
 This is a **monorepo** with npm workspaces:
 
 - **Page Agent** (`packages/page-agent/`) - Main entry with built-in UI Panel, published as `page-agent` on npm
-- **Extension** (`packages/extension/`) - Browser extension (WXT + React)
 
 Internal packages:
 
@@ -17,10 +16,8 @@ Internal packages:
 ## Development Commands
 
 ```bash
-npm start                      # Start extension dev server
 npm run build                  # Build all packages
 npm run build:libs             # Build all libraries
-npm run build:ext              # Build and zip the extension package
 npm run typecheck              # Typecheck all packages
 npm run test                   # Run unit tests across all workspaces
 npm run lint                   # ESLint
@@ -37,7 +34,6 @@ packages/
 ├── core/                    # npm: "@page-agent/core" ⭐ Core agent logic (headless)
 ├── page-agent/              # npm: "page-agent" entry class (with UI + controller + demo builds)
 ├── llms/                    # @page-agent/llms
-├── extension/               # Browser extension
 ├── page-controller/         # @page-agent/page-controller
 └── ui/                      # @page-agent/ui
 ```

@@ -8,8 +8,7 @@
         "packages/ui",
         "packages/llms",
         "packages/core",
-        "packages/page-agent",
-        "packages/extension"
+        "packages/page-agent"
     ],
     "description": "AI-powered UI agent for web applications",
     "author": "Simon<gaomeng1900>",
@@ -24,15 +23,12 @@
         "npm": "^11.6.3"
     },
     "scripts": {
-        "start": "npm run dev:ext",
-        "dev:ext": "npm run dev -w @page-agent/ext",
         "dev:demo": "npm run dev:demo --workspace=page-agent",
         "build": "node scripts/build.js",
         "build:libs": "node scripts/build-libs.js",
-        "build:ext": "npm run zip -w @page-agent/ext",
         "version": "node scripts/sync-version.js",
         "postpublish": "npm run postpublish --workspaces --if-present",
-        "typecheck": "tsc --noEmit -p tsconfig.typecheck.json && tsc --noEmit -p packages/extension/tsconfig.json",
+        "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
         "test": "npm test --workspaces --if-present",
         "test:live": "npm run test:live --workspaces --if-present",
         "lint": "eslint .",

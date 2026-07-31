@@ -18,9 +18,9 @@ For contribution rules and expectations, see [../CONTRIBUTING.md](../CONTRIBUTIN
 2. **Setup**
 
     ```bash
-    npm i            # Or `npm ci` if you don't want to change the lockfile
-    npm start        # Start extension dev server
-    npm run build    # Build everything
+    npm i              # Or `npm ci` if you don't want to change the lockfile
+    npm run dev:demo   # Start the demo dev server
+    npm run build      # Build everything
     ```
 
 ## 📦 Project Structure
@@ -34,10 +34,6 @@ Published packages:
 -   **LLMs** (`packages/llms/`) - LLM client with reflection-before-action mental model
 -   **Page Controller** (`packages/page-controller/`) - DOM operations and visual feedback, independent of LLM
 -   **UI** (`packages/ui/`) - Panel and i18n, decoupled from PageAgent
-
-Applications:
-
--   **Extension** (`packages/extension/`) - Browser extension (WXT + React)
 
 > Source-first monorepo with `npm workspaces + ts references + vite alias`. Library `package.json` exports point to `src/*.ts` during development, and point to `dist/*.js` when published. `workspaces` in root `package.json` must be in topological order.
 
@@ -69,15 +65,6 @@ If your AI assistant does not support [AGENTS.md](https://agents.md/). Add an al
 
 -   **Restart the dev server** to load new env vars
 -   If not provided, the demo will use the free testing proxy by default. By using it, you agree to its [terms](./terms-and-privacy.md).
-
-### Extension Development
-
-```bash
-npm run dev:ext
-npm run build:ext
-```
-
--   Update `packages/extension/docs/extension_api.md` for API integration details
 
 ### Testing on Other Websites
 

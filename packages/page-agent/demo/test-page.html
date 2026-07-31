@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>PageAgent IIFE 单页测试</title>
+		<title>Page Agent 工具能力测试页</title>
 		<style>
 			:root {
 				font-family:
@@ -22,59 +22,94 @@
 
 			body {
 				margin: 0;
-				min-height: 100vh;
-				padding: 48px 20px;
 			}
 
 			main {
-				width: min(720px, 100%);
+				width: min(960px, calc(100% - 32px));
 				margin: 0 auto;
+				padding: 44px 0 80px;
+			}
+
+			h1,
+			h2,
+			p {
+				margin-top: 0;
 			}
 
 			h1 {
-				margin: 0 0 8px;
-				font-size: 28px;
+				margin-bottom: 8px;
+				font-size: clamp(26px, 4vw, 38px);
 			}
 
-			.description {
-				margin: 0 0 24px;
+			h2 {
+				font-size: 19px;
+			}
+
+			.description,
+			.help {
 				color: #5c667a;
 			}
 
+			.badge {
+				display: inline-block;
+				margin-bottom: 14px;
+				padding: 5px 10px;
+				border-radius: 999px;
+				background: #dbeafe;
+				color: #1d4ed8;
+				font-size: 13px;
+				font-weight: 700;
+			}
+
+			.grid {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 18px;
+				margin-top: 28px;
+			}
+
 			.card {
-				padding: 28px;
+				padding: 24px;
 				border: 1px solid #dce3ee;
 				border-radius: 16px;
 				background: #ffffff;
-				box-shadow: 0 12px 32px rgb(42 55 81 / 8%);
+				box-shadow: 0 10px 28px rgb(42 55 81 / 7%);
+			}
+
+			.card.full-width {
+				grid-column: 1 / -1;
 			}
 
 			.form-grid {
 				display: grid;
 				grid-template-columns: repeat(2, minmax(0, 1fr));
-				gap: 20px;
+				gap: 16px;
 			}
 
 			.field {
 				display: flex;
 				flex-direction: column;
-				gap: 8px;
+				gap: 7px;
 			}
 
 			.field.full-width {
 				grid-column: 1 / -1;
 			}
 
-			label {
+			label,
+			legend {
 				font-size: 14px;
-				font-weight: 600;
+				font-weight: 650;
 			}
 
-			input,
-			select {
+			input[type='text'],
+			input[type='email'],
+			textarea,
+			select,
+			[contenteditable='true'] {
 				width: 100%;
-				height: 42px;
-				padding: 0 12px;
+				min-height: 42px;
+				padding: 10px 12px;
 				border: 1px solid #bac5d6;
 				border-radius: 8px;
 				background: #ffffff;
@@ -82,73 +117,157 @@
 				font: inherit;
 			}
 
+			textarea {
+				min-height: 92px;
+				resize: vertical;
+			}
+
+			[contenteditable='true']:empty::before {
+				color: #98a2b3;
+				content: attr(data-placeholder);
+			}
+
 			input:focus,
-			select:focus {
+			textarea:focus,
+			select:focus,
+			[contenteditable='true']:focus {
 				border-color: #2563eb;
 				outline: 3px solid rgb(37 99 235 / 14%);
 			}
 
+			fieldset {
+				margin: 0;
+				padding: 12px;
+				border: 1px solid #dce3ee;
+				border-radius: 10px;
+			}
+
+			.choice-row,
 			.actions {
 				display: flex;
+				flex-wrap: wrap;
 				gap: 12px;
-				margin-top: 24px;
+			}
+
+			.choice-row label {
+				display: inline-flex;
+				align-items: center;
+				gap: 7px;
+				font-weight: 500;
 			}
 
 			button {
-				min-width: 96px;
-				height: 40px;
-				padding: 0 18px;
+				min-height: 40px;
+				padding: 0 16px;
 				border: 0;
 				border-radius: 8px;
+				background: #2563eb;
+				color: #ffffff;
 				font: inherit;
-				font-weight: 600;
+				font-weight: 650;
 				cursor: pointer;
 			}
 
-			button[type='submit'] {
-				background: #2563eb;
-				color: #ffffff;
-			}
-
-			button[type='reset'] {
+			button.secondary {
 				background: #e8edf5;
 				color: #344054;
 			}
 
-			.result {
-				min-height: 64px;
-				margin: 24px 0 0;
-				padding: 14px;
-				border-radius: 8px;
+			button.danger {
+				background: #b42318;
+			}
+
+			button:disabled {
+				cursor: not-allowed;
+				opacity: 0.5;
+			}
+
+			.output {
+				min-height: 58px;
+				margin: 16px 0 0;
+				padding: 13px;
+				border-radius: 9px;
 				background: #f6f8fc;
-				color: #44506a;
+				color: #344054;
 				white-space: pre-wrap;
 			}
 
-			.tasks {
-				margin-top: 20px;
-				padding: 20px 24px;
-				border-radius: 12px;
-				background: #eaf1ff;
+			.success {
+				background: #ecfdf3;
+				color: #027a48;
 			}
 
-			.tasks h2 {
-				margin: 0 0 10px;
-				font-size: 16px;
+			.dynamic-box {
+				margin-top: 14px;
+				padding: 14px;
+				border: 1px dashed #7f8da3;
+				border-radius: 9px;
 			}
 
-			.tasks ol {
-				margin: 0;
-				padding-left: 20px;
-				color: #44506a;
-				line-height: 1.8;
+			.scroll-box {
+				height: 180px;
+				overflow-y: auto;
+				border: 1px solid #cbd5e1;
+				border-radius: 10px;
 			}
 
-			@media (max-width: 600px) {
+			.scroll-item {
+				min-height: 80px;
+				padding: 18px;
+				border-bottom: 1px solid #e5e7eb;
+			}
+
+			.horizontal-box {
+				display: flex;
+				gap: 12px;
+				overflow-x: auto;
+				padding: 12px;
+				border: 1px solid #cbd5e1;
+				border-radius: 10px;
+			}
+
+			.horizontal-item {
+				flex: 0 0 220px;
+				padding: 24px 16px;
+				border-radius: 8px;
+				background: #eef2ff;
+				text-align: center;
+			}
+
+			.spacer {
+				display: grid;
+				min-height: 65vh;
+				place-items: center;
+				color: #7f8da3;
+			}
+
+			.event-log {
+				max-height: 260px;
+				overflow: auto;
+				font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+				font-size: 13px;
+				line-height: 1.7;
+			}
+
+			dialog {
+				width: min(420px, calc(100% - 32px));
+				padding: 24px;
+				border: 0;
+				border-radius: 14px;
+				box-shadow: 0 24px 70px rgb(15 23 42 / 30%);
+			}
+
+			dialog::backdrop {
+				background: rgb(15 23 42 / 45%);
+			}
+
+			@media (max-width: 700px) {
+				.grid,
 				.form-grid {
 					grid-template-columns: 1fr;
 				}
 
+				.card.full-width,
 				.field.full-width {
 					grid-column: auto;
 				}
@@ -157,76 +276,258 @@
 	</head>
 	<body>
 		<main>
-			<h1>PageAgent IIFE 单页测试</h1>
-			<p class="description">使用下面的表单验证输入、选择、点击和表单提交能力。</p>
+			<span class="badge">Page Agent test fixture</span>
+			<h1>Page Agent 工具能力测试页</h1>
+			<p class="description">
+				用于验证点击、输入、下拉选择、滚动、等待、动态 DOM 和 JavaScript
+				执行能力。所有操作都会写入页面底部的事件日志。
+			</p>
 
-			<section class="card" aria-labelledby="form-title">
-				<h2 id="form-title">用户信息</h2>
-				<form id="test-form">
-					<div class="form-grid">
-						<div class="field">
-							<label for="name">姓名</label>
-							<input id="name" name="name" type="text" placeholder="请输入姓名" required />
+			<div class="grid">
+				<section class="card full-width" aria-labelledby="form-title">
+					<h2 id="form-title">1. 综合表单</h2>
+					<form id="profile-form">
+						<div class="form-grid">
+							<div class="field">
+								<label for="name">姓名</label>
+								<input id="name" name="name" type="text" placeholder="例如：张三" required />
+							</div>
+
+							<div class="field">
+								<label for="email">邮箱</label>
+								<input
+									id="email"
+									name="email"
+									type="email"
+									placeholder="name@example.com"
+									required
+								/>
+							</div>
+
+							<div class="field">
+								<label for="department">部门</label>
+								<select id="department" name="department" required>
+									<option value="">请选择部门</option>
+									<option value="engineering">研发部</option>
+									<option value="product">产品部</option>
+									<option value="operations">运营部</option>
+								</select>
+							</div>
+
+							<div class="field">
+								<label for="notes">备注</label>
+								<textarea id="notes" name="notes" placeholder="请输入测试备注"></textarea>
+							</div>
+
+							<fieldset>
+								<legend>通知方式</legend>
+								<div class="choice-row">
+									<label><input name="channels" type="checkbox" value="email" /> 邮件</label>
+									<label><input name="channels" type="checkbox" value="sms" /> 短信</label>
+									<label><input name="channels" type="checkbox" value="push" /> 站内信</label>
+								</div>
+							</fieldset>
+
+							<fieldset>
+								<legend>优先级</legend>
+								<div class="choice-row">
+									<label><input name="priority" type="radio" value="normal" checked /> 普通</label>
+									<label><input name="priority" type="radio" value="urgent" /> 紧急</label>
+								</div>
+							</fieldset>
+
+							<div class="field full-width">
+								<label for="rich-note">可编辑内容</label>
+								<div
+									id="rich-note"
+									contenteditable="true"
+									data-placeholder="测试 contenteditable 输入"
+									role="textbox"
+									aria-multiline="true"
+								></div>
+							</div>
 						</div>
 
-						<div class="field">
-							<label for="email">邮箱</label>
-							<input id="email" name="email" type="email" placeholder="name@example.com" required />
+						<div class="actions" style="margin-top: 18px">
+							<button type="submit">提交表单</button>
+							<button class="secondary" type="reset">重置表单</button>
 						</div>
+					</form>
+					<pre id="form-result" class="output" aria-live="polite">等待提交表单。</pre>
+				</section>
 
-						<div class="field">
-							<label for="department">部门</label>
-							<select id="department" name="department" required>
-								<option value="">请选择部门</option>
-								<option value="engineering">研发部</option>
-								<option value="product">产品部</option>
-								<option value="operations">运营部</option>
-							</select>
-						</div>
-
-						<div class="field">
-							<label for="city">办公城市</label>
-							<select id="city" name="city" required>
-								<option value="">请选择城市</option>
-								<option value="hangzhou">杭州</option>
-								<option value="shanghai">上海</option>
-								<option value="beijing">北京</option>
-							</select>
-						</div>
-					</div>
-
+				<section class="card" aria-labelledby="click-title">
+					<h2 id="click-title">2. 点击与状态</h2>
+					<p class="help">测试普通点击、计数器、禁用状态和弹窗交互。</p>
 					<div class="actions">
-						<button type="submit">提交</button>
-						<button type="reset">重置</button>
+						<button id="counter-button" type="button">计数器 +1</button>
+						<button id="modal-button" class="secondary" type="button">打开确认弹窗</button>
 					</div>
-				</form>
+					<p id="counter-result" class="output" aria-live="polite">当前计数：0</p>
+				</section>
 
-				<pre id="result" class="result" aria-live="polite">等待提交表单。</pre>
-			</section>
+				<section class="card" aria-labelledby="dynamic-title">
+					<h2 id="dynamic-title">3. 动态 DOM 与等待</h2>
+					<p class="help">按钮会在 2 秒后创建一个新的可点击元素。</p>
+					<button id="load-button" type="button">加载动态内容</button>
+					<div id="dynamic-area" class="dynamic-box" aria-live="polite">尚未加载。</div>
+				</section>
 
-			<section class="tasks">
-				<h2>建议测试指令</h2>
-				<ol>
-					<li>在姓名中输入“张三”，邮箱中输入“zhangsan@example.com”。</li>
-					<li>选择研发部和杭州。</li>
-					<li>提交表单，并确认页面显示提交结果。</li>
-					<li>点击重置按钮。</li>
-				</ol>
+				<section class="card full-width" aria-labelledby="scroll-title">
+					<h2 id="scroll-title">4. 容器滚动</h2>
+					<p class="help">分别测试指定容器的纵向和横向滚动。</p>
+					<div id="vertical-scroll" class="scroll-box" data-scrollable="true" tabindex="0">
+						<div class="scroll-item">纵向项目 1</div>
+						<div class="scroll-item">纵向项目 2</div>
+						<div class="scroll-item">纵向项目 3</div>
+						<div class="scroll-item">纵向项目 4</div>
+						<div class="scroll-item">
+							纵向终点
+							<button id="vertical-target" class="secondary" type="button">点击纵向终点</button>
+						</div>
+					</div>
+
+					<div
+						id="horizontal-scroll"
+						class="horizontal-box"
+						data-scrollable="true"
+						tabindex="0"
+						style="margin-top: 16px"
+					>
+						<div class="horizontal-item">横向卡片 A</div>
+						<div class="horizontal-item">横向卡片 B</div>
+						<div class="horizontal-item">横向卡片 C</div>
+						<div class="horizontal-item">横向卡片 D</div>
+						<div class="horizontal-item">
+							横向终点 E<br />
+							<button id="horizontal-target" class="secondary" type="button">点击横向终点</button>
+						</div>
+					</div>
+					<p id="scroll-result" class="output" aria-live="polite">尚未点击滚动终点。</p>
+				</section>
+
+				<section class="card full-width" aria-labelledby="script-title">
+					<h2 id="script-title">5. JavaScript 执行目标</h2>
+					<p class="help">
+						让 Agent 使用 execute_javascript，把下面元素的 <code>data-agent-value</code> 设置为
+						<code>verified</code>，并将文字改为“JavaScript 执行成功”。
+					</p>
+					<div id="javascript-target" class="output" data-agent-value="pending">
+						等待 JavaScript 操作。
+					</div>
+				</section>
+			</div>
+
+			<div class="spacer" aria-hidden="true">继续向下滚动，测试页面级 scroll 工具</div>
+
+			<section class="card" aria-labelledby="finish-title">
+				<h2 id="finish-title">6. 页面滚动终点与事件日志</h2>
+				<p>看到这里表示页面级纵向滚动成功。</p>
+				<button id="page-bottom-button" type="button">点击页面终点</button>
+				<pre id="event-log" class="output event-log" aria-live="polite">事件日志：\n</pre>
 			</section>
 		</main>
 
+		<dialog id="confirm-dialog" aria-labelledby="dialog-title">
+			<h2 id="dialog-title">确认操作</h2>
+			<p>请选择“确认”，完成弹窗点击测试。</p>
+			<div class="actions">
+				<button id="dialog-confirm" type="button">确认</button>
+				<button id="dialog-cancel" class="secondary" type="button">取消</button>
+			</div>
+		</dialog>
+
 		<script>
-			const form = document.querySelector('#test-form')
-			const result = document.querySelector('#result')
+			const eventLog = document.querySelector('#event-log')
+			const logEvent = (message) => {
+				const timestamp = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+				eventLog.textContent += `[${timestamp}] ${message}\n`
+			}
+
+			const form = document.querySelector('#profile-form')
+			const formResult = document.querySelector('#form-result')
 
 			form.addEventListener('submit', (event) => {
 				event.preventDefault()
-				const values = Object.fromEntries(new FormData(form))
-				result.textContent = `提交成功：\n${JSON.stringify(values, null, 2)}`
+				const formData = new FormData(form)
+				const values = Object.fromEntries(formData)
+				values.channels = formData.getAll('channels')
+				values.richNote = document.querySelector('#rich-note').textContent.trim()
+				formResult.classList.add('success')
+				formResult.textContent = `提交成功：\n${JSON.stringify(values, null, 2)}`
+				logEvent('综合表单提交成功')
 			})
 
 			form.addEventListener('reset', () => {
-				result.textContent = '表单已重置。'
+				requestAnimationFrame(() => {
+					document.querySelector('#rich-note').textContent = ''
+					formResult.classList.remove('success')
+					formResult.textContent = '表单已重置。'
+					logEvent('综合表单已重置')
+				})
+			})
+
+			let count = 0
+			document.querySelector('#counter-button').addEventListener('click', () => {
+				count += 1
+				document.querySelector('#counter-result').textContent = `当前计数：${count}`
+				logEvent(`计数器更新为 ${count}`)
+			})
+
+			const dialog = document.querySelector('#confirm-dialog')
+			document.querySelector('#modal-button').addEventListener('click', () => {
+				dialog.showModal()
+				logEvent('确认弹窗已打开')
+			})
+			document.querySelector('#dialog-confirm').addEventListener('click', () => {
+				dialog.close()
+				logEvent('弹窗操作已确认')
+			})
+			document.querySelector('#dialog-cancel').addEventListener('click', () => {
+				dialog.close()
+				logEvent('弹窗操作已取消')
+			})
+
+			document.querySelector('#load-button').addEventListener('click', (event) => {
+				event.currentTarget.disabled = true
+				const area = document.querySelector('#dynamic-area')
+				area.textContent = '加载中，请等待 2 秒……'
+				logEvent('开始加载动态内容')
+
+				setTimeout(() => {
+					area.innerHTML = '<button id="dynamic-button" type="button">点击动态按钮</button>'
+					area.querySelector('#dynamic-button').addEventListener('click', () => {
+						area.classList.add('success')
+						area.textContent = '动态按钮点击成功。'
+						logEvent('动态按钮点击成功')
+					})
+					logEvent('动态内容加载完成')
+				}, 2000)
+			})
+
+			document.querySelector('#vertical-target').addEventListener('click', () => {
+				document.querySelector('#scroll-result').textContent = '纵向滚动终点点击成功。'
+				logEvent('纵向滚动终点点击成功')
+			})
+			document.querySelector('#horizontal-target').addEventListener('click', () => {
+				document.querySelector('#scroll-result').textContent += '\n横向滚动终点点击成功。'
+				logEvent('横向滚动终点点击成功')
+			})
+			document.querySelector('#page-bottom-button').addEventListener('click', () => {
+				logEvent('页面滚动终点点击成功')
+			})
+
+			const javascriptTarget = document.querySelector('#javascript-target')
+			const observer = new MutationObserver(() => {
+				if (javascriptTarget.dataset.agentValue === 'verified') {
+					javascriptTarget.classList.add('success')
+					logEvent('JavaScript 执行目标验证成功')
+					observer.disconnect()
+				}
+			})
+			observer.observe(javascriptTarget, {
+				attributes: true,
+				attributeFilter: ['data-agent-value'],
 			})
 		</script>
 

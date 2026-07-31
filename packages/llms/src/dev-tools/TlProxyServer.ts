@@ -70,7 +70,7 @@ export class TlProxyServer {
 
 	private createServer(): http.Server {
 		return http.createServer(async (req, res) => {
-			res.setHeader('Content-Type', 'application/json')
+			res.setHeader('Content-Type', 'application/json; charset=utf-8')
 			res.setHeader('Access-Control-Allow-Origin', '*')
 			res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
 			res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
@@ -193,8 +193,8 @@ export class TlProxyServer {
 			this.logger.debug('Qwen response body', JSON.stringify(apiData))
 
 			if (stream) {
-				// Streaming response - TlClient expects a plain text stream
-				res.writeHead(200, { 'Content-Type': 'text/plain' })
+				// TlClient reads the streamed JSON payload with a UTF-8 decoder.
+				res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
 
 				let responseContent = ''
 				if (apiData.choices?.[0]?.message?.content) {
@@ -213,7 +213,7 @@ export class TlProxyServer {
 					content: responseContent,
 				})
 
-				res.write(responseContent)
+				res.write(Buffer.from(responseContent, 'utf8'))
 				res.end()
 			} else {
 				// Non-streaming response
@@ -272,7 +272,7 @@ export class TlProxyServer {
 		return new Promise((resolve, reject) => {
 			let body = ''
 			req.on('data', (chunk) => {
-				body += chunk.toString()
+				body += chunk.toString('utf8')
 			})
 			req.on('end', () => {
 				try {

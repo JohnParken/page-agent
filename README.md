@@ -11,7 +11,6 @@
 [![size](https://img.shields.io/bundlephobia/minzip/page-agent?style=flat-square&label=size)](https://bundlephobia.com/package/page-agent)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](https://opensource.org/licenses/MIT)
 [![typescript](https://img.shields.io/badge/%3C%2F%3E-typescript-blue?style=flat-square)](http://www.typescriptlang.org/)
-[![Chrome Web Store Rating](https://img.shields.io/chrome-web-store/rating/akldabonmimlicnjlflnapfeklbfemhj?style=flat-square&label=chrome%20rating)](https://chromewebstore.google.com/detail/page-agent-ext/akldabonmimlicnjlflnapfeklbfemhj)
 [![GitHub stars](https://img.shields.io/github/stars/alibaba/page-agent.svg)](https://github.com/alibaba/page-agent)
 
 The GUI Agent Living in Your Webpage. One script gives any web page its own AI agent.
@@ -37,14 +36,12 @@ The GUI Agent Living in Your Webpage. One script gives any web page its own AI a
     -   No screenshots. No multi-modal LLMs or special permissions needed.
 -   **🧠 Bring your own LLMs**
     -   Works with most mainstream models, including locally deployed ones. See [supported models](https://alibaba.github.io/page-agent/docs/features/models).
--   **🐙 Optional [chrome extension](https://alibaba.github.io/page-agent/docs/features/chrome-extension) for multi-page tasks.**
 
 ## 💡 Use Cases
 
 -   **SaaS AI Copilot** — Ship an AI copilot in your product in lines of code. No backend rewrite.
 -   **Smart Form Filling** — Turn 20-click workflows into one sentence. Perfect for ERP, CRM, and admin systems.
 -   **Accessibility** — Make any web app accessible through natural language. Voice commands, screen readers, zero barrier.
--   **Multi-page Agent** — Extend your own web agent's reach across browser tabs via the [Chrome extension](https://alibaba.github.io/page-agent/docs/features/chrome-extension).
 
 ## 🚀 Quick Start
 
@@ -86,6 +83,36 @@ await agent.execute('Click the login button')
 ```
 
 For more programmatic usage, see [📖 Documentations](https://alibaba.github.io/page-agent/docs/introduction/overview).
+
+## 🧪 Test Page Agent Tools Locally
+
+The repository includes a local test page that covers text input, checkboxes, radio buttons, dropdowns, form submission, clicks, dialogs, asynchronous DOM updates, scrolling, and JavaScript execution.
+
+Start the demo server:
+
+```bash
+npm run dev:demo
+```
+
+Then open [http://localhost:5174/test-page.html](http://localhost:5174/test-page.html) and give Page Agent the following task:
+
+```text
+请完成这个测试页的全部测试：
+
+1. 姓名填写“张三”，邮箱填写“zhangsan@example.com”，备注填写“Page Agent 测试备注”。
+2. 部门选择“研发部”。
+3. 勾选“邮件”和“站内信”，优先级选择“紧急”。
+4. 在可编辑内容中输入“Contenteditable 输入成功”。
+5. 提交表单并确认页面显示提交成功。
+6. 点击计数器两次。
+7. 打开确认弹窗并点击确认。
+8. 加载动态内容，等待加载完成后点击动态按钮。
+9. 滚动纵向容器并点击纵向终点。
+10. 横向滚动容器并点击横向终点。
+11. 使用 JavaScript 将 #javascript-target 的 data-agent-value 设置为 verified，并将文字改成“JavaScript 执行成功”。
+12. 滚动到页面最底部并点击页面终点。
+13. 检查事件日志，然后报告每一项是否成功。
+```
 
 ## 🤝 Contributing
 

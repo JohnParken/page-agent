@@ -165,6 +165,7 @@ export interface LLMConfig {
 
 	/**
 	 * Tl AI specific: tool calling mode, either 'api' or 'system_prompt'.
+	 * Defaults to 'system_prompt' when the provider is 'tl'.
 	 */
 	toolCallingMode?: 'api' | 'system_prompt'
 }

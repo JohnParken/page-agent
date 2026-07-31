@@ -30,6 +30,19 @@ export type * from './types'
 
 export type PageAgentCoreConfig = AgentConfig & { pageController: PageController }
 
+/** Hand-written example parameters per tool, shown in the "Built-in action formats" table. */
+const TOOL_EXAMPLES: Record<string, string> = {
+	done: '{"text":"Task completed.","success":true}',
+	wait: '{"seconds":1}',
+	ask_user: '{"question":"Which option should I choose?"}',
+	click_element_by_index: '{"index":12}',
+	input_text: '{"index":7,"text":"search terms"}',
+	select_dropdown_option: '{"index":9,"text":"Option label"}',
+	scroll: '{"down":true,"num_pages":0.5}',
+	scroll_horizontally: '{"right":true,"pixels":300,"index":15}',
+	execute_javascript: '{"script":"return document.title"}',
+}
+
 /**
  * AI agent for browser automation.
  *
@@ -110,7 +123,9 @@ export class PageAgentCore extends EventTarget {
 	constructor(config: PageAgentCoreConfig) {
 		super()
 
-		this.config = { ...config, maxSteps: config.maxSteps ?? 40 }
+		const toolCallingMode =
+			config.provider === 'tl' ? config.toolCallingMode ?? 'system_prompt' : config.toolCallingMode
+		this.config = { ...config, toolCallingMode, maxSteps: config.maxSteps ?? 40 }
 
 		this.#llm = new LLM(this.config)
 		this.tools = new Map(tools)
@@ -495,7 +510,10 @@ export class PageAgentCore extends EventTarget {
 			)
 
 			// MacroTool output-format documentation is always included for the default prompt
-			prompt = `${systemPrompt}\n\n${SYSTEM_PROMPT_TOOLS}`
+			prompt = `${systemPrompt}\n\n${SYSTEM_PROMPT_TOOLS.replace(
+				'<!-- tool-table -->',
+				this.#buildToolsTable()
+			)}`
 		}
 
 		// In system_prompt tool-calling mode, inject the dynamic <tools> block.
@@ -506,6 +524,23 @@ export class PageAgentCore extends EventTarget {
 		}
 
 		return prompt
+	}
+
+	/**
+	 * Build the "Built-in action formats" table from the live `this.tools` map.
+	 * Disabled tools (e.g. `execute_javascript` behind experimentalScriptExecutionTool,
+	 * `ask_user` without a callback) are omitted, so the model never attempts a
+	 * tool that would fail with "Unknown action".
+	 */
+	#buildToolsTable(): string {
+		const rows = Array.from(this.tools.entries()).map(([name, t]) => {
+			const example = TOOL_EXAMPLES[name] ?? '{...}'
+			const purpose = t.description.replaceAll('|', '\\|').replace(/\s*\n+\s*/g, ' ')
+			return `| \`${name}\` | \`${example}\` | ${purpose} |`
+		})
+		return `Built-in action formats:\n\n| Action | Parameters | Purpose |\n| ------ | ---------- | ------- |\n${rows.join(
+			'\n'
+		)}`
 	}
 
 	/**

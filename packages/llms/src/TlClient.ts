@@ -24,7 +24,7 @@ export interface TlAiConfig {
 	appId?: string
 	trCode?: string
 	trVersion?: string
-	/** Tool calling mode, default 'api'. */
+	/** Tool calling mode, default 'system_prompt'. */
 	toolCallingMode?: ToolCallingMode
 	/** Optional custom fetch implementation. */
 	customFetch?: typeof globalThis.fetch
@@ -168,7 +168,6 @@ function extractToolCall(
 export class TlAiClient implements LLMClient {
 	config: Required<Omit<TlAiConfig, 'customFetch'>> & Pick<TlAiConfig, 'customFetch'>
 	private fetch: typeof globalThis.fetch
-	private sessionId: string | null = null
 
 	constructor(config: TlAiConfig) {
 		if (!config.endpointAgent || !config.model) {
@@ -184,7 +183,7 @@ export class TlAiClient implements LLMClient {
 			appId: config.appId ?? '',
 			trCode: config.trCode ?? '',
 			trVersion: config.trVersion ?? '',
-			toolCallingMode: config.toolCallingMode ?? 'api',
+			toolCallingMode: config.toolCallingMode ?? 'system_prompt',
 			customFetch: config.customFetch,
 		}
 		this.fetch = config.customFetch ?? fetch.bind(globalThis)
@@ -280,8 +279,8 @@ export class TlAiClient implements LLMClient {
 			)
 		}
 
-		this.sessionId = data.data?.session_id ?? null
-		if (!this.sessionId) {
+		const sessionId = data.data?.session_id
+		if (!sessionId) {
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_SCHEMA,
 				'Session initialization response did not include data.session_id',
@@ -290,7 +289,7 @@ export class TlAiClient implements LLMClient {
 			)
 		}
 
-		return this.sessionId
+		return sessionId
 	}
 
 	/**
@@ -477,10 +476,9 @@ export class TlAiClient implements LLMClient {
 	): Promise<InvokeResult> {
 		abortSignal?.throwIfAborted()
 
-		// 1. Initialize session if needed.
-		if (!this.sessionId) {
-			await this.initSession(abortSignal)
-		}
+		// 1. Start a fresh session for every model invocation.
+		// The session returned here is scoped to this init → chat request pair.
+		const sessionId = await this.initSession(abortSignal)
 
 		// 2. Build chat request text, considering tool calling mode.
 		let chatText: string
@@ -493,7 +491,7 @@ export class TlAiClient implements LLMClient {
 			})
 			chatText = messageTexts.join('\n')
 		} else {
-			// For api mode (default), proceed as before
+			// For api mode, proceed with the native API request format.
 			chatText = messages
 				.filter((m) => m.role !== 'system')
 				.map((m) => `${m.role}: ${m.content ?? ''}`)
@@ -507,7 +505,7 @@ export class TlAiClient implements LLMClient {
 			timestamp: Date.now(),
 			requestId: this.generateRequestId(),
 			data: {
-				session_id: this.sessionId!,
+				session_id: sessionId,
 				txt: chatText,
 				files: [
 					{

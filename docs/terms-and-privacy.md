@@ -2,7 +2,7 @@
 
 **Last updated:** March 2026
 
-"We" in this document refers to the maintainers of the open-source Page Agent project (https://github.com/alibaba/page-agent). "The software" refers to Page Agent (the JavaScript library) and Page Agent Ext (the browser extension). This document covers the software itself and the testing API we provide — **not** any third-party product or service built with it.
+"We" in this document refers to the maintainers of the open-source Page Agent project (https://github.com/alibaba/page-agent). "The software" refers to the Page Agent JavaScript library. This document covers the software itself and the testing API we provide — **not** any third-party product or service built with it.
 
 ---
 
@@ -18,7 +18,7 @@ The project is open source under the [MIT License](https://github.com/alibaba/pa
 
 ## 2. Testing API and Demo Disclaimer & Terms of Use
 
-To facilitate easy testing and technical evaluation, we provide a free testing LLM API. This API is used in the project homepage's live demo, the pre-built demo CDN bundles, and the browser extension's default configuration. Users may also use it independently for their own technical evaluation of the software.
+To facilitate easy testing and technical evaluation, we provide a free testing LLM API. This API is used in the project homepage's live demo and the pre-built demo CDN bundles. Users may also use it independently for their own technical evaluation of the software.
 
 This free testing API is provided **strictly for technical evaluation and R&D purposes only**. It must not be used in any production environment. By using this API, you agree to the following terms:
 
@@ -39,40 +39,6 @@ This free testing API is provided **strictly for technical evaluation and R&D pu
 **Note**: This free testing LLM API processes data via servers located in Mainland China. If you are located in a region with strict data localization laws (such as the EU/EEA), please do not use this API.
 
 **Age Requirement**: The software and testing API are not intended for use by individuals under the age of 13 (or the minimum age of digital consent in your jurisdiction).
-
----
-
-## 3. Browser Extension (Page Agent Ext)
-
-### Data Processing
-
-The extension performs DOM analysis and automation actions **locally in your browser**. Your browsing history, passwords, and form data are not accessed or collected by the extension developer.
-
-Data is transmitted to external servers **only when you initiate an automation task**. When this occurs:
-
--   Your task instructions (natural language commands)
--   Simplified page structure (cleaned HTML) of all pages under the extension's control
-
-are sent to the LLM API endpoint configured in **your settings**.
-
-> **Note:** The HTML cleaning process simplifies page structure for AI readability but **does not guarantee removal of sensitive information** (e.g., visible text, form values, or personal data on the page). Please be mindful of the page content when initiating tasks.
-
-**If you configure a third-party LLM provider** (e.g., OpenAI, Anthropic, or others), data is sent directly to that provider. Their privacy policies apply.
-
-**If you use the testing API**, the terms in [Section 2](#2-testing-api-and-demo-disclaimer--terms-of-use) apply. By using the extension with the default testing API, you agree to those terms.
-
-### Data Storage
-
--   **Local storage only**: Your configuration (API endpoint, API key, model selection) is stored in your browser via `chrome.storage.local` (or equivalent browser storage APIs)
--   **No cloud sync**: Configuration is not synced to any external server
--   **No analytics**: The extension does not include any analytics or tracking code
-
-### Your Control
-
--   The extension is open source and can be audited by anyone
--   You choose which LLM provider to use
--   You may configure your own API endpoint at any time
--   You can clear all stored data by removing the extension
 
 ---
 

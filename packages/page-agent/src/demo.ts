@@ -29,18 +29,30 @@ if (autoInit) {
 
 		if (currentScriptURL) {
 			const url = currentScriptURL
-			const provider = (url.searchParams.get('provider') as 'openai' | 'tl') || 'openai'
-			const model = url.searchParams.get('model') || DEMO_MODEL
-			const baseURL = url.searchParams.get('baseURL') || DEMO_BASE_URL
-			const apiKey = url.searchParams.get('apiKey') || DEMO_API_KEY
-			const endpointAgent = url.searchParams.get('endpointAgent') || undefined
-			const appId = url.searchParams.get('appId') || undefined
-			const trCode = url.searchParams.get('trCode') || undefined
-			const trVersion = url.searchParams.get('trVersion') || undefined
+			const provider =
+				(url.searchParams.get('provider') as 'openai' | 'tl') ||
+				(import.meta.env.LLM_PROVIDER as 'openai' | 'tl') ||
+				'openai'
+			const model = url.searchParams.get('model') || import.meta.env.LLM_MODEL_NAME || DEMO_MODEL
+			const baseURL =
+				url.searchParams.get('baseURL') || import.meta.env.LLM_BASE_URL || DEMO_BASE_URL
+			const apiKey = url.searchParams.get('apiKey') || import.meta.env.LLM_API_KEY || DEMO_API_KEY
+			const endpointAgent =
+				url.searchParams.get('endpointAgent') || import.meta.env.LLM_ENDPOINT_AGENT || undefined
+			const appId = url.searchParams.get('appId') || import.meta.env.LLM_APP_ID || undefined
+			const trCode = url.searchParams.get('trCode') || import.meta.env.LLM_TR_CODE || undefined
+			const trVersion =
+				url.searchParams.get('trVersion') || import.meta.env.LLM_TR_VERSION || undefined
 			const toolCallingMode =
-				(url.searchParams.get('toolCallingMode') as 'api' | 'system_prompt') || undefined
+				(url.searchParams.get('toolCallingMode') as 'api' | 'system_prompt') ||
+				(import.meta.env.LLM_TOOL_CALLING_MODE as 'api' | 'system_prompt') ||
+				(provider === 'tl' ? 'system_prompt' : undefined)
 			const language = (url.searchParams.get('lang') as 'zh-CN' | 'en-US') || 'zh-CN'
 			showPanel = ((url.searchParams.get('showPanel') as 'true' | 'false') || 'true') === 'true'
+			const experimentalScriptExecutionTool =
+				(url.searchParams.get('experimentalScriptExecutionTool') as 'true' | 'false' | null) ||
+				(import.meta.env.EXPERIMENTAL_SCRIPT_EXECUTION_TOOL as 'true' | 'false' | undefined) ||
+				'true'
 			config = {
 				provider,
 				model,
@@ -52,6 +64,7 @@ if (autoInit) {
 				trVersion,
 				toolCallingMode,
 				language,
+				experimentalScriptExecutionTool: experimentalScriptExecutionTool === 'true',
 			}
 		} else {
 			console.log('🚀 page-agent.js no current script detected, using default demo config')
@@ -66,6 +79,9 @@ if (autoInit) {
 				trVersion: import.meta.env.LLM_TR_VERSION || undefined,
 				toolCallingMode:
 					(import.meta.env.LLM_TOOL_CALLING_MODE as 'api' | 'system_prompt') || undefined,
+				experimentalScriptExecutionTool:
+					((import.meta.env.EXPERIMENTAL_SCRIPT_EXECUTION_TOOL as 'true' | 'false' | undefined) ??
+						'true') === 'true',
 			}
 		}
 

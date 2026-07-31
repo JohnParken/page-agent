@@ -6,8 +6,5 @@
 .trae
 **/AGENTS.md
 
-# Generated
-packages/extension/.wxt
-
 # Vendored
 **/components/ui
