@@ -304,7 +304,7 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 						</label>
 						<Input
 							id="endpoint-agent"
-							placeholder="api.example.com"
+							placeholder="localhost:8089 or https://api.example.com"
 							value={endpointAgent}
 							onChange={(e) => setEndpointAgent(e.target.value)}
 							className="text-xs h-8"

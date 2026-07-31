@@ -109,6 +109,75 @@ describe('TlAiClient.invoke — request construction', () => {
 	})
 })
 
+// ---------- Session initialization ----------
+
+describe('TlAiClient.initSession', () => {
+	it('rejects endpoint protocols other than HTTP(S)', () => {
+		expect(() => makeClient({ endpointAgent: 'ftp://api.example.com' })).toThrow(
+			'Unsupported Tl endpointAgent protocol "ftp:"'
+		)
+	})
+
+	it('accepts a full HTTPS endpoint and sends valid request metadata', async () => {
+		const { client, fetchMock } = makeClient({ endpointAgent: 'https://api.example.com/' })
+		fetchMock.mockResolvedValueOnce(jsonResponse(initSessionBody('secure-session')))
+
+		await expect(client.initSession(signal)).resolves.toBe('secure-session')
+
+		expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.com/chatbbc/init_session')
+		const request = fetchMock.mock.calls[0][1]!
+		const body = JSON.parse(request.body as string)
+		expect(body.timestamp).toEqual(expect.any(Number))
+		expect(body.timestamp).toBeGreaterThan(1)
+		expect(body.requestId).toEqual(expect.any(String))
+		expect(body.requestId.length).toBeGreaterThan(0)
+		expect(request.signal).toBe(signal)
+	})
+
+	it('includes the endpoint and underlying cause when the request fails', async () => {
+		const { client, fetchMock } = makeClient()
+		const failure = new TypeError('fetch failed') as TypeError & { cause?: unknown }
+		failure.cause = new Error('connect ECONNREFUSED 127.0.0.1:8089')
+		fetchMock.mockRejectedValueOnce(failure)
+
+		await expect(client.initSession()).rejects.toMatchObject({
+			name: 'InvokeError',
+			type: InvokeErrorTypes.NETWORK_ERROR,
+			message: expect.stringMatching(
+				/http:\/\/localhost:8089\/chatbbc\/init_session.*ECONNREFUSED/
+			),
+			rawError: failure,
+		})
+	})
+
+	it('maps an HTTP authentication failure and preserves the response', async () => {
+		const { client, fetchMock } = makeClient()
+		fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'invalid credentials' }, 403))
+
+		await expect(client.initSession()).rejects.toMatchObject({
+			name: 'InvokeError',
+			type: InvokeErrorTypes.AUTH_ERROR,
+			statusCode: 403,
+			message: 'Session initialization failed with HTTP 403: invalid credentials',
+			rawResponse: { message: 'invalid credentials' },
+		})
+	})
+
+	it('surfaces a successful HTTP response that the service rejects', async () => {
+		const { client, fetchMock } = makeClient()
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({ code: 1001, message: 'model configuration not found' })
+		)
+
+		await expect(client.initSession()).rejects.toMatchObject({
+			name: 'InvokeError',
+			type: InvokeErrorTypes.INVALID_RESPONSE,
+			message: 'Session initialization was rejected: model configuration not found',
+			rawResponse: { code: 1001, message: 'model configuration not found' },
+		})
+	})
+})
+
 // ---------- Success path ----------
 
 describe('TlAiClient.invoke — success', () => {

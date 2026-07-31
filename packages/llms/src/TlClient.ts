@@ -17,7 +17,7 @@ export type ToolCallingMode = 'api' | 'system_prompt'
  * Configuration for Tl AI (chatbbc) endpoint.
  */
 export interface TlAiConfig {
-	/** Agent host, e.g. "api.example.com". The client calls http://${endpointAgent}/chatbbc/... */
+	/** Agent host or HTTP(S) base URL, e.g. "localhost:8089" or "https://api.example.com". */
 	endpointAgent: string
 	/** Model / prompt name used during session initialization. */
 	model: string
@@ -53,6 +53,56 @@ interface ChatRequest {
 		files: { file_id: string; url: string; content_type: string }[]
 		stream: boolean
 	}
+}
+
+function normalizeEndpointAgent(endpointAgent: string): string {
+	const value = endpointAgent.trim()
+	const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `http://${value}`
+
+	let url: URL
+	try {
+		url = new URL(candidate)
+	} catch (error) {
+		throw new InvokeError(
+			InvokeErrorTypes.CONFIG_ERROR,
+			`Invalid Tl endpointAgent "${endpointAgent}". Use a host such as "localhost:8089" or a full HTTP(S) URL.`,
+			error
+		)
+	}
+
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+		throw new InvokeError(
+			InvokeErrorTypes.CONFIG_ERROR,
+			`Unsupported Tl endpointAgent protocol "${url.protocol}". Use HTTP or HTTPS.`
+		)
+	}
+
+	url.search = ''
+	url.hash = ''
+	return url.toString().replace(/\/$/, '')
+}
+
+function describeError(error: unknown): string {
+	if (!(error instanceof Error)) return String(error)
+
+	const cause = (error as Error & { cause?: unknown }).cause
+	if (!cause || cause === error) return error.message
+
+	let causeMessage: string
+	if (cause instanceof Error) {
+		causeMessage = cause.message
+	} else if (typeof cause === 'string') {
+		causeMessage = cause
+	} else {
+		try {
+			causeMessage = JSON.stringify(cause) ?? Object.prototype.toString.call(cause)
+		} catch {
+			causeMessage = Object.prototype.toString.call(cause)
+		}
+	}
+	return causeMessage && causeMessage !== error.message
+		? `${error.message}: ${causeMessage}`
+		: error.message
 }
 
 /**
@@ -129,7 +179,7 @@ export class TlAiClient implements LLMClient {
 		}
 
 		this.config = {
-			endpointAgent: config.endpointAgent,
+			endpointAgent: normalizeEndpointAgent(config.endpointAgent),
 			model: config.model,
 			appId: config.appId ?? '',
 			trCode: config.trCode ?? '',
@@ -143,15 +193,15 @@ export class TlAiClient implements LLMClient {
 	/**
 	 * Initialize a session via the init_session endpoint.
 	 */
-	async initSession(): Promise<string> {
-		const url = `http://${this.config.endpointAgent}/chatbbc/init_session`
+	async initSession(abortSignal?: AbortSignal): Promise<string> {
+		const url = `${this.config.endpointAgent}/chatbbc/init_session`
 
 		const requestBody: InitSessionRequest = {
 			appId: this.config.appId,
 			trCode: this.config.trCode,
 			trVersion: this.config.trVersion,
-			timestamp: 1,
-			requestId: '',
+			timestamp: Date.now(),
+			requestId: this.generateRequestId(),
 			data: {
 				prompt_variables: [
 					{
@@ -170,10 +220,17 @@ export class TlAiClient implements LLMClient {
 					'Content-Type': 'application/json',
 				},
 				body: JSON.stringify(requestBody),
+				signal: abortSignal,
 			})
 		} catch (error: unknown) {
 			if ((error as any)?.name === 'AbortError') throw error
-			throw new InvokeError(InvokeErrorTypes.NETWORK_ERROR, 'Session initialization failed', error)
+			throw new InvokeError(
+				InvokeErrorTypes.NETWORK_ERROR,
+				`Session initialization request to "${url}" failed: ${describeError(
+					error
+				)}. Verify endpointAgent, protocol, and service availability.`,
+				error
+			)
 		}
 
 		if (!response.ok) {
@@ -183,11 +240,23 @@ export class TlAiClient implements LLMClient {
 			} catch {
 				errorData = {}
 			}
-			throw new InvokeError(
-				InvokeErrorTypes.UNKNOWN,
-				`Session initialization failed: ${response.statusText}`,
+			const serverMessage = (errorData as any)?.message || response.statusText || 'Request failed'
+			const type =
+				response.status === 401 || response.status === 403
+					? InvokeErrorTypes.AUTH_ERROR
+					: response.status === 429
+						? InvokeErrorTypes.RATE_LIMIT
+						: response.status >= 500
+							? InvokeErrorTypes.SERVER_ERROR
+							: InvokeErrorTypes.UNKNOWN
+			const invokeError = new InvokeError(
+				type,
+				`Session initialization failed with HTTP ${response.status}: ${serverMessage}`,
+				undefined,
 				errorData
 			)
+			invokeError.statusCode = response.status
+			throw invokeError
 		}
 
 		let data: any
@@ -202,11 +271,20 @@ export class TlAiClient implements LLMClient {
 			)
 		}
 
+		if (data?.code !== undefined && data.code !== 0) {
+			throw new InvokeError(
+				InvokeErrorTypes.INVALID_RESPONSE,
+				`Session initialization was rejected: ${data.message || `code ${data.code}`}`,
+				undefined,
+				data
+			)
+		}
+
 		this.sessionId = data.data?.session_id ?? null
 		if (!this.sessionId) {
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_SCHEMA,
-				'No session_id in initialization response',
+				'Session initialization response did not include data.session_id',
 				undefined,
 				data
 			)
@@ -401,7 +479,7 @@ export class TlAiClient implements LLMClient {
 
 		// 1. Initialize session if needed.
 		if (!this.sessionId) {
-			await this.initSession()
+			await this.initSession(abortSignal)
 		}
 
 		// 2. Build chat request text, considering tool calling mode.
@@ -443,7 +521,7 @@ export class TlAiClient implements LLMClient {
 		}
 
 		// 3. Call chat endpoint.
-		const url = `http://${this.config.endpointAgent}/chatbbc/chat`
+		const url = `${this.config.endpointAgent}/chatbbc/chat`
 
 		let response: Response
 		try {
@@ -457,8 +535,13 @@ export class TlAiClient implements LLMClient {
 			})
 		} catch (error: unknown) {
 			if ((error as any)?.name === 'AbortError') throw error
-			console.error(error)
-			throw new InvokeError(InvokeErrorTypes.NETWORK_ERROR, 'Network request failed', error)
+			throw new InvokeError(
+				InvokeErrorTypes.NETWORK_ERROR,
+				`Chat request to "${url}" failed: ${describeError(
+					error
+				)}. Verify endpointAgent, protocol, and service availability.`,
+				error
+			)
 		}
 
 		// 4. Handle HTTP errors.
