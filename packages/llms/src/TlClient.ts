@@ -2,7 +2,7 @@
  * Tl AI Client
  * Supports session initialization and streaming chat for the chatbbc API.
  */
-import * as z from 'zod'
+import * as z from 'zod/v4'
 
 import { InvokeError, InvokeErrorTypes } from './errors'
 

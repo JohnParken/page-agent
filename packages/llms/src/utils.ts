@@ -18,7 +18,7 @@ export function zodToOpenAITool(name: string, tool: Tool) {
 		function: {
 			name,
 			description: tool.description,
-			parameters: z.toJSONSchema(tool.inputSchema, { target: 'openapi-3.0' }),
+			parameters: z.toJSONSchema(tool.inputSchema, { target: 'draft-7' }),
 		},
 	}
 }
