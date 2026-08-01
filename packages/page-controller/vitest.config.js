@@ -5,6 +5,6 @@ export default defineConfig({
 		name: 'page-controller',
 		environment: 'jsdom',
 		include: ['src/**/*.test.ts'],
-		silent: 'passed-only',
+		silent: process.env.VITEST_SHOW_LOGS !== '1',
 	},
 })

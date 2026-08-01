@@ -7,6 +7,8 @@ import type { ExecutionResult } from './types'
 import type { BrowserState, PageController } from '@page-agent/page-controller'
 
 type TestFetch = (...args: Parameters<typeof globalThis.fetch>) => Promise<Response>
+type TestFetchArgs = Parameters<TestFetch>
+type TestFetchResult = ReturnType<TestFetch>
 
 function agentResponse(args: unknown): Response {
 	return new Response(
@@ -67,7 +69,7 @@ function createAgent(
 }
 
 function createFetchMock() {
-	return vi.fn<TestFetch>()
+	return vi.fn<TestFetchArgs, TestFetchResult>()
 }
 
 function onceActivity(

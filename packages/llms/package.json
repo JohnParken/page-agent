@@ -43,8 +43,8 @@
     "homepage": "https://alibaba.github.io/page-agent/",
     "scripts": {
         "build": "vite build && tsup --config tsup.config.js",
-        "test": "vitest run --project llms",
-        "test:live": "vitest run --project llms:live",
+        "test": "vitest run",
+        "test:live": "vitest run --config vitest.live.config.js",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js",
         "start:tl-proxy": "TL_PROXY_LOG_LEVEL=debug node src/dev-tools/TlProxyServer.ts",

@@ -1,6 +1,5 @@
 import js from '@eslint/js'
 import importPlugin from 'eslint-plugin-import'
-import react from 'eslint-plugin-react'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
@@ -109,27 +108,6 @@ export default [
 			'@typescript-eslint/no-unnecessary-type-parameters': 'off',
 			'@typescript-eslint/require-await': 'off',
 			'@typescript-eslint/no-deprecated': 'off',
-		},
-	},
-	{
-		files: ['**/*.{jsx,tsx}'],
-		plugins: {
-			react,
-		},
-		settings: {
-			react: {
-				version: 'detect',
-			},
-		},
-		rules: {
-			...react.configs.recommended.rules,
-			'react/button-has-type': 'off',
-			'react/display-name': 'off',
-			'react/jsx-uses-react': 'off',
-			'react/no-array-index-key': 'off',
-			'react/no-danger': 'off',
-			'react/prop-types': 'off',
-			'react/react-in-jsx-scope': 'off',
 		},
 	},
 ]

@@ -4,6 +4,6 @@ export default defineConfig({
 	test: {
 		name: 'core',
 		include: ['src/**/*.test.ts'],
-		silent: 'passed-only',
+		silent: process.env.VITEST_SHOW_LOGS !== '1',
 	},
 })

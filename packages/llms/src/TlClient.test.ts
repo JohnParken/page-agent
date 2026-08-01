@@ -9,7 +9,7 @@ import type { InvokeOptions, Tool } from './types'
 // ---------- Fixtures ----------
 
 function makeClient(overrides: Partial<ConstructorParameters<typeof TlAiClient>[0]> = {}) {
-	const fetchMock = vi.fn<typeof fetch>()
+	const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 	const client = new TlAiClient({
 		endpointAgent: 'localhost:8089',
 		model: 'qwen3.5-plus',
@@ -251,25 +251,27 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 		const rawContent = JSON.stringify({ tool_name: 'greet', parameters: { name: 'raw' } })
 		fetchMock.mockResolvedValueOnce(chatResponse(rawContent))
 
-		const normalizeResponse = vi.fn<Required<InvokeOptions>['normalizeResponse']>(() => ({
-			choices: [
-				{
-					index: 0,
-					message: {
-						role: 'assistant',
-						tool_calls: [
-							{
-								type: 'function',
-								function: {
-									name: 'greet',
-									arguments: JSON.stringify({ name: 'normalized' }),
+		const normalizeResponse = vi.fn<Parameters<Required<InvokeOptions>['normalizeResponse']>>(
+			() => ({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: 'assistant',
+							tool_calls: [
+								{
+									type: 'function',
+									function: {
+										name: 'greet',
+										arguments: JSON.stringify({ name: 'normalized' }),
+									},
 								},
-							},
-						],
+							],
+						},
 					},
-				},
-			],
-		}))
+				],
+			})
+		)
 
 		const result = await client.invoke([], { greet: tool }, signal, { normalizeResponse })
 
@@ -299,25 +301,27 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 		const rawContent = JSON.stringify({ tool_name: 'greet', parameters: { name: 'original' } })
 		fetchMock.mockResolvedValueOnce(chatResponse(rawContent))
 
-		const normalizeResponse = vi.fn<Required<InvokeOptions>['normalizeResponse']>(() => ({
-			choices: [
-				{
-					index: 0,
-					message: {
-						role: 'assistant',
-						tool_calls: [
-							{
-								type: 'function',
-								function: {
-									name: 'other',
-									arguments: JSON.stringify({ name: 'switched' }),
+		const normalizeResponse = vi.fn<Parameters<Required<InvokeOptions>['normalizeResponse']>>(
+			() => ({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: 'assistant',
+							tool_calls: [
+								{
+									type: 'function',
+									function: {
+										name: 'other',
+										arguments: JSON.stringify({ name: 'switched' }),
+									},
 								},
-							},
-						],
+							],
+						},
 					},
-				},
-			],
-		}))
+				],
+			})
+		)
 
 		const result = await client.invoke([], { greet: greetTool, other: otherTool }, signal, {
 			normalizeResponse,

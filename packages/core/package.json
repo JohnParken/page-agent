@@ -49,7 +49,6 @@
     "scripts": {
         "build": "vite build && tsup --config tsup.config.js",
         "test": "vitest run",
-        "dev:iife": "concurrently \"vite build --config vite.iife.config.js --watch\" \"npx serve dist/iife -p 5174\"",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js"
     },

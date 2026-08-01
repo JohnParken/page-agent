@@ -11,7 +11,7 @@ import type { LLMConfig, Tool } from './types'
 // ---------- Fixtures ----------
 
 function makeClient(overrides: Partial<LLMConfig> = {}) {
-	const fetchMock = vi.fn<typeof fetch>()
+	const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 	const config = parseLLMConfig({
 		baseURL: 'http://test.local/v1',
 		model: 'test-model',
