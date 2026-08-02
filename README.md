@@ -114,6 +114,131 @@ Then open [http://localhost:5174/test-page.html](http://localhost:5174/test-page
 13. 检查事件日志，然后报告每一项是否成功。
 ```
 
+### Tl AI configuration: local test and production
+
+The local test page currently uses Tl AI through the development proxy. The defaults come from the
+repository-root [`.env`](.env), not from `test-page.html`:
+
+```dotenv
+LLM_PROVIDER=tl
+LLM_ENDPOINT_AGENT=localhost:8089
+LLM_MODEL_NAME=qwen3.5-plus
+LLM_TOOL_CALLING_MODE=system_prompt
+```
+
+#### Complete `.env` template for TlAiClient
+
+Copy the following template to the repository-root `.env` when enabling the built-in `TlAiClient` in the
+demo environment:
+
+```dotenv
+# Required: select the built-in TlAiClient.
+LLM_PROVIDER=tl
+
+# Required: Tl service base URL. Do not include /chatbbc/init_session or /chatbbc/chat.
+# Local development proxy:
+LLM_ENDPOINT_AGENT=http://localhost:8089
+# Direct Tl service example:
+# LLM_ENDPOINT_AGENT=https://tl.example.com
+
+# Required: model or prompt name sent during session initialization.
+LLM_MODEL_NAME=qwen3.5-plus
+
+# Optional Tl request metadata. Leave empty when the service does not require it.
+LLM_APP_ID=
+LLM_TR_CODE=
+LLM_TR_VERSION=
+
+# Optional: system_prompt (default and recommended) or api.
+LLM_TOOL_CALLING_MODE=system_prompt
+```
+
+Only `LLM_PROVIDER`, `LLM_ENDPOINT_AGENT`, and `LLM_MODEL_NAME` are required by PageAgent. Whether
+`LLM_APP_ID`, `LLM_TR_CODE`, and `LLM_TR_VERSION` must contain values depends on the target Tl service.
+`LLM_BASE_URL` and `LLM_API_KEY` are OpenAI-provider settings and are not used by the built-in `TlAiClient`.
+
+`packages/page-agent/vite.iife.config.js` loads this file and injects these values into the demo bundle at
+**build time**. Restart `npm run dev:demo` after changing `.env`. These values are bundled into browser
+JavaScript, so never put secrets in them.
+
+Start the local proxy separately:
+
+```bash
+npm run start:tl-proxy -w @page-agent/llms
+```
+
+The demo resolves Tl configuration in this order, from highest to lowest priority:
+
+1. Query parameters on `page-agent.demo.js`
+2. Build-time `LLM_*` environment variables loaded from the root `.env`
+3. Demo defaults (`provider=openai`, `model=qwen3.5-plus`); Tl has no default endpoint
+
+All supported demo configuration values are:
+
+| PageAgent option  | Build variable          | Script query parameter | Required for Tl | Notes                                     |
+| ----------------- | ----------------------- | ---------------------- | --------------- | ----------------------------------------- |
+| `provider`        | `LLM_PROVIDER`          | `provider`             | Yes             | Set to `tl`                               |
+| `endpointAgent`   | `LLM_ENDPOINT_AGENT`    | `endpointAgent`        | Yes             | Host or full HTTP(S) URL                  |
+| `model`           | `LLM_MODEL_NAME`        | `model`                | Yes             | Tl prompt/model name                      |
+| `appId`           | `LLM_APP_ID`            | `appId`                | No              | Defaults to an empty string               |
+| `trCode`          | `LLM_TR_CODE`           | `trCode`               | No              | Defaults to an empty string               |
+| `trVersion`       | `LLM_TR_VERSION`        | `trVersion`            | No              | Defaults to an empty string               |
+| `toolCallingMode` | `LLM_TOOL_CALLING_MODE` | `toolCallingMode`      | No              | `system_prompt` (default for Tl) or `api` |
+
+For example, a demo script can override the build-time settings without editing `.env`:
+
+```html
+<script src="/page-agent.demo.js?provider=tl&endpointAgent=https%3A%2F%2Ftl.example.com&model=my-model&toolCallingMode=system_prompt"></script>
+```
+
+For an npm production deployment, configure `PageAgent` at runtime. This is preferred because it does not
+depend on demo-only build variables:
+
+```javascript
+import { PageAgent } from 'page-agent'
+
+const agent = new PageAgent({
+    provider: 'tl',
+    endpointAgent: 'https://tl.example.com',
+    model: 'my-production-model',
+    appId: 'my-app',
+    trCode: 'my-transaction',
+    trVersion: '1.0',
+    toolCallingMode: 'system_prompt',
+})
+```
+
+If production uses a prebuilt IIFE bundle, provide `LLM_*` variables while building it:
+
+```bash
+LLM_PROVIDER=tl \
+LLM_ENDPOINT_AGENT=https://tl.example.com \
+LLM_MODEL_NAME=my-production-model \
+LLM_APP_ID=my-app \
+LLM_TR_CODE=my-transaction \
+LLM_TR_VERSION=1.0 \
+LLM_TOOL_CALLING_MODE=system_prompt \
+npm run build:demo -w page-agent
+```
+
+The browser calls `${endpointAgent}/chatbbc/init_session` and `${endpointAgent}/chatbbc/chat` directly.
+The production endpoint therefore needs HTTPS when the page uses HTTPS and must allow the page origin via
+CORS. Do not expose credentials in PageAgent options, query parameters, or build variables. If authentication
+requires a secret, keep it on a trusted server and expose a suitable authenticated gateway to the browser.
+
+`TlProxyServer` is a development simulator and should not be deployed as the production Tl service. Its
+configuration is independent from the browser configuration:
+
+| Proxy variable        | Default             | Purpose                             |
+| --------------------- | ------------------- | ----------------------------------- |
+| `PROXY_PORT`          | `8089`              | Local proxy listening port          |
+| `QWEN_BASE_URL`       | Project testing API | Upstream OpenAI-compatible endpoint |
+| `QWEN_MODEL`          | `qwen3.5-plus`      | Upstream model                      |
+| `TL_PROXY_LOG_LEVEL`  | `info`              | `debug`, `info`, `warn`, or `error` |
+| `TL_PROXY_LOG_SILENT` | `0`                 | Set to `1` to disable console echo  |
+
+See [TlProxy_README.md](packages/llms/src/dev-tools/TlProxy_README.md) for proxy behavior and diagnostics.
+
 ## 🤝 Contributing
 
 We welcome contributions from the community! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [docs/developer-guide.md](docs/developer-guide.md) for local development workflows.
