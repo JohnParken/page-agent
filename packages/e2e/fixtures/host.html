@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Iframe bridge demo</title>
+		<style>
+			:root {
+				color-scheme: light;
+				font-family:
+					Inter,
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				background: #f4f7fb;
+				color: #172033;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				min-width: 320px;
+			}
+
+			main {
+				width: min(1160px, 100%);
+				margin: 0 auto;
+				padding: clamp(1rem, 3vw, 2.5rem);
+			}
+
+			header {
+				margin-bottom: 1.5rem;
+			}
+
+			.eyebrow {
+				margin: 0 0 0.35rem;
+				color: #536b9a;
+				font-size: 0.75rem;
+				font-weight: 700;
+				letter-spacing: 0.12em;
+				text-transform: uppercase;
+			}
+
+			h1,
+			h2,
+			h3,
+			p {
+				margin-top: 0;
+			}
+
+			h1 {
+				margin-bottom: 0.5rem;
+				font-size: clamp(1.7rem, 4vw, 2.5rem);
+			}
+
+			header p:last-child {
+				max-width: 760px;
+				margin-bottom: 0;
+				color: #526078;
+				line-height: 1.6;
+			}
+
+			.panel {
+				margin-bottom: 1rem;
+				padding: clamp(1rem, 2.5vw, 1.5rem);
+				border: 1px solid #dbe3f0;
+				border-radius: 0.8rem;
+				background: #ffffff;
+				box-shadow: 0 8px 28px rgb(35 57 98 / 7%);
+			}
+
+			.panel-heading,
+			.toolbar,
+			.frame-heading {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 1rem;
+			}
+
+			.panel-heading {
+				margin-bottom: 1rem;
+			}
+
+			h2 {
+				margin-bottom: 0;
+				font-size: 1.15rem;
+			}
+
+			.toolbar {
+				flex-wrap: wrap;
+				margin-bottom: 1rem;
+			}
+
+			button,
+			input,
+			select {
+				font: inherit;
+			}
+
+			button {
+				min-height: 2.5rem;
+				padding: 0.55rem 0.9rem;
+				border: 1px solid #335ca8;
+				border-radius: 0.45rem;
+				background: #315ca7;
+				color: #ffffff;
+				font-weight: 650;
+				cursor: pointer;
+			}
+
+			button:hover:not(:disabled) {
+				background: #244985;
+			}
+
+			button:focus-visible,
+			input:focus-visible,
+			select:focus-visible,
+			iframe:focus-visible {
+				outline: 3px solid #a8c7ff;
+				outline-offset: 2px;
+			}
+
+			button:disabled {
+				border-color: #b7c2d5;
+				background: #b7c2d5;
+				cursor: wait;
+			}
+
+			.status {
+				min-height: 1.5rem;
+				color: #526078;
+				font-size: 0.9rem;
+				line-height: 1.5;
+			}
+
+			.status[data-tone='busy'] {
+				color: #8a5b00;
+			}
+
+			.status[data-tone='success'] {
+				color: #146c43;
+			}
+
+			.status[data-tone='error'],
+			.error {
+				color: #a52834;
+			}
+
+			.error {
+				margin: 0 0 1rem;
+				padding: 0.7rem 0.8rem;
+				border: 1px solid #f1b7bd;
+				border-radius: 0.45rem;
+				background: #fff3f4;
+				line-height: 1.5;
+			}
+
+			.control-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr));
+				gap: 1rem;
+			}
+
+			.control {
+				display: flex;
+				flex-direction: column;
+				align-items: stretch;
+				gap: 0.55rem;
+				padding: 0.9rem;
+				border: 1px solid #dbe3f0;
+				border-radius: 0.6rem;
+				background: #f8faff;
+			}
+
+			.control p {
+				margin-bottom: 0;
+				color: #526078;
+				font-size: 0.84rem;
+				line-height: 1.45;
+			}
+
+			.control label {
+				font-weight: 650;
+			}
+
+			.control input,
+			.control select {
+				width: 100%;
+				min-height: 2.5rem;
+				padding: 0.5rem 0.65rem;
+				border: 1px solid #aebbd1;
+				border-radius: 0.45rem;
+				background: #ffffff;
+				color: #172033;
+			}
+
+			.state-meta {
+				color: #526078;
+				font-size: 0.8rem;
+				text-align: right;
+			}
+
+			.state-output {
+				max-height: 32rem;
+				margin: 0;
+				overflow: auto;
+				padding: 1rem;
+				border: 1px solid #dbe3f0;
+				border-radius: 0.5rem;
+				background: #101a2d;
+				color: #e3edff;
+				font:
+					0.78rem/1.55 ui-monospace,
+					SFMono-Regular,
+					Menlo,
+					Consolas,
+					monospace;
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
+
+			.frames {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+				gap: 1rem;
+			}
+
+			.frame-card {
+				overflow: hidden;
+				border: 1px solid #dbe3f0;
+				border-radius: 0.6rem;
+				background: #f8faff;
+			}
+
+			.frame-heading {
+				padding: 0.75rem 0.85rem;
+				border-bottom: 1px solid #dbe3f0;
+			}
+
+			.frame-heading h3 {
+				margin-bottom: 0;
+				font-size: 0.95rem;
+			}
+
+			.frame-badge {
+				padding: 0.22rem 0.5rem;
+				border-radius: 999px;
+				font-size: 0.72rem;
+				font-weight: 700;
+				letter-spacing: 0.03em;
+			}
+
+			.frame-badge.cooperative {
+				background: #d9f4e5;
+				color: #146c43;
+			}
+
+			.frame-badge.unavailable {
+				background: #fff0d5;
+				color: #8a5b00;
+			}
+
+			iframe {
+				display: block;
+				width: 100%;
+				height: 255px;
+				border: 0;
+				background: #ffffff;
+			}
+
+			@media (max-width: 560px) {
+				.panel-heading,
+				.toolbar,
+				.frame-heading {
+					align-items: flex-start;
+					flex-direction: column;
+				}
+
+				.state-meta {
+					text-align: left;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<header>
+				<p class="eyebrow">Page Controller demo</p>
+				<h1>Cross-origin iframe bridge</h1>
+				<p>
+					Use the parent-page controls to observe one aggregated browser state and route safe click,
+					input, select, and document-scroll actions into the cooperative frame. The second frame
+					intentionally has no bridge host so its unavailable state remains visible.
+				</p>
+			</header>
+
+			<section class="panel" aria-labelledby="actions-heading">
+				<div class="panel-heading">
+					<h2 id="actions-heading">Bridge controls</h2>
+					<div id="demo-status" class="status" role="status" aria-live="polite">
+						Preparing controller. Refresh the browser state to enable actions.
+					</div>
+				</div>
+				<div id="demo-error" class="error" role="alert" aria-live="assertive" hidden></div>
+				<div class="toolbar">
+					<button id="refresh-state" type="button">Refresh browser state</button>
+					<span>All actions use the latest indexed state.</span>
+				</div>
+				<div class="control-grid">
+					<div class="control">
+						<strong>Local host element</strong>
+						<p>This button stays in the top-level document for local index coverage.</p>
+						<button id="local-button" type="button">Local host button</button>
+					</div>
+					<div class="control">
+						<strong>Remote click</strong>
+						<p>Click the button rendered by the cooperative child frame.</p>
+						<button id="run-remote-click" type="button" data-requires-state disabled>
+							Click remote button
+						</button>
+					</div>
+					<div class="control">
+						<label for="demo-input-value">Remote input text</label>
+						<input id="demo-input-value" type="text" value="from visual controls" />
+						<button id="run-remote-input" type="button" data-requires-state disabled>
+							Send text to remote input
+						</button>
+					</div>
+					<div class="control">
+						<label for="remote-option-value">Remote select option</label>
+						<select id="remote-option-value">
+							<option>Alpha</option>
+							<option>Beta</option>
+						</select>
+						<button id="run-remote-select" type="button" data-requires-state disabled>
+							Select remote option
+						</button>
+					</div>
+					<div class="control">
+						<strong>Remote document scroll</strong>
+						<p>Scroll the cooperative iframe document down by one page.</p>
+						<button id="run-remote-scroll" type="button" data-requires-state disabled>
+							Scroll remote document
+						</button>
+					</div>
+				</div>
+			</section>
+
+			<section class="panel" aria-labelledby="state-heading">
+				<div class="panel-heading">
+					<h2 id="state-heading">Aggregated BrowserState</h2>
+					<span id="state-meta" class="state-meta">No observation yet</span>
+				</div>
+				<pre id="browser-state" class="state-output" tabindex="0" data-page-agent-ignore="true">
+Click “Refresh browser state” to inspect the host and iframe tree.</pre
+				>
+			</section>
+
+			<section class="panel" aria-labelledby="frames-heading">
+				<div class="panel-heading">
+					<h2 id="frames-heading">Embedded frames</h2>
+					<span class="state-meta">Direct cross-origin children</span>
+				</div>
+				<div class="frames">
+					<article class="frame-card">
+						<div class="frame-heading">
+							<h3>Cooperative frame</h3>
+							<span class="frame-badge cooperative">COOPERATIVE</span>
+						</div>
+						<iframe
+							id="cooperative-frame"
+							data-page-agent-bridge
+							title="Cooperative frame"
+							src="http://127.0.0.1:4174/child.html"
+						></iframe>
+					</article>
+					<article class="frame-card">
+						<div class="frame-heading">
+							<h3>Unavailable frame</h3>
+							<span class="frame-badge unavailable">UNAVAILABLE</span>
+						</div>
+						<iframe
+							id="unavailable-frame"
+							data-page-agent-bridge
+							title="Unavailable frame"
+							src="http://127.0.0.1:4174/unavailable.html"
+						></iframe>
+					</article>
+				</div>
+			</section>
+		</main>
+
+		<script type="module">
+			import { FrameAwarePageController, PageController } from '/lib/iframe-bridge.js'
+
+			const stateOutput = document.querySelector('#browser-state')
+			const stateMeta = document.querySelector('#state-meta')
+			const statusOutput = document.querySelector('#demo-status')
+			const errorOutput = document.querySelector('#demo-error')
+			const refreshButton = document.querySelector('#refresh-state')
+			const inputValue = document.querySelector('#demo-input-value')
+			const optionValue = document.querySelector('#remote-option-value')
+			const actionButtons = [...document.querySelectorAll('[data-requires-state]')]
+
+			const controller = new FrameAwarePageController({
+				localController: new PageController({
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+				}),
+				frameSelector: 'iframe[data-page-agent-bridge]',
+				allowedChildOrigins: ['http://127.0.0.1:4174'],
+				handshakeTimeoutMs: 500,
+				requestTimeoutMs: 2_000,
+			})
+
+			let latestState = null
+			let refreshPromise = null
+			let actionInFlight = false
+
+			window.pageController = controller
+			window.controllerReady = true
+
+			function errorMessage(error) {
+				return error instanceof Error ? error.message : String(error)
+			}
+
+			function setStatus(message, tone = 'info') {
+				statusOutput.textContent = message
+				statusOutput.dataset.tone = tone
+			}
+
+			function showError(error) {
+				const message = errorMessage(error)
+				errorOutput.textContent = message
+				errorOutput.hidden = false
+				setStatus('The last operation failed. See the error details below.', 'error')
+			}
+
+			function clearError() {
+				errorOutput.textContent = ''
+				errorOutput.hidden = true
+			}
+
+			function setActionsEnabled(enabled) {
+				for (const button of actionButtons) button.disabled = !enabled || actionInFlight
+			}
+
+			function renderState(state) {
+				latestState = state
+				stateOutput.textContent = JSON.stringify(state, null, 2)
+				stateMeta.textContent = `Revision ${state.treeRevision} · ${state.indices.length} indexed targets`
+				setActionsEnabled(true)
+			}
+
+			async function refreshState({ announce = true } = {}) {
+				if (refreshPromise) return refreshPromise
+				refreshPromise = (async () => {
+					clearError()
+					refreshButton.disabled = true
+					setActionsEnabled(false)
+					if (announce) setStatus('Refreshing local and iframe browser state…', 'busy')
+					try {
+						const state = await controller.getBrowserState()
+						renderState(state)
+						if (announce) setStatus(`Ready · tree revision ${state.treeRevision}`, 'success')
+						return state
+					} catch (error) {
+						latestState = null
+						setActionsEnabled(false)
+						showError(error)
+						throw error
+					} finally {
+						refreshButton.disabled = actionInFlight
+					}
+				})()
+				try {
+					return await refreshPromise
+				} finally {
+					refreshPromise = null
+				}
+			}
+
+			function markerIndex(state, pattern, label) {
+				for (const line of state.content.split('\n')) {
+					const match = /^\s*\*?\[(\d+)\](?=<)/.exec(line)
+					if (match && pattern.test(line)) return Number(match[1])
+				}
+				throw new Error(`No indexed ${label} was found. Refresh the browser state and try again.`)
+			}
+
+			async function runAction(label, operation) {
+				if (actionInFlight) return
+				actionInFlight = true
+				refreshButton.disabled = true
+				setActionsEnabled(false)
+				clearError()
+				setStatus(`${label}…`, 'busy')
+				try {
+					if (refreshPromise) await refreshPromise
+					const state = latestState ?? (await refreshState({ announce: false }))
+					const result = await operation(state)
+					if (!result?.success) throw new Error(result?.message || `${label} failed`)
+					await refreshState({ announce: false })
+					setStatus(`${label} complete · ${result.message}`, 'success')
+				} catch (error) {
+					showError(error)
+				} finally {
+					actionInFlight = false
+					refreshButton.disabled = false
+					setActionsEnabled(Boolean(latestState))
+				}
+			}
+
+			refreshButton.addEventListener('click', () => {
+				void refreshState().catch(() => undefined)
+			})
+
+			document.querySelector('#run-remote-click').addEventListener('click', () => {
+				void runAction('Remote click', (state) =>
+					controller.clickElement(
+						markerIndex(state, /<button[^>]*id=remote-button/, 'remote button')
+					)
+				)
+			})
+
+			document.querySelector('#run-remote-input').addEventListener('click', () => {
+				void runAction('Remote input', (state) =>
+					controller.inputText(
+						markerIndex(state, /<input[^>]*id=remote-input(?:\s|>)/, 'remote input'),
+						inputValue.value
+					)
+				)
+			})
+
+			document.querySelector('#run-remote-select').addEventListener('click', () => {
+				void runAction('Remote select', (state) =>
+					controller.selectOption(
+						markerIndex(state, /<select[^>]*id=remote-select(?:\s|>)/, 'remote select'),
+						optionValue.value
+					)
+				)
+			})
+
+			document.querySelector('#run-remote-scroll').addEventListener('click', () => {
+				void runAction('Remote document scroll', (state) =>
+					controller.scroll({
+						index: markerIndex(state, /<iframe-document>/, 'remote iframe document'),
+						down: true,
+						numPages: 1,
+					})
+				)
+			})
+
+			setActionsEnabled(false)
+		</script>
+	</body>
+</html>

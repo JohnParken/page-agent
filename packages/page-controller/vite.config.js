@@ -17,9 +17,12 @@ export default defineConfig({
 	publicDir: false,
 	build: {
 		lib: {
-			entry: resolve(__dirname, 'src/PageController.ts'),
+			entry: {
+				'page-controller': resolve(__dirname, 'src/PageController.ts'),
+				'iframe-bridge': resolve(__dirname, 'src/iframe-bridge/index.ts'),
+			},
 			name: 'PageController',
-			fileName: 'page-controller',
+			fileName: (_format, entryName) => `${entryName}.js`,
 			formats: ['es'],
 		},
 		outDir: resolve(__dirname, 'dist', 'lib'),

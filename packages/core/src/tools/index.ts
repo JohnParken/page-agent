@@ -61,7 +61,7 @@ tools.set(
 		}),
 		execute: async function (this: PageAgentCore, input, { signal }) {
 			// try to subtract LLM calling time from the actual wait time
-			const lastTimeUpdate = await this.pageController.getLastUpdateTime()
+			const lastTimeUpdate = await this.pageController.getLastUpdateTime({ signal })
 			const secondsSinceLastUpdate = (Date.now() - lastTimeUpdate) / 1000
 			const actualWaitTime = Math.max(0, input.seconds - secondsSinceLastUpdate)
 			console.log(`actualWaitTime: ${actualWaitTime} seconds`)
@@ -98,8 +98,8 @@ tools.set(
 		inputSchema: z.object({
 			index: z.int().min(0),
 		}),
-		execute: async function (this: PageAgentCore, input) {
-			const result = await this.pageController.clickElement(input.index)
+		execute: async function (this: PageAgentCore, input, { signal }) {
+			const result = await this.pageController.clickElement(input.index, { signal })
 			return result.message
 		},
 	})
@@ -113,8 +113,8 @@ tools.set(
 			index: z.int().min(0),
 			text: z.string(),
 		}),
-		execute: async function (this: PageAgentCore, input) {
-			const result = await this.pageController.inputText(input.index, input.text)
+		execute: async function (this: PageAgentCore, input, { signal }) {
+			const result = await this.pageController.inputText(input.index, input.text, { signal })
 			return result.message
 		},
 	})
@@ -129,8 +129,8 @@ tools.set(
 			index: z.int().min(0),
 			text: z.string(),
 		}),
-		execute: async function (this: PageAgentCore, input) {
-			const result = await this.pageController.selectOption(input.index, input.text)
+		execute: async function (this: PageAgentCore, input, { signal }) {
+			const result = await this.pageController.selectOption(input.index, input.text, { signal })
 			return result.message
 		},
 	})
@@ -150,11 +150,14 @@ tools.set(
 			pixels: z.number().int().min(0).optional(),
 			index: z.number().int().min(0).optional(),
 		}),
-		execute: async function (this: PageAgentCore, input) {
-			const result = await this.pageController.scroll({
-				...input,
-				numPages: input.num_pages,
-			})
+		execute: async function (this: PageAgentCore, input, { signal }) {
+			const result = await this.pageController.scroll(
+				{
+					...input,
+					numPages: input.num_pages,
+				},
+				{ signal }
+			)
 			return result.message
 		},
 	})
@@ -173,8 +176,8 @@ tools.set(
 			pixels: z.number().int().min(0),
 			index: z.number().int().min(0).optional(),
 		}),
-		execute: async function (this: PageAgentCore, input) {
-			const result = await this.pageController.scrollHorizontally(input)
+		execute: async function (this: PageAgentCore, input, { signal }) {
+			const result = await this.pageController.scrollHorizontally(input, { signal })
 			return result.message
 		},
 	})

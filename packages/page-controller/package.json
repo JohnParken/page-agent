@@ -8,6 +8,10 @@
         ".": {
             "types": "./src/PageController.ts",
             "default": "./src/PageController.ts"
+        },
+        "./iframe-bridge": {
+            "types": "./src/iframe-bridge/index.ts",
+            "default": "./src/iframe-bridge/index.ts"
         }
     },
     "publishConfig": {
@@ -19,6 +23,11 @@
                 "types": "./dist/lib/PageController.d.ts",
                 "import": "./dist/lib/page-controller.js",
                 "default": "./dist/lib/page-controller.js"
+            },
+            "./iframe-bridge": {
+                "types": "./dist/lib/iframe-bridge.d.ts",
+                "import": "./dist/lib/iframe-bridge.js",
+                "default": "./dist/lib/iframe-bridge.js"
             }
         }
     },

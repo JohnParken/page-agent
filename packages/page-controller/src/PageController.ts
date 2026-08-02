@@ -22,6 +22,29 @@ import { isAnchorElement } from './utils'
 import type { FlatDomTree, InteractiveElementDomNode } from './dom/dom_tree/type'
 
 /**
+ * AbortSignal.throwIfAborted is not available in every supported browser (or
+ * DOM test environment). Keep cancellation semantics consistent without
+ * requiring that newer convenience method.
+ */
+function throwIfAborted(signal?: AbortSignal): void {
+	if (!signal) return
+
+	if (typeof signal.throwIfAborted === 'function') {
+		signal.throwIfAborted()
+		return
+	}
+
+	if (signal.aborted) {
+		throw (
+			signal.reason ??
+			(typeof DOMException === 'function'
+				? new DOMException('The operation was aborted.', 'AbortError')
+				: Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }))
+		)
+	}
+}
+
+/**
  * Configuration for PageController
  */
 export interface PageControllerConfig extends dom.DomConfig {
@@ -43,9 +66,78 @@ export interface BrowserState {
 	footer: string
 }
 
-interface ActionResult {
+/**
+ * Browser state with the metadata required to route index-based actions safely.
+ * `treeRevision` changes whenever the controller rebuilds its index map.
+ */
+export interface IndexedBrowserState extends BrowserState {
+	treeRevision: number
+	indices: number[]
+}
+
+/** Optional metadata associated with a controller call. */
+export interface PageControllerCallContext {
+	signal?: AbortSignal
+}
+
+/** Result returned by page actions. */
+export interface PageActionResult {
 	success: boolean
 	message: string
+}
+
+/** Options for vertical document or element scrolling. */
+export interface ScrollOptions {
+	down: boolean
+	numPages: number
+	pixels?: number
+	index?: number
+}
+
+/** Options for horizontal document or element scrolling. */
+export interface HorizontalScrollOptions {
+	right: boolean
+	pixels: number
+	index?: number
+}
+
+/**
+ * Controller contract consumed by PageAgentCore.
+ *
+ * Implementations may be local or remote. The optional call context lets remote
+ * implementations cancel pending observation and action requests cooperatively.
+ */
+export interface PageControllerAdapter {
+	getCurrentUrl(context?: PageControllerCallContext): Promise<string>
+	getLastUpdateTime(context?: PageControllerCallContext): Promise<number>
+	getBrowserState(context?: PageControllerCallContext): Promise<BrowserState>
+	updateTree(context?: PageControllerCallContext): Promise<string>
+	cleanUpHighlights(): Promise<void>
+	clickElement(index: number, context?: PageControllerCallContext): Promise<PageActionResult>
+	inputText(
+		index: number,
+		text: string,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult>
+	selectOption(
+		index: number,
+		optionText: string,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult>
+	scroll(options: ScrollOptions, context?: PageControllerCallContext): Promise<PageActionResult>
+	scrollHorizontally(
+		options: HorizontalScrollOptions,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult>
+	executeJavascript(script: string, signal?: AbortSignal): Promise<PageActionResult>
+	showMask(): Promise<void>
+	hideMask(): Promise<void>
+	dispose(): void
+}
+
+/** Controller contract whose observations expose the current index mapping revision. */
+export interface IndexedPageControllerAdapter extends PageControllerAdapter {
+	getBrowserState(context?: PageControllerCallContext): Promise<IndexedBrowserState>
 }
 
 /**
@@ -56,7 +148,7 @@ interface ActionResult {
  * - beforeUpdate: Emitted before the DOM tree is updated.
  * - afterUpdate: Emitted after the DOM tree is updated.
  */
-export class PageController extends EventTarget {
+export class PageController extends EventTarget implements IndexedPageControllerAdapter {
 	private config: PageControllerConfig
 
 	/** Corresponds to eval_page in browser-use */
@@ -82,6 +174,9 @@ export class PageController extends EventTarget {
 
 	/** Whether the tree has been indexed at least once */
 	private isIndexed = false
+
+	/** Monotonically increasing revision of the selector map. */
+	private treeRevision = 0
 
 	/** Visual mask overlay for blocking user interaction during automation */
 	private mask: InstanceType<typeof import('./mask/SimulatorMask').SimulatorMask> | null = null
@@ -112,14 +207,16 @@ export class PageController extends EventTarget {
 	/**
 	 * Get current page URL
 	 */
-	async getCurrentUrl(): Promise<string> {
+	async getCurrentUrl(context?: PageControllerCallContext): Promise<string> {
+		throwIfAborted(context?.signal)
 		return window.location.href
 	}
 
 	/**
 	 * Get last tree update timestamp
 	 */
-	async getLastUpdateTime(): Promise<number> {
+	async getLastUpdateTime(context?: PageControllerCallContext): Promise<number> {
+		throwIfAborted(context?.signal)
 		return this.lastTimeUpdate
 	}
 
@@ -127,13 +224,16 @@ export class PageController extends EventTarget {
 	 * Get structured browser state for LLM consumption.
 	 * Automatically calls updateTree() to refresh the DOM state.
 	 */
-	async getBrowserState(): Promise<BrowserState> {
+	async getBrowserState(context?: PageControllerCallContext): Promise<IndexedBrowserState> {
+		throwIfAborted(context?.signal)
+
 		const url = window.location.href
 		const title = document.title
 		const pi = getPageInfo()
 		const viewportExpansion = dom.resolveViewportExpansion(this.config.viewportExpansion)
 
-		await this.updateTree()
+		await this.updateTree(context)
+		throwIfAborted(context?.signal)
 
 		const content = this.simplifiedHTML
 
@@ -172,7 +272,15 @@ export class PageController extends EventTarget {
 					)} pages) - scroll to see more ...`
 				: '[End of page]'
 
-		return { url, title, header, content, footer }
+		return {
+			url,
+			title,
+			header,
+			content,
+			footer,
+			treeRevision: this.treeRevision,
+			indices: Array.from(this.selectorMap.keys()).sort((a, b) => a - b),
+		}
 	}
 
 	// ======= DOM Tree Operations =======
@@ -182,7 +290,9 @@ export class PageController extends EventTarget {
 	 * This is the main method to refresh the page state.
 	 * Automatically bypasses mask during DOM extraction if enabled.
 	 */
-	async updateTree(): Promise<string> {
+	async updateTree(context?: PageControllerCallContext): Promise<string> {
+		throwIfAborted(context?.signal)
+
 		this.dispatchEvent(new Event('beforeUpdate'))
 
 		this.lastTimeUpdate = Date.now()
@@ -218,6 +328,7 @@ export class PageController extends EventTarget {
 
 		// Mark as indexed - now element actions are allowed
 		this.isIndexed = true
+		this.treeRevision += 1
 
 		// Restore mask blocking
 		if (this.mask) {
@@ -252,12 +363,17 @@ export class PageController extends EventTarget {
 	/**
 	 * Click element by index
 	 */
-	async clickElement(index: number): Promise<ActionResult> {
+	async clickElement(
+		index: number,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult> {
 		try {
+			throwIfAborted(context?.signal)
 			this.assertIndexed()
 			const element = getElementByIndex(this.selectorMap, index)
 			const elemText = this.elementTextMap.get(index)
 			await clickElement(element)
+			throwIfAborted(context?.signal)
 
 			// Handle links that open in new tabs
 			if (isAnchorElement(element) && element.target === '_blank') {
@@ -272,6 +388,7 @@ export class PageController extends EventTarget {
 				message: `✅ Clicked element (${elemText ?? index}).`,
 			}
 		} catch (error) {
+			throwIfAborted(context?.signal)
 			return {
 				success: false,
 				message: `❌ Failed to click element: ${error}`,
@@ -282,18 +399,25 @@ export class PageController extends EventTarget {
 	/**
 	 * Input text into element by index
 	 */
-	async inputText(index: number, text: string): Promise<ActionResult> {
+	async inputText(
+		index: number,
+		text: string,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult> {
 		try {
+			throwIfAborted(context?.signal)
 			this.assertIndexed()
 			const element = getElementByIndex(this.selectorMap, index)
 			const elemText = this.elementTextMap.get(index)
 			await inputTextElement(element, text)
+			throwIfAborted(context?.signal)
 
 			return {
 				success: true,
 				message: `✅ Input text (${text}) into element (${elemText ?? index}).`,
 			}
 		} catch (error) {
+			throwIfAborted(context?.signal)
 			return {
 				success: false,
 				message: `❌ Failed to input text: ${error}`,
@@ -304,18 +428,25 @@ export class PageController extends EventTarget {
 	/**
 	 * Select dropdown option by index and option text
 	 */
-	async selectOption(index: number, optionText: string): Promise<ActionResult> {
+	async selectOption(
+		index: number,
+		optionText: string,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult> {
 		try {
+			throwIfAborted(context?.signal)
 			this.assertIndexed()
 			const element = getElementByIndex(this.selectorMap, index)
 			const elemText = this.elementTextMap.get(index)
 			await selectOptionElement(element as HTMLSelectElement, optionText)
+			throwIfAborted(context?.signal)
 
 			return {
 				success: true,
 				message: `✅ Selected option (${optionText}) in element (${elemText ?? index}).`,
 			}
 		} catch (error) {
+			throwIfAborted(context?.signal)
 			return {
 				success: false,
 				message: `❌ Failed to select option: ${error}`,
@@ -326,13 +457,12 @@ export class PageController extends EventTarget {
 	/**
 	 * Scroll vertically
 	 */
-	async scroll(options: {
-		down: boolean
-		numPages: number
-		pixels?: number
-		index?: number
-	}): Promise<ActionResult> {
+	async scroll(
+		options: ScrollOptions,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult> {
 		try {
+			throwIfAborted(context?.signal)
 			const { down, numPages, pixels, index } = options
 
 			this.assertIndexed()
@@ -342,12 +472,14 @@ export class PageController extends EventTarget {
 			const element = index !== undefined ? getElementByIndex(this.selectorMap, index) : null
 
 			const message = await scrollVertically(scrollAmount, element)
+			throwIfAborted(context?.signal)
 
 			return {
 				success: true,
 				message,
 			}
 		} catch (error) {
+			throwIfAborted(context?.signal)
 			return {
 				success: false,
 				message: `❌ Failed to scroll: ${error}`,
@@ -358,12 +490,12 @@ export class PageController extends EventTarget {
 	/**
 	 * Scroll horizontally
 	 */
-	async scrollHorizontally(options: {
-		right: boolean
-		pixels: number
-		index?: number
-	}): Promise<ActionResult> {
+	async scrollHorizontally(
+		options: HorizontalScrollOptions,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult> {
 		try {
+			throwIfAborted(context?.signal)
 			const { right, pixels, index } = options
 
 			this.assertIndexed()
@@ -373,12 +505,14 @@ export class PageController extends EventTarget {
 			const element = index !== undefined ? getElementByIndex(this.selectorMap, index) : null
 
 			const message = await scrollHorizontally(scrollAmount, element)
+			throwIfAborted(context?.signal)
 
 			return {
 				success: true,
 				message,
 			}
 		} catch (error) {
+			throwIfAborted(context?.signal)
 			return {
 				success: false,
 				message: `❌ Failed to scroll horizontally: ${error}`,
@@ -391,7 +525,7 @@ export class PageController extends EventTarget {
 	 * The optional `signal` is exposed to the script scope so cooperative code
 	 * can abort promptly when the task is stopped.
 	 */
-	async executeJavascript(script: string, signal?: AbortSignal): Promise<ActionResult> {
+	async executeJavascript(script: string, signal?: AbortSignal): Promise<PageActionResult> {
 		try {
 			// Wrap script in async function to support await, exposing `signal`.
 			const asyncFunction = eval(`(async (signal) => { ${script} })`)

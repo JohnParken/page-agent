@@ -3,23 +3,37 @@
  * All rights reserved.
  */
 import { type AgentConfig, PageAgentCore } from '@page-agent/core'
-import { PageController, type PageControllerConfig } from '@page-agent/page-controller'
+import {
+	PageController,
+	type PageControllerAdapter,
+	type PageControllerConfig,
+} from '@page-agent/page-controller'
 import { Panel, type PanelConfig } from '@page-agent/ui'
 
 export * from '@page-agent/core'
 export { TlAiClient } from '@page-agent/llms'
 export type { TlAiConfig } from '@page-agent/llms'
 
-export type PageAgentConfig = AgentConfig & PageControllerConfig & Omit<PanelConfig, 'language'>
+export type PageAgentConfig<TController extends PageControllerAdapter = PageController> =
+	AgentConfig &
+		PageControllerConfig &
+		Omit<PanelConfig, 'language'> & {
+			/** Use a custom controller implementation instead of the local PageController. */
+			pageController?: TController
+		}
 
-export class PageAgent extends PageAgentCore {
+export class PageAgent<
+	TController extends PageControllerAdapter = PageController,
+> extends PageAgentCore<TController> {
 	panel: Panel
 
-	constructor(config: PageAgentConfig) {
-		const pageController = new PageController({
-			...config,
-			enableMask: config.enableMask ?? true,
-		})
+	constructor(config: PageAgentConfig<TController>) {
+		const pageController =
+			config.pageController ??
+			(new PageController({
+				...config,
+				enableMask: config.enableMask ?? true,
+			}) as unknown as TController)
 
 		super({ ...config, pageController })
 

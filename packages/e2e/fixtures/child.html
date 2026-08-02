@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Cooperative child fixture</title>
+		<style>
+			#scroll-container {
+				height: 40px;
+				overflow: auto;
+			}
+
+			#scroll-content {
+				height: 400px;
+			}
+
+			#document-scroll-spacer {
+				height: 1600px;
+			}
+		</style>
+	</head>
+	<body>
+		<button id="remote-button">Remote button</button>
+		<input id="remote-input" aria-label="Remote input" />
+		<select id="remote-select" aria-label="Remote select">
+			<option>Alpha</option>
+			<option>Beta</option>
+		</select>
+		<div id="scroll-container">
+			<div id="scroll-content">Remote scroll content</div>
+		</div>
+		<div id="document-scroll-spacer" aria-hidden="true"></div>
+
+		<script>
+			document.querySelector('#remote-button').addEventListener('click', (event) => {
+				event.currentTarget.dataset.clicked = 'true'
+				document.body.dataset.remoteClicked = 'true'
+			})
+		</script>
+		<script type="module">
+			import { FrameBridgeHost, PageController } from '/lib/iframe-bridge.js'
+
+			const host = new FrameBridgeHost({
+				controller: new PageController({
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+				}),
+				allowedParentOrigins: ['http://127.0.0.1:4173'],
+			})
+			host.start()
+			window.frameBridgeHost = host
+		</script>
+	</body>
+</html>
