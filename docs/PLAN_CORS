@@ -1,0 +1,97 @@
+# SDK 跨域 iframe PostMessage 桥改造方案
+
+## 总结
+
+- 技术上可行，但仅限“协作式 iframe”：子页面必须主动加载桥脚本。`postMessage` 是受控跨域通信机制，不能让宿主页单方面绕过同源策略读取任意第三方 DOM。[MDN：window.postMessage](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage)
+- DOM 节点不能通过 structured clone 传输，因此子页应在自身 origin 内运行现有 `PageController`，仅返回脱水内容、索引和页面信息；父页负责全局索引映射及动作转发。[MDN：Structured clone](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)
+- 首版支持多个、动态增删或导航的直接子 iframe；仅连接显式声明且接入桥的 iframe。其他目标显示为不可用，但不影响宿主页和已连接 iframe。
+- 采用“控制器接口 + 装饰器”架构。现有同源 iframe、数字 index 工具协议、LLM prompt 和默认 SDK 行为保持不变。
+
+## 公共接口与包边界
+
+- 在 [PageController.ts](/Users/yangxuezhen/git/page-agent/packages/page-controller/src/PageController.ts) 导出：
+  - `PageControllerAdapter`
+  - `IndexedPageControllerAdapter`
+  - `PageActionResult`
+  - `PageControllerCallContext`
+  - 横纵滚动参数类型
+  - `IndexedBrowserState`，包含 `treeRevision` 和当前有效的数字索引。
+- [PageAgentCore.ts](/Users/yangxuezhen/git/page-agent/packages/core/src/PageAgentCore.ts) 改为依赖 `PageControllerAdapter`，并通过默认泛型保留现有 `PageController` 类型体验。
+- [PageAgent.ts](/Users/yangxuezhen/git/page-agent/packages/page-agent/src/PageAgent.ts) 增加可选 `pageController` 注入：
+  - 未传入时仍按原逻辑创建本地 `PageController`。
+  - 传入时由注入控制器持有自己的 Controller 配置，`PageAgent.dispose()` 负责释放它。
+- 新增独立 ESM 子入口：
+  - 规范实现：`@page-agent/page-controller/iframe-bridge`
+  - SDK 便捷转发：`page-agent/iframe-bridge`
+  - 默认根入口与现有 CDN/IIFE 构建不静态引入桥代码。
+- 子入口导出：
+  - `FrameAwarePageController`：父页装饰器，组合本地控制器和远端 frame clients。
+  - `FrameBridgeHost`：运行在 iframe 内，包装该页面自己的 `PageController`。
+  - 父子配置、能力类型及稳定的 `FrameBridgeErrorCode`。
+
+建议用法：
+
+```ts
+// Parent
+const controller = new FrameAwarePageController({
+	localController: new PageController({ enableMask: true }),
+	frameSelector: 'iframe[data-page-agent-bridge]',
+	allowedChildOrigins: ['https://child.example.com'],
+	handshakeTimeoutMs: 1000,
+	requestTimeoutMs: 5000,
+})
+
+const agent = new PageAgent({ ...llmConfig, pageController: controller })
+
+// Child iframe
+const host = new FrameBridgeHost({
+	controller: new PageController(),
+	allowedParentOrigins: ['https://host.example.com'],
+	capabilities: ['observe', 'click', 'input', 'select', 'scroll'],
+})
+host.start()
+```
+
+## 实现设计
+
+- `FrameAwarePageController` 先取得本地 `IndexedBrowserState`，再并行连接所有匹配 selector 的不可直接访问 iframe；同源 iframe 继续走现有 DOM 递归，避免重复内容。
+- 子快照返回纯数据：`frameInstanceId`、`treeRevision`、URL/title、BrowserState、有效索引和能力列表，不复制或改写现有 DOM/action 实现。
+- 父端保留宿主页索引，在其后为每个子页分配全局数字索引，并维护：
+  `globalIndex → iframe/client/localIndex/frameInstanceId/treeRevision`。
+  重映射同时覆盖 `[n]` 与 `*[n]`，不改变 Core 工具 schema。
+- 跨域内容追加到宿主页内容后的明确 `<cross-origin-frames>` 分区；顶层 `BrowserState.url/title/header/footer` 始终代表宿主页。每个 iframe 分区包含自身 URL、页面滚动信息、连接状态和重映射后的内容。
+- 每个已连接 iframe 生成一个 synthetic frame scroll index，用于把现有 `scroll({ index })` 转发为子页 document scroll；无 index 的 scroll 始终滚动宿主页。
+- 远端动作前，父端先将 iframe 元素滚入宿主视口，再调用子页的 click/input/select/scroll；默认不开放远端 `executeJavascript`。
+- 未接桥、超时、协议不匹配或拒绝连接的选中 iframe产生可读的 unavailable marker，并派发 `bridgeerror`，不使整次观察失败。多个 iframe 使用 `Promise.allSettled` 并发收集。
+- 握手阶段同时校验 `event.source` 和双方 exact-origin allowlist；禁止 `*` 与 `"null"` origin。握手后转交专属 `MessageChannel`，全局 `message` listener 不承载业务 RPC。[MDN：Channel Messaging](https://developer.mozilla.org/en-US/docs/Web/API/Channel_Messaging_API/Using_channel_messaging)
+- 协议固定包含 `version/sessionId/requestId/frameInstanceId/treeRevision/method/payload`，所有消息做运行时类型校验。iframe 重载后生成新的 instance ID，旧索引返回 `STALE_FRAME`。
+- Core 将任务 `AbortSignal` 通过可选调用上下文传给观察和标准动作；父端取消 pending RPC，并发送 `cancel(requestId)`，子端映射到本地 `AbortController`。
+- 变更型动作不自动重试。若已收到 action-started，但 iframe 导航导致结果丢失，返回 `OUTCOME_UNKNOWN`，要求下一步重新观察，避免重复点击或提交。
+- 动态 iframe 的 load、移除、替换和导航会关闭端口、拒绝 pending 请求并清除路由；下一次观察重新握手。`dispose()` 同时释放本地控制器、监听器、端口和 pending 请求。
+- 宿主 mask 继续负责全页阻塞；首版不桥接远端光标动画。子页高亮在 cleanup/dispose 时通过 RPC 清除。
+
+## 测试与验收
+
+- Vitest 覆盖：
+  - 接口注入、默认本地模式零行为变化及 dispose 所有权。
+  - 本地加多个 iframe 的全局索引唯一性、`*[n]` 重映射、synthetic scroll target 和所有标准动作路由。
+  - 同源 iframe 不重复、未接桥降级、超时、取消、乱序响应、动态移除、重载和 stale revision。
+  - source/origin/version/capability 校验，拒绝 wildcard、opaque origin、远端 JavaScript 和未知方法。
+  - 停止任务可立即中断远端观察或等待，不必等到 RPC 超时。
+- 新增 `packages/e2e` Playwright 双 origin 测试：
+  - 宿主页、已接桥子页和未接桥第三方页同时存在。
+  - 读取子页文本并完成点击、输入、下拉选择、容器及文档滚动。
+  - 动态插入、导航、重连及恶意第三 origin 握手失败。
+  - `sandbox` 正常组合、缺少 `allow-scripts`、缺少 `allow-same-origin` 三种场景。
+- 构建验收：根 ESM/IIFE 产物不包含 bridge runtime；两个 secondary entry 及类型声明可独立导入。
+
+## 假设与明确边界
+
+- 只支持显式标记的动态直接子 iframe；未标记 iframe 忽略，已标记但未接桥的 iframe 明确报告不可用。
+- 首版只发布 NPM/ESM 子入口，不新增桥的 CDN/IIFE 产物，也不支持递归嵌套；协议保留逐跳组合能力。
+- 默认能力为读取、点击、输入、选择、横纵滚动；不提供远端任意脚本、远端光标同步或自动重试变更型动作。
+- `sandbox` 至少需要 `allow-scripts allow-same-origin`；否则脚本无法运行或 origin 变为不可安全认证的 opaque origin。[MDN：iframe sandbox](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe)
+- 子站仍需允许被宿主页嵌入；CSP `frame-ancestors` 或 `X-Frame-Options` 可以直接阻止加载，桥不能绕过。[MDN：frame-ancestors](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/frame-ancestors)
+- 合成事件仍可能不具备真实用户激活，支付、文件选择、剪贴板、弹窗等受保护能力不保证可自动化。
+- 完全不可控的第三方 iframe 不在纯 SDK 方案能力范围内；这类页面只能另行评估浏览器扩展、受控同源代理或外部浏览器自动化。
+- 本阶段仅完成评估与实施方案，不修改项目代码。
