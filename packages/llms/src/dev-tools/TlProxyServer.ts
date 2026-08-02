@@ -1,3 +1,4 @@
+import { once } from 'events'
 import http from 'http'
 
 import { FileLogger, type LogLevel } from './logger.ts'
@@ -151,6 +152,11 @@ export class TlProxyServer {
 		})
 
 		try {
+			const upstreamAbortController = new AbortController()
+			res.once('close', () => {
+				if (!res.writableEnded) upstreamAbortController.abort()
+			})
+
 			// Call qwen API directly
 			const headers: Record<string, string> = {
 				'Content-Type': 'application/json',
@@ -163,6 +169,9 @@ export class TlProxyServer {
 			const requestBody = {
 				model: this.config.qwenModel,
 				messages,
+				// The development Qwen endpoint does not support streaming. The proxy
+				// converts this complete response into Tl-compatible SSE when requested.
+				stream: false,
 			}
 
 			this.logger.info('📤 Sending to Qwen API', {
@@ -176,6 +185,7 @@ export class TlProxyServer {
 				method: 'POST',
 				headers,
 				body: JSON.stringify(requestBody),
+				signal: upstreamAbortController.signal,
 			})
 
 			this.logger.info('📥 Qwen API Response', {
@@ -191,43 +201,11 @@ export class TlProxyServer {
 
 			const apiData = await apiResponse.json()
 			this.logger.debug('Qwen response body', JSON.stringify(apiData))
+			const responseContent = this.extractResponseContent(apiData)
 
 			if (stream) {
-				// TlClient reads the streamed JSON payload with a UTF-8 decoder.
-				res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-
-				let responseContent = ''
-				if (apiData.choices?.[0]?.message?.content) {
-					responseContent = apiData.choices[0].message.content
-				} else if (apiData.choices?.[0]?.message?.tool_calls) {
-					// If there's a tool call, extract and return the tool call JSON
-					const toolCall = apiData.choices[0].message.tool_calls[0]
-					responseContent = JSON.stringify({
-						tool_name: toolCall.function.name,
-						parameters: JSON.parse(toolCall.function.arguments),
-					})
-				}
-
-				this.logger.info('📤 Streaming Response to Client', {
-					contentLength: responseContent.length,
-					content: responseContent,
-				})
-
-				res.write(Buffer.from(responseContent, 'utf8'))
-				res.end()
+				await this.writeSimulatedStream(responseContent, res)
 			} else {
-				// Non-streaming response
-				let responseContent = ''
-				if (apiData.choices?.[0]?.message?.content) {
-					responseContent = apiData.choices[0].message.content
-				} else if (apiData.choices?.[0]?.message?.tool_calls) {
-					const toolCall = apiData.choices[0].message.tool_calls[0]
-					responseContent = JSON.stringify({
-						tool_name: toolCall.function.name,
-						parameters: JSON.parse(toolCall.function.arguments),
-					})
-				}
-
 				const responseData = {
 					code: 0,
 					message: 'success',
@@ -245,9 +223,66 @@ export class TlProxyServer {
 			}
 		} catch (error) {
 			this.logger.error('❌ Error calling qwen API', error)
-			res.writeHead(500)
-			res.end(JSON.stringify({ error: 'Failed to call qwen API' }))
+			if (res.headersSent) {
+				if (!res.writableEnded) {
+					res.end(
+						`event: error\ndata: ${JSON.stringify({
+							message: 'Failed to stream API response',
+						})}\n\n`
+					)
+				}
+			} else {
+				res.writeHead(500)
+				res.end(JSON.stringify({ error: 'Failed to call qwen API' }))
+			}
 		}
+	}
+
+	private extractResponseContent(apiData: any): string {
+		if (typeof apiData.choices?.[0]?.message?.content === 'string') {
+			return apiData.choices[0].message.content
+		}
+
+		const toolCall = apiData.choices?.[0]?.message?.tool_calls?.[0]
+		if (toolCall?.function?.name && typeof toolCall.function.arguments === 'string') {
+			return JSON.stringify({
+				tool_name: toolCall.function.name,
+				parameters: JSON.parse(toolCall.function.arguments),
+			})
+		}
+
+		throw new Error('Qwen response did not include message.content or a tool call')
+	}
+
+	private async writeSimulatedStream(
+		responseContent: string,
+		res: http.ServerResponse
+	): Promise<void> {
+		res.writeHead(200, {
+			'Content-Type': 'text/event-stream; charset=utf-8',
+			'Cache-Control': 'no-cache, no-transform',
+			Connection: 'keep-alive',
+			'X-Accel-Buffering': 'no',
+		})
+		res.flushHeaders()
+
+		let eventId = 0
+
+		const writeEvent = async (event: string, data: unknown): Promise<void> => {
+			const frame = `id: ${Date.now()}-${eventId++}\nevent: ${event}\ndata: ${JSON.stringify(
+				data
+			)}\n\n`
+			if (!res.write(frame)) await once(res, 'drain')
+		}
+
+		// Array.from splits by Unicode code point, avoiding broken surrogate pairs.
+		const characters = Array.from(responseContent)
+		const chunkSize = 32
+		for (let offset = 0; offset < characters.length; offset += chunkSize) {
+			await writeEvent('chunk', { content: characters.slice(offset, offset + chunkSize).join('') })
+		}
+		await writeEvent('done', { finished: true })
+		res.end()
 	}
 
 	private parseChatText(txt: string): Message[] {

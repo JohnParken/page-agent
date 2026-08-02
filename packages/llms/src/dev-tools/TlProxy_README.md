@@ -7,7 +7,7 @@
 -   ✅ 模拟 `/chatbbc/init_session` 端点初始化会话
 -   ✅ 模拟 `/chatbbc/chat` 端点处理聊天请求
 -   ✅ 将 TlClient 的请求转发给 qwen3.5-plus API
--   ✅ 支持流式和非流式响应
+-   ✅ 支持流式和非流式响应（流式响应由 Proxy 将上游完整响应转换为标准 Tl SSE）
 -   ✅ 自动处理工具调用响应格式转换
 
 ## 快速开始
@@ -68,6 +68,11 @@ TlClient → TlProxyServer (localhost:8089) → qwen3.5-plus API
               ↓
         转换回 chatbbc 格式
 ```
+
+当前开发用 Qwen 接口不接受 `stream: true`。当 TlClient 请求流式响应时，Proxy 会以
+`stream: false` 调用上游，再将完整内容按 Unicode 字符安全切片，依次输出
+`event: chunk`，最后输出 `event: done`。这可以验证 TlClient 的 SSE 解析，但不代表
+上游模型在实时生成 token。
 
 ## 环境变量
 

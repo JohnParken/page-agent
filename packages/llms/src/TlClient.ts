@@ -433,8 +433,9 @@ export class TlAiClient implements LLMClient {
 	}
 
 	/**
-	 * Read the entire streaming response body into a single string.
-	 * Lines are trimmed and concatenated; empty lines are skipped.
+	 * Read a response without assuming network chunks align with SSE boundaries.
+	 * SSE responses are decoded into the accumulated content; legacy plain-text
+	 * responses are returned unchanged.
 	 */
 	private async readStream(response: Response, abortSignal?: AbortSignal): Promise<string> {
 		const reader = response.body?.getReader()
@@ -443,7 +444,7 @@ export class TlAiClient implements LLMClient {
 		}
 
 		const decoder = new TextDecoder()
-		let accumulatedContent = ''
+		let rawContent = ''
 
 		try {
 			while (true) {
@@ -451,18 +452,74 @@ export class TlAiClient implements LLMClient {
 				const { done, value } = await reader.read()
 				if (done) break
 
-				const chunk = decoder.decode(value, { stream: true })
-				const lines = chunk.split('\n')
-				for (const line of lines) {
-					const trimmedLine = line.trim()
-					if (trimmedLine) {
-						accumulatedContent += trimmedLine
-						console.log(trimmedLine)
-					}
-				}
+				rawContent += decoder.decode(value, { stream: true })
 			}
+			rawContent += decoder.decode()
 		} finally {
 			reader.releaseLock()
+		}
+
+		const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+		const looksLikeSse = /^(?:\uFEFF)?(?:id|event|data|retry):/m.test(rawContent)
+		if (!contentType.includes('text/event-stream') && !looksLikeSse) {
+			return rawContent
+		}
+
+		return this.parseSseContent(rawContent)
+	}
+
+	/** Parse SSE events and concatenate the `content` field from chunk payloads. */
+	private parseSseContent(rawContent: string): string {
+		const normalized = rawContent.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+		const eventBlocks = normalized.split('\n\n')
+		let accumulatedContent = ''
+
+		for (const block of eventBlocks) {
+			if (!block.trim()) continue
+			// Keep the original SSE frame visible in the browser debug console. This
+			// is intentionally logged before parsing so malformed server frames can
+			// also be diagnosed from test-page.html.
+			console.debug(`[TlAiClient] 📥 SSE event\n${block}\n`)
+
+			let eventType = 'message'
+			const dataLines: string[] = []
+			for (const line of block.split('\n')) {
+				if (!line || line.startsWith(':')) continue
+				const separator = line.indexOf(':')
+				const field = separator === -1 ? line : line.slice(0, separator)
+				let value = separator === -1 ? '' : line.slice(separator + 1)
+				if (value.startsWith(' ')) value = value.slice(1)
+
+				if (field === 'event') eventType = value
+				if (field === 'data') dataLines.push(value)
+			}
+
+			if (dataLines.length === 0) continue
+			const eventData = dataLines.join('\n')
+			if (eventData === '[DONE]' || eventType === 'done' || eventType === 'end') break
+			if (eventType === 'error') {
+				throw new InvokeError(
+					InvokeErrorTypes.INVALID_RESPONSE,
+					`Tl streaming response reported an error: ${eventData}`,
+					undefined,
+					{ event: eventType, data: eventData }
+				)
+			}
+
+			let payload: unknown
+			try {
+				payload = JSON.parse(eventData)
+			} catch (error: unknown) {
+				throw new InvokeError(
+					InvokeErrorTypes.INVALID_RESPONSE,
+					`Tl SSE ${eventType} event contains invalid JSON`,
+					error,
+					{ event: eventType, data: eventData }
+				)
+			}
+
+			const content = (payload as { content?: unknown })?.content
+			if (typeof content === 'string') accumulatedContent += content
 		}
 
 		return accumulatedContent
@@ -527,6 +584,7 @@ export class TlAiClient implements LLMClient {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
+					Accept: 'text/event-stream',
 				},
 				body: JSON.stringify(requestBody),
 				signal: abortSignal,

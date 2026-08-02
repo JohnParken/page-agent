@@ -44,6 +44,19 @@ function textStreamResponse(body: string, status = 200): Response {
 	})
 }
 
+function sseResponse(chunks: string[]): Response {
+	const encoder = new TextEncoder()
+	return new Response(
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+				controller.close()
+			},
+		}),
+		{ headers: { 'Content-Type': 'text/event-stream; charset=utf-8' } }
+	)
+}
+
 function initSessionBody(sessionId: string) {
 	return {
 		code: 0,
@@ -192,6 +205,61 @@ describe('TlAiClient.initSession', () => {
 // ---------- Success path ----------
 
 describe('TlAiClient.invoke — success', () => {
+	it('parses Tl SSE chunk events and concatenates their content', async () => {
+		const { client, fetchMock } = makeClient()
+		const tool = makeTool()
+		const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(
+			sseResponse([
+				'id: 123\nevent: chunk\ndata: {"content":"{\\"tool_name\\":\\"greet\\","}\n\n',
+				'id: 124\nevent: chunk\ndata: {"content":"\\"parameters\\":{\\"name\\":\\"SSE\\"}}"}\n\n',
+				'event: done\ndata: {"finished":true}\n\n',
+			])
+		)
+
+		const result = await client.invoke([], { greet: tool }, signal)
+
+		expect(fetchMock.mock.calls[1][1]?.headers).toEqual({
+			'Content-Type': 'application/json',
+			Accept: 'text/event-stream',
+		})
+		expect(result.toolCall).toEqual({ name: 'greet', args: { name: 'SSE' } })
+		expect(result.toolResult).toBe('hello SSE')
+		expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('event: chunk'))
+		expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('data: {"finished":true}'))
+		debugSpy.mockRestore()
+	})
+
+	it('parses SSE correctly when lines and UTF-8 characters cross network chunks', async () => {
+		const { client, fetchMock } = makeClient()
+		const tool = makeTool()
+		setupSession(fetchMock)
+		const frame =
+			'event: chunk\r\ndata: ' +
+			JSON.stringify({
+				content: JSON.stringify({ tool_name: 'greet', parameters: { name: '你好' } }),
+			}) +
+			'\r\n\r\n'
+		const bytes = new TextEncoder().encode(frame)
+		const splitAt = frame.indexOf('你') + 1
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(bytes.slice(0, splitAt))
+						controller.enqueue(bytes.slice(splitAt))
+						controller.close()
+					},
+				}),
+				{ headers: { 'Content-Type': 'text/event-stream' } }
+			)
+		)
+
+		const result = await client.invoke([], { greet: tool }, signal)
+		expect(result.toolCall.args).toEqual({ name: '你好' })
+	})
+
 	it('extracts legacy { tool_name, parameters } shape and executes the tool', async () => {
 		const { client, fetchMock } = makeClient()
 		const tool = makeTool()
