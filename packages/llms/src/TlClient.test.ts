@@ -312,6 +312,56 @@ describe('TlAiClient.invoke — success', () => {
 // ---------- normalizeResponse ----------
 
 describe('TlAiClient.invoke — normalizeResponse', () => {
+	it('passes the complete payload.content accumulation from SSE chunks to normalizeResponse', async () => {
+		const { client, fetchMock } = makeClient()
+		const tool = makeTool()
+		setupSession(fetchMock)
+		const rawContent = JSON.stringify({
+			evaluation_previous_goal: 'ok',
+			action: { greet: { name: '流式' } },
+		})
+		const splitAt = rawContent.indexOf('流') + 1
+		fetchMock.mockResolvedValueOnce(
+			sseResponse([
+				`event: chunk\ndata: ${JSON.stringify({ content: rawContent.slice(0, splitAt) })}\n\n`,
+				`event: chunk\ndata: ${JSON.stringify({ content: rawContent.slice(splitAt) })}\n\n`,
+				'event: done\ndata: {"finished":true}\n\n',
+			])
+		)
+
+		const normalizeResponse = vi.fn<Parameters<Required<InvokeOptions>['normalizeResponse']>>(
+			() => ({
+				choices: [
+					{
+						message: {
+							tool_calls: [
+								{
+									function: {
+										name: 'greet',
+										arguments: JSON.stringify({ name: '流式' }),
+									},
+								},
+							],
+						},
+					},
+				],
+			})
+		)
+
+		const result = await client.invoke([], { greet: tool }, signal, { normalizeResponse })
+
+		expect(normalizeResponse).toHaveBeenCalledWith(
+			expect.objectContaining({
+				choices: [
+					expect.objectContaining({
+						message: expect.objectContaining({ content: rawContent }),
+					}),
+				],
+			})
+		)
+		expect(result.toolCall.args).toEqual({ name: '流式' })
+	})
+
 	it('calls normalizeResponse with raw content as message.content and uses the normalized tool call', async () => {
 		const { client, fetchMock } = makeClient()
 		const tool = makeTool()
@@ -474,6 +524,26 @@ describe('TlAiClient.invoke — errors', () => {
 		const { client, fetchMock } = makeClient()
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(chatResponse(JSON.stringify({ hello: 'world' })))
+
+		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+			name: 'InvokeError',
+			type: InvokeErrorTypes.INVALID_RESPONSE,
+		})
+	})
+
+	it('throws INVALID_RESPONSE when a direct response contains multiple actions', async () => {
+		const { client, fetchMock } = makeClient()
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(
+				JSON.stringify({
+					action: {
+						greet: { name: 'first' },
+						other: { name: 'second' },
+					},
+				})
+			)
+		)
 
 		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
 			name: 'InvokeError',

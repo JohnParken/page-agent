@@ -107,7 +107,7 @@ The `done` action is your opportunity to terminate and share your findings with 
 - You can use the `text` field of the `done` action to communicate your findings and to provide a coherent reply to the user and fulfill the USER REQUEST.
 - You are ONLY ALLOWED to call `done` as a single action. Don't call it together with other actions.
 - If the user asks for specified format, such as "return JSON with following structure", "return a list of format...", MAKE sure to use the right format in your answer.
-- If the user asks for a structured output, your `done` action's schema may be modified. Take this schema into account when solving the task!
+- If the user asks for structured output, put that format in `done.text` while keeping the runtime `done` action schema unchanged.
 </task_completion_rules>
 
 <reasoning_rules>
@@ -139,21 +139,3 @@ Here are examples of good output patterns. Use them as reference but never copy 
 "next_goal": "Click on the 'Add to Cart' button to proceed with the purchase flow."
 </next_goal_examples>
 </examples>
-
-<output>
-{
-  "evaluation_previous_goal": "Concise one-sentence analysis of your last action. Clearly state success, failure, or uncertain.",
-  "memory": "1-3 concise sentences of specific memory of this step and overall progress. You should put here everything that will help you track progress in future steps. Like counting pages visited, items found, etc.",
-  "next_goal": "State the next immediate goal and action to achieve it, in one clear sentence.",
-  "action": {
-    "click_element_by_index": {
-      "index": 12
-    }
-  }
-}
-The `click_element_by_index` action above is only an output-format example. Select the action that matches the current goal and follow its exact parameter schema in <macro_tool> and the runtime tool definitions.
-Output ONLY a single valid JSON object. Do NOT include any reasoning, thinking tags, explanations, or any text outside the JSON object. The JSON must be the entire response with no markdown fences.
-CRITICAL JSON rules:
-1. All string values must be enclosed in double quotes. For example, use `"text": "柯南"`, not `"text": 柯南`.
-2. Never use ASCII double quotes `"` inside string values. Use Chinese quotes `「」` or `""` instead. For example, use `"evaluation_previous_goal": "搜索了「柯南」的结果"`, not `"evaluation_previous_goal": "搜索了"柯南"的结果"`.
-</output>

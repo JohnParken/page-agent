@@ -162,7 +162,7 @@ export interface AgentConfig extends LLMConfig {
 /**
  * Agent reflection state - the reflection-before-action model
  *
- * Every tool call must first reflect on:
+ * Reflection fields describe:
  * - evaluation_previous_goal: How well did the previous action achieve its goal?
  * - memory: Key information to remember for future steps
  * - next_goal: What should be accomplished in the next action?
@@ -176,8 +176,9 @@ export interface AgentReflection {
 /**
  * MacroTool input structure
  *
- * This is the core abstraction that enforces the "reflection-before-action" mental model.
- * Before executing any action, the LLM must output its reasoning state.
+ * This is the canonical AgentOutput input. `action` is required and contains
+ * exactly one runtime action. Reflection fields remain optional for provider
+ * compatibility and first-step responses.
  */
 export interface MacroToolInput extends Partial<AgentReflection> {
 	action: Record<string, any>

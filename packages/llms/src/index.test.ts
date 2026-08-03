@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { InvokeError, InvokeErrorTypes, LLM, TlAiClient } from './index'
+import { DsAiClient, InvokeError, InvokeErrorTypes, LLM, TlAiClient } from './index'
 
 import type { LLMClient } from './types'
 
@@ -130,6 +130,35 @@ describe('LLM client selection', () => {
 			model: 'my-model',
 		})
 		expect(llm.client).toBeInstanceOf(TlAiClient)
+	})
+
+	it('uses DsAiClient when provider is ds with endpointAgent (gateway)', () => {
+		const llm = new LLM({
+			provider: 'ds',
+			endpointAgent: 'api.example.com',
+			model: 'deepseek-chat',
+		})
+		expect(llm.client).toBeInstanceOf(DsAiClient)
+	})
+
+	it('uses DsAiClient when provider is ds with baseURL (official API)', () => {
+		const llm = new LLM({
+			provider: 'ds',
+			baseURL: 'https://api.deepseek.com',
+			apiKey: 'sk-test',
+			model: 'deepseek-chat',
+		})
+		expect(llm.client).toBeInstanceOf(DsAiClient)
+	})
+
+	it('throws when ds provider is missing both endpointAgent and baseURL', () => {
+		expect(
+			() =>
+				new LLM({
+					provider: 'ds',
+					model: 'deepseek-chat',
+				})
+		).toThrow('DeepSeek')
 	})
 
 	it('uses custom client when provided', () => {

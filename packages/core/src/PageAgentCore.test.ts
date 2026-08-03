@@ -33,6 +33,46 @@ function agentResponse(args: unknown): Response {
 	)
 }
 
+function tlSseAgentResponse(args: unknown): Response {
+	const content = JSON.stringify(args)
+	const splitAt = Math.ceil(content.length / 2)
+	const events = [content.slice(0, splitAt), content.slice(splitAt)]
+		.map(
+			(chunk, index) =>
+				`id: ${index}\nevent: chunk\ndata: ${JSON.stringify({ content: chunk })}\n\n`
+		)
+		.join('')
+
+	return new Response(`${events}event: done\ndata: {"finished":true}\n\n`, {
+		headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+	})
+}
+
+function extractAgentOutputSchema(prompt: string): unknown {
+	const match = /<agent_output_schema>\s*([\s\S]*?)\s*<\/agent_output_schema>/.exec(prompt)
+	if (!match?.[1]) throw new Error('AgentOutput schema was not found in prompt')
+	return JSON.parse(match[1])
+}
+
+/** OpenAI-compatible SSE stream whose delta.content carries the AgentOutput JSON. */
+function openaiSseAgentResponse(args: unknown): Response {
+	const content = JSON.stringify(args)
+	const events = [
+		`data: {"choices":[{"delta":{"content":${JSON.stringify(
+			content.slice(0, Math.ceil(content.length / 2))
+		)}}}]}\n\n`,
+		`data: {"choices":[{"delta":{"content":${JSON.stringify(
+			content.slice(Math.ceil(content.length / 2))
+		)}}}]}\n\n`,
+		`data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n`,
+		'data: [DONE]\n\n',
+	].join('')
+
+	return new Response(events, {
+		headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+	})
+}
+
 function createPageController(): PageController {
 	const browserState: BrowserState = {
 		url: 'https://example.test/',
@@ -314,12 +354,12 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 	})
 
 	describe('system_prompt tool injection', () => {
-		it('defaults Tl provider to system_prompt mode and injects tool schemas', async () => {
+		it('defaults Tl provider to system_prompt mode and injects the canonical schema', async () => {
 			const fetchMock = createFetchMock()
 				.mockResolvedValueOnce(
 					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
 				)
-				.mockResolvedValueOnce(doneResponse('all done'))
+				.mockResolvedValueOnce(tlSseAgentResponse({ action: { done: { text: 'all done' } } }))
 
 			const agent = createAgent(fetchMock, {
 				provider: 'tl',
@@ -328,25 +368,73 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			})
 
 			expect(agent.config.toolCallingMode).toBe('system_prompt')
-			await agent.execute('do something')
+			const result = await agent.execute('do something')
+			expect(result).toMatchObject({ success: true, data: 'all done' })
 
 			const chatBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
 				data: { txt: string }
 			}
-			expect(chatBody.data.txt).toContain('<tools>')
-			expect(chatBody.data.txt).toContain('"type": "function"')
+			expect(chatBody.data.txt).toContain('<output_contract mode="system_prompt">')
+			expect(chatBody.data.txt).toContain('<agent_output_schema>')
+			expect(chatBody.data.txt).toContain('"action"')
+			expect(chatBody.data.txt).toContain('"done"')
+			expect(chatBody.data.txt).not.toContain('<tools>')
+			expect(chatBody.data.txt).not.toContain('"type": "function"')
 		})
 
-		it('documents concrete parameter formats for every enabled built-in action', async () => {
-			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
-			const agent = createAgent(fetchMock, { customSystemPrompt: undefined })
+		it('uses the same AgentOutput schema for system-prompt and native tool modes', async () => {
+			const nativeFetch = createFetchMock().mockResolvedValueOnce(doneResponse('native done'))
+			const nativeAgent = createAgent(nativeFetch, { customSystemPrompt: undefined })
+			await nativeAgent.execute('do something')
+
+			const nativeBody = JSON.parse(nativeFetch.mock.calls[0][1]!.body as string) as {
+				tools: { function: { name: string; parameters: unknown } }[]
+			}
+			const nativeSchema = nativeBody.tools.find(
+				(toolDefinition) => toolDefinition.function.name === 'AgentOutput'
+			)?.function.parameters
+
+			const tlFetch = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
+				)
+				.mockResolvedValueOnce(tlSseAgentResponse({ action: { done: { text: 'tl done' } } }))
+			const tlAgent = createAgent(tlFetch, {
+				provider: 'tl',
+				endpointAgent: 'localhost:8089',
+				customSystemPrompt: undefined,
+			})
+			await tlAgent.execute('do something')
+
+			const tlBody = JSON.parse(tlFetch.mock.calls[1][1]!.body as string) as {
+				data: { txt: string }
+			}
+			const tlSchema = extractAgentOutputSchema(tlBody.data.txt)
+
+			expect(tlSchema).toEqual(nativeSchema)
+			expect(tlSchema).toMatchObject({ required: ['action'] })
+			expect(tlBody.data.txt.match(/<output_contract\b/g)).toHaveLength(1)
+			expect(tlBody.data.txt).not.toContain('"tool_name"')
+		})
+
+		it('generates the canonical schema from every enabled action', async () => {
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
+				)
+				.mockResolvedValueOnce(tlSseAgentResponse({ action: { done: { text: 'all done' } } }))
+			const agent = createAgent(fetchMock, {
+				provider: 'tl',
+				endpointAgent: 'localhost:8089',
+				customSystemPrompt: undefined,
+			})
 
 			await agent.execute('do something')
 
-			const requestBody = JSON.parse((fetchMock.mock.calls[0][1]!.body as string) ?? '{}') as {
-				messages: { role: string; content: string }[]
+			const requestBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
+				data: { txt: string }
 			}
-			const systemContent = requestBody.messages.find((m) => m.role === 'system')?.content ?? ''
+			const systemContent = requestBody.data.txt
 
 			// Enabled by default: always documented
 			for (const actionName of [
@@ -358,20 +446,26 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 				'scroll',
 				'scroll_horizontally',
 			]) {
-				expect(systemContent).toContain(`\`${actionName}\``)
+				expect(systemContent).toContain(`"${actionName}"`)
 			}
 			// Disabled by default: never advertised (ask_user has no callback, execute_javascript is gated)
 			for (const actionName of ['ask_user', 'execute_javascript']) {
-				expect(systemContent).not.toContain(`\`${actionName}\``)
+				expect(systemContent).not.toContain(`"${actionName}"`)
 			}
-			expect(systemContent).toContain('{"index":7,"text":"search terms"}')
-			expect(systemContent).toContain('{"down":true,"num_pages":0.5}')
-			expect(systemContent).not.toContain('"param1"')
+			expect(systemContent).toContain('"additionalProperties": false')
+			expect(systemContent).toContain('"index"')
+			expect(systemContent).toContain('"num_pages"')
 		})
 
-		it('documents conditionally-enabled actions when enabled', async () => {
-			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
+		it('includes conditionally-enabled actions in the canonical schema', async () => {
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
+				)
+				.mockResolvedValueOnce(tlSseAgentResponse({ action: { done: { text: 'all done' } } }))
 			const agent = createAgent(fetchMock, {
+				provider: 'tl',
+				endpointAgent: 'localhost:8089',
 				customSystemPrompt: undefined,
 				experimentalScriptExecutionTool: true,
 			})
@@ -379,21 +473,21 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 
 			await agent.execute('do something')
 
-			const requestBody = JSON.parse((fetchMock.mock.calls[0][1]!.body as string) ?? '{}') as {
-				messages: { role: string; content: string }[]
+			const requestBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
+				data: { txt: string }
 			}
-			const systemContent = requestBody.messages.find((m) => m.role === 'system')?.content ?? ''
+			const systemContent = requestBody.data.txt
 
-			expect(systemContent).toContain('`ask_user`')
-			expect(systemContent).toContain('`execute_javascript`')
+			expect(systemContent).toContain('"ask_user"')
+			expect(systemContent).toContain('"execute_javascript"')
 		})
 
-		it('injects the <tools> block even when a customSystemPrompt is used', async () => {
+		it('injects the canonical schema even when a customSystemPrompt is used', async () => {
 			const fetchMock = createFetchMock()
 				.mockResolvedValueOnce(
 					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
 				)
-				.mockResolvedValueOnce(doneResponse('all done'))
+				.mockResolvedValueOnce(tlSseAgentResponse({ action: { done: { text: 'all done' } } }))
 
 			const agent = createAgent(fetchMock, {
 				provider: 'tl',
@@ -413,12 +507,13 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 
 			expect(chatUrl).toContain('/chatbbc/chat')
 			expect(chatText).toContain('custom system prompt')
-			expect(chatText).toContain('<tools>')
-			expect(chatText).toContain('</tools>')
-			expect(chatText).toContain('"type": "function"')
+			expect(chatText).toContain('<output_contract mode="system_prompt">')
+			expect(chatText).toContain('<agent_output_schema>')
+			expect(chatText).toContain('"done"')
+			expect(chatText).not.toContain('<tools>')
 		})
 
-		it('does not inject the <tools> block for non-system_prompt modes with a customSystemPrompt', async () => {
+		it('does not inject a textual schema for native tool mode with a customSystemPrompt', async () => {
 			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
 
 			const agent = createAgent(fetchMock, {
@@ -433,7 +528,84 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			const systemContent = requestBody.messages.find((m) => m.role === 'system')?.content ?? ''
 
 			expect(systemContent).toContain('custom system prompt')
-			expect(systemContent).not.toContain('<tools>')
+			expect(systemContent).not.toContain('<agent_output_schema>')
+			expect(systemContent).not.toContain('<output_contract')
+		})
+
+		it('defaults Ds provider to system_prompt mode and injects the canonical schema in gateway mode', async () => {
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'test-session' } }))
+				)
+				.mockResolvedValueOnce(tlSseAgentResponse({ action: { done: { text: 'all done' } } }))
+
+			const agent = createAgent(fetchMock, {
+				provider: 'ds',
+				endpointAgent: 'localhost:8089',
+				customSystemPrompt: undefined,
+			})
+
+			expect(agent.config.toolCallingMode).toBe('system_prompt')
+			const result = await agent.execute('do something')
+			expect(result).toMatchObject({ success: true, data: 'all done' })
+
+			const chatBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
+				data: { txt: string }
+			}
+			expect(chatBody.data.txt).toContain('<output_contract mode="system_prompt">')
+			expect(chatBody.data.txt).toContain('<agent_output_schema>')
+			expect(chatBody.data.txt).toContain('"done"')
+		})
+
+		it('injects the canonical schema for Ds provider in api mode and sends response_format', async () => {
+			const fetchMock = createFetchMock().mockResolvedValueOnce(
+				openaiSseAgentResponse({ action: { done: { text: 'all done' } } })
+			)
+
+			const agent = createAgent(fetchMock, {
+				provider: 'ds',
+				baseURL: 'https://api.deepseek.com',
+				apiKey: 'sk-test',
+				customSystemPrompt: undefined,
+			})
+
+			const result = await agent.execute('do something')
+			expect(result).toMatchObject({ success: true, data: 'all done' })
+
+			const request = fetchMock.mock.calls[0][1]!
+			const body = JSON.parse(request.body as string) as {
+				messages: { role: string; content: string }[]
+				response_format: { type: string }
+				tools?: unknown
+			}
+			expect((request.headers as Record<string, string>).Authorization).toBe('Bearer sk-test')
+			expect(body.response_format).toEqual({ type: 'json_object' })
+			expect(body.tools).toBeUndefined()
+			const systemContent = body.messages.find((m) => m.role === 'system')?.content ?? ''
+			expect(systemContent).toContain('<output_contract mode="system_prompt">')
+			expect(systemContent).toContain('<agent_output_schema>')
+		})
+
+		it('injects the canonical schema for Ds provider even with a customSystemPrompt', async () => {
+			const fetchMock = createFetchMock().mockResolvedValueOnce(
+				openaiSseAgentResponse({ action: { done: { text: 'all done' } } })
+			)
+
+			const agent = createAgent(fetchMock, {
+				provider: 'ds',
+				baseURL: 'https://api.deepseek.com',
+				customSystemPrompt: 'custom ds prompt',
+			})
+
+			await agent.execute('do something')
+
+			const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string) as {
+				messages: { role: string; content: string }[]
+			}
+			const systemContent = body.messages.find((m) => m.role === 'system')?.content ?? ''
+			expect(systemContent).toContain('custom ds prompt')
+			expect(systemContent).toContain('<output_contract mode="system_prompt">')
+			expect(systemContent).toContain('<agent_output_schema>')
 		})
 	})
 

@@ -1,7 +1,9 @@
+import { DsAiClient } from './DsClient'
 import { InvokeError, InvokeErrorTypes } from './errors'
 import { OpenAIClient } from './OpenAIClient'
 import { TlAiClient } from './TlClient'
 
+import type { DsAiConfig } from './DsClient'
 import type { TlAiConfig } from './TlClient'
 import type {
 	InvokeOptions,
@@ -13,8 +15,17 @@ import type {
 	Tool,
 } from './types'
 
-export { InvokeError, InvokeErrorTypes, OpenAIClient, TlAiClient }
-export type { InvokeOptions, InvokeResult, LLMClient, LLMConfig, Message, Tool, TlAiConfig }
+export { DsAiClient, InvokeError, InvokeErrorTypes, OpenAIClient, TlAiClient }
+export type {
+	DsAiConfig,
+	InvokeOptions,
+	InvokeResult,
+	LLMClient,
+	LLMConfig,
+	Message,
+	Tool,
+	TlAiConfig,
+}
 
 /**
  * LLM module
@@ -37,6 +48,23 @@ export class LLM extends EventTarget {
 				trCode: config.trCode,
 				trVersion: config.trVersion,
 				toolCallingMode: config.toolCallingMode,
+				customFetch: config.customFetch,
+			})
+		} else if (config.provider === 'ds') {
+			this.client = new DsAiClient({
+				dsMode: config.dsMode,
+				endpointAgent: config.endpointAgent,
+				baseURL: config.baseURL,
+				model: config.model!,
+				apiKey: config.apiKey,
+				appId: config.appId,
+				trCode: config.trCode,
+				trVersion: config.trVersion,
+				toolCallingMode: config.toolCallingMode,
+				temperature: config.temperature,
+				maxTokens: config.maxTokens,
+				applyModelPatch: config.applyModelPatch,
+				transformRequestBody: config.transformRequestBody,
 				customFetch: config.customFetch,
 			})
 		} else {
@@ -112,7 +140,7 @@ async function withRetry<T>(
 
 export function parseLLMConfig(config: LLMConfig): ResolvedLLMConfig {
 	// Runtime validation as defensive programming (types already guarantee these)
-	const usesCustomClient = config.client || config.provider === 'tl'
+	const usesCustomClient = config.client || config.provider === 'tl' || config.provider === 'ds'
 	if (!config.model) {
 		throw new Error(
 			'[PageAgent] LLM configuration required. Please provide: model. ' +
@@ -121,13 +149,19 @@ export function parseLLMConfig(config: LLMConfig): ResolvedLLMConfig {
 	}
 	if (!config.baseURL && !usesCustomClient) {
 		throw new Error(
-			'[PageAgent] LLM configuration required. Please provide: baseURL, or set provider to "tl", or pass a custom client. ' +
+			'[PageAgent] LLM configuration required. Please provide: baseURL, or set provider to "tl", "ds", or pass a custom client. ' +
 				'See: https://alibaba.github.io/page-agent/docs/features/models'
 		)
 	}
 	if (config.provider === 'tl' && !config.endpointAgent) {
 		throw new Error(
 			'[PageAgent] Tl AI configuration required. Please provide: endpointAgent. ' +
+				'See: https://alibaba.github.io/page-agent/docs/features/models'
+		)
+	}
+	if (config.provider === 'ds' && !config.endpointAgent && !config.baseURL) {
+		throw new Error(
+			'[PageAgent] DeepSeek configuration required. Please provide: endpointAgent (gateway) or baseURL (official API). ' +
 				'See: https://alibaba.github.io/page-agent/docs/features/models'
 		)
 	}

@@ -5,6 +5,13 @@
 import * as z from 'zod/v4'
 
 import { InvokeError, InvokeErrorTypes } from './errors'
+import {
+	describeError,
+	normalizeEndpointAgent,
+	parseAccumulatedContent,
+	parseChatbbcSseContent,
+	readStreamResponse,
+} from './streaming'
 
 import type { InvokeOptions, InvokeResult, LLMClient, Message, Tool } from './types'
 
@@ -55,113 +62,6 @@ interface ChatRequest {
 	}
 }
 
-function normalizeEndpointAgent(endpointAgent: string): string {
-	const value = endpointAgent.trim()
-	const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `http://${value}`
-
-	let url: URL
-	try {
-		url = new URL(candidate)
-	} catch (error) {
-		throw new InvokeError(
-			InvokeErrorTypes.CONFIG_ERROR,
-			`Invalid Tl endpointAgent "${endpointAgent}". Use a host such as "localhost:8089" or a full HTTP(S) URL.`,
-			error
-		)
-	}
-
-	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw new InvokeError(
-			InvokeErrorTypes.CONFIG_ERROR,
-			`Unsupported Tl endpointAgent protocol "${url.protocol}". Use HTTP or HTTPS.`
-		)
-	}
-
-	url.search = ''
-	url.hash = ''
-	return url.toString().replace(/\/$/, '')
-}
-
-function describeError(error: unknown): string {
-	if (!(error instanceof Error)) return String(error)
-
-	const cause = (error as Error & { cause?: unknown }).cause
-	if (!cause || cause === error) return error.message
-
-	let causeMessage: string
-	if (cause instanceof Error) {
-		causeMessage = cause.message
-	} else if (typeof cause === 'string') {
-		causeMessage = cause
-	} else {
-		try {
-			causeMessage = JSON.stringify(cause) ?? Object.prototype.toString.call(cause)
-		} catch {
-			causeMessage = Object.prototype.toString.call(cause)
-		}
-	}
-	return causeMessage && causeMessage !== error.message
-		? `${error.message}: ${causeMessage}`
-		: error.message
-}
-
-/**
- * Extract `{ toolName, toolArgs }` from a parsed response object.
- *
- * Recognized shapes (checked in order):
- * 1. `{ tool_name: "...", parameters|args: {...} }`          — legacy Tl shape
- * 2. `{ name: "...", arguments: {...} }`                       — OpenAI tool_call shape
- * 3. `{ action: { "<tool>": {...} }, ...reflection fields }`   — PageAgent MacroTool shape
- * 4. `{ action: "<tool>", parameters|args: {...} }`            — legacy string-action shape
- *
- * For shape 3, if the inner tool name is not registered but an `AgentOutput`
- * macro tool exists, the entire object is returned as `AgentOutput`'s args
- * so PageAgentCore can still drive the macro-tool execution path.
- *
- * Returns `null` when no recognizable tool call is present.
- */
-function extractToolCall(
-	obj: any,
-	tools: Record<string, Tool>
-): { toolName: string; toolArgs: unknown } | null {
-	if (!obj || typeof obj !== 'object') return null
-
-	// 1) { tool_name, parameters|args }
-	if (typeof obj.tool_name === 'string') {
-		return { toolName: obj.tool_name, toolArgs: obj.parameters ?? obj.args ?? {} }
-	}
-
-	// 2) { name, arguments }
-	if (typeof obj.name === 'string') {
-		return { toolName: obj.name, toolArgs: obj.arguments ?? {} }
-	}
-
-	// 3) { action: { <tool>: {...} } }
-	if (obj.action && typeof obj.action === 'object') {
-		const actionKeys = Object.keys(obj.action)
-		if (actionKeys.length === 0) return null
-		const extractedToolName = actionKeys[0]
-		const extractedToolArgs = obj.action[extractedToolName]
-
-		if (tools[extractedToolName]) {
-			return { toolName: extractedToolName, toolArgs: extractedToolArgs }
-		}
-		if (tools.AgentOutput) {
-			// Macro tool case: hand the whole reflection+action object to AgentOutput
-			return { toolName: 'AgentOutput', toolArgs: obj }
-		}
-		// Fallback: surface the unknown name so the caller emits a clear error
-		return { toolName: extractedToolName, toolArgs: extractedToolArgs }
-	}
-
-	// 4) { action: "<tool>", parameters|args }
-	if (typeof obj.action === 'string') {
-		return { toolName: obj.action, toolArgs: obj.parameters ?? obj.args ?? {} }
-	}
-
-	return null
-}
-
 /**
  * Client for Tl AI chatbbc API.
  */
@@ -178,7 +78,7 @@ export class TlAiClient implements LLMClient {
 		}
 
 		this.config = {
-			endpointAgent: normalizeEndpointAgent(config.endpointAgent),
+			endpointAgent: normalizeEndpointAgent(config.endpointAgent, 'Tl'),
 			model: config.model,
 			appId: config.appId ?? '',
 			trCode: config.trCode ?? '',
@@ -300,48 +200,11 @@ export class TlAiClient implements LLMClient {
 	}
 
 	/**
-	 * Convert a Zod schema to a JSON Schema object.
-	 * Uses `z.toJSONSchema()` from zod/v4 when available; falls back to a
-	 * permissive empty object schema on failure so tool registration never
-	 * breaks the request pipeline.
-	 */
-	private zodToJsonSchema(schema: z.ZodTypeAny): any {
-		try {
-			return z.toJSONSchema(schema)
-		} catch (e) {
-			console.warn('[TlAiClient] zodToJsonSchema fallback used:', e)
-			return { type: 'object', properties: {} }
-		}
-	}
-
-	/**
-	 * Format tools into a system prompt fragment for `system_prompt` tool-calling mode.
-	 *
-	 * Each tool is rendered as an OpenAI-style function-tool descriptor and wrapped
-	 * in a `<tools>` block. The PageAgentCore already injects its own `<tools>` block
-	 * (generated from the live tools map) into the system message, so this method
-	 * returns an empty string to avoid duplicating tool definitions.
-	 *
-	 * Kept for backward compatibility with the `formatToolsToSystemPrompt` contract.
-	 */
-	private formatToolsToSystemPrompt(tools: Record<string, Tool>): string {
-		return ''
-	}
-
-	/**
 	 * Parse a streaming response body and extract the tool call.
 	 *
-	 * If `normalizeResponse` is provided (e.g. PageAgentCore's autoFixer), the
-	 * raw accumulated content is wrapped into an OpenAI-style response as
-	 * `message.content` and passed to it. This lets the normalizer use its
-	 * tolerant `retrieveJsonFromString` extraction to repair common format
-	 * issues (missing action, double-JSON wrapping, markdown fences, etc.),
-	 * mirroring `OpenAIClient` behavior.
-	 *
-	 * Without a normalizer, falls back to direct `extractToolCall` parsing.
-	 *
-	 * On unrecoverable parse failures, throws `InvokeError(INVALID_RESPONSE)`
-	 * with the raw content attached — never returns empty args.
+	 * Delegates to the shared streaming pipeline: reads the body, decodes the
+	 * chatbbc SSE format, then canonicalizes the accumulated content through
+	 * `parseAccumulatedContent` (normalizeResponse path or extractToolCall).
 	 */
 	private async parseStreamingResponse(
 		response: Response,
@@ -349,182 +212,19 @@ export class TlAiClient implements LLMClient {
 		abortSignal?: AbortSignal,
 		normalizeResponse?: (response: any) => any
 	): Promise<{ toolName: string; toolArgs: unknown }> {
-		const accumulatedContent = await this.readStream(response, abortSignal)
-
-		// 1) Normalizer path (autoFixer): let it extract and repair from raw content.
-		if (normalizeResponse) {
-			const openaiFormat = {
-				choices: [
-					{
-						index: 0,
-						message: {
-							role: 'assistant' as const,
-							content: accumulatedContent,
-						},
-					},
-				],
-			}
-
-			let normalized: any
-			try {
-				normalized = normalizeResponse(openaiFormat)
-			} catch (error: unknown) {
-				if ((error as any)?.name === 'AbortError') throw error
-				if (error instanceof InvokeError) throw error
-				throw new InvokeError(
-					InvokeErrorTypes.INVALID_RESPONSE,
-					`normalizeResponse failed: ${(error as Error)?.message}`,
-					error,
-					{ content: accumulatedContent }
-				)
-			}
-
-			const fn = normalized?.choices?.[0]?.message?.tool_calls?.[0]?.function
-			if (!fn || typeof fn.name !== 'string' || typeof fn.arguments !== 'string') {
-				throw new InvokeError(
-					InvokeErrorTypes.INVALID_RESPONSE,
-					'normalizeResponse did not return a valid tool call',
-					undefined,
-					{ content: accumulatedContent, normalized }
-				)
-			}
-			// Keep arguments as a JSON string; the caller (invoke) handles JSON.parse
-			// and schema validation uniformly for both string and object toolArgs.
-			return { toolName: fn.name, toolArgs: fn.arguments }
-		}
-
-		// 2) Fallback path: direct extraction without a normalizer.
-		try {
-			let cleaned = accumulatedContent.trim()
-			// Strip markdown code fences if present (e.g. ```json ... ```)
-			cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '')
-
-			// Prefer <tool_call>...</tool_call> payload when present.
-			const toolCallRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i
-			const toolCallMatch = toolCallRe.exec(cleaned)
-			if (toolCallMatch) {
-				const inner = toolCallMatch[1].trim()
-				const innerObj: any = JSON.parse(inner)
-				const parsed = extractToolCall(innerObj, tools)
-				if (parsed) return parsed
-			}
-
-			// Fall back to plain JSON (with or without surrounding text).
-			const responseObj: any = JSON.parse(cleaned)
-			const parsed = extractToolCall(responseObj, tools)
-			if (parsed) return parsed
-
-			throw new InvokeError(
-				InvokeErrorTypes.INVALID_RESPONSE,
-				'Response JSON did not contain a recognizable tool call',
-				undefined,
-				{ content: accumulatedContent }
-			)
-		} catch (error: unknown) {
-			if ((error as any)?.name === 'AbortError') throw error
-			if (error instanceof InvokeError) throw error
-			throw new InvokeError(
-				InvokeErrorTypes.INVALID_RESPONSE,
-				`Failed to parse streaming response as JSON: ${(error as Error)?.message}`,
-				error,
-				{ content: accumulatedContent }
-			)
-		}
-	}
-
-	/**
-	 * Read a response without assuming network chunks align with SSE boundaries.
-	 * SSE responses are decoded into the accumulated content; legacy plain-text
-	 * responses are returned unchanged.
-	 * TODO：eventType to message
-	 */
-	private async readStream(response: Response, abortSignal?: AbortSignal): Promise<string> {
-		const reader = response.body?.getReader()
-		if (!reader) {
-			throw new InvokeError(InvokeErrorTypes.UNKNOWN, 'No response body')
-		}
-
-		const decoder = new TextDecoder()
-		let rawContent = ''
-
-		try {
-			while (true) {
-				abortSignal?.throwIfAborted()
-				const { done, value } = await reader.read()
-				if (done) break
-
-				rawContent += decoder.decode(value, { stream: true })
-			}
-			rawContent += decoder.decode()
-		} finally {
-			reader.releaseLock()
-		}
+		const rawContent = await readStreamResponse(response, abortSignal)
 
 		const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
-		const looksLikeSse = /^(?:\uFEFF)?(?:id|event|data|retry):/m.test(rawContent)
-		if (!contentType.includes('text/event-stream') && !looksLikeSse) {
-			return rawContent
+		const isSseResponse = /^(?:\uFEFF)?(?:id|event|data|retry):/m.test(rawContent)
+		if (contentType.includes('text/event-stream') || isSseResponse) {
+			return parseAccumulatedContent(
+				parseChatbbcSseContent(rawContent, 'TlAiClient').content,
+				tools,
+				normalizeResponse
+			)
 		}
 
-		return this.parseSseContent(rawContent)
-	}
-
-	/** Parse SSE events and concatenate the `content` field from chunk payloads. */
-	private parseSseContent(rawContent: string): string {
-		const normalized = rawContent.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
-		const eventBlocks = normalized.split('\n\n')
-		let accumulatedContent = ''
-
-		for (const block of eventBlocks) {
-			if (!block.trim()) continue
-			// Keep the original SSE frame visible in the browser debug console. This
-			// is intentionally logged before parsing so malformed server frames can
-			// also be diagnosed from test-page.html.
-			console.debug(`[TlAiClient] 📥 SSE event\n${block}\n`)
-
-			let eventType = 'message'
-			const dataLines: string[] = []
-			for (const line of block.split('\n')) {
-				if (!line || line.startsWith(':')) continue
-				const separator = line.indexOf(':')
-				const field = separator === -1 ? line : line.slice(0, separator)
-				let value = separator === -1 ? '' : line.slice(separator + 1)
-				if (value.startsWith(' ')) value = value.slice(1)
-
-				if (field === 'event') eventType = value
-				if (field === 'data') dataLines.push(value)
-			}
-
-			if (dataLines.length === 0) continue
-			const eventData = dataLines.join('\n')
-			if (eventData === '[DONE]' || eventType === 'done' || eventType === 'end') break
-			if (eventType === 'message') continue
-			if (eventType === 'error') {
-				throw new InvokeError(
-					InvokeErrorTypes.INVALID_RESPONSE,
-					`Tl streaming response reported an error: ${eventData}`,
-					undefined,
-					{ event: eventType, data: eventData }
-				)
-			}
-
-			let payload: unknown
-			try {
-				payload = JSON.parse(eventData)
-			} catch (error: unknown) {
-				throw new InvokeError(
-					InvokeErrorTypes.INVALID_RESPONSE,
-					`Tl SSE ${eventType} event contains invalid JSON`,
-					error,
-					{ event: eventType, data: eventData }
-				)
-			}
-
-			const content = (payload as { content?: unknown })?.content
-			if (typeof content === 'string') accumulatedContent += content
-		}
-
-		return accumulatedContent
+		return parseAccumulatedContent(rawContent, tools, normalizeResponse)
 	}
 
 	async invoke(

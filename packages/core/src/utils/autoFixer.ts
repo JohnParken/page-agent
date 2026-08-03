@@ -1,102 +1,80 @@
 import { InvokeError, InvokeErrorTypes } from '@page-agent/llms'
-import chalk from 'chalk'
 import * as z from 'zod/v4'
 
 import type { PageAgentTool } from '../tools'
+import type { MacroToolInput } from '../types'
 
-const log = console.log.bind(console, chalk.yellow('[autoFixer]'))
+type JsonObject = Record<string, unknown>
+
+/** Build the single AgentOutput schema shared by prompt generation and parsing. */
+export function buildAgentOutputSchema(
+	tools: Map<string, PageAgentTool>
+): z.ZodType<MacroToolInput> {
+	const actionSchemas = Array.from(tools.entries()).map(([toolName, tool]) =>
+		z
+			.object({ [toolName]: tool.inputSchema })
+			.strict()
+			.describe(tool.description)
+	)
+	const actionSchema = z.union(actionSchemas as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]])
+
+	return z
+		.object({
+			evaluation_previous_goal: z.string().optional(),
+			memory: z.string().optional(),
+			next_goal: z.string().optional(),
+			action: actionSchema,
+		})
+		.strict() as z.ZodType<MacroToolInput>
+}
 
 /**
- * Normalize LLM response and fix common format issues.
+ * Normalize provider responses into the one canonical PageAgent contract:
+ * the argument object of the AgentOutput macro tool.
  *
- * Handles:
- * - No tool_calls but JSON in message.content (fallback)
- * - Model returns action name as tool call instead of AgentOutput
- * - Arguments wrapped as double JSON string
- * - Nested function call format
- * - Missing action field (fallback to wait)
- * - Primitive action input for single-field tools (e.g. `{"click_element_by_index": 2}`)
- * - etc.
+ * The prompt advertises only that canonical object. A small set of historical
+ * wrappers remains accepted here as ingress compatibility, but every accepted
+ * shape is converted before schema validation and execution.
  */
-export function normalizeResponse(response: any, tools?: Map<string, PageAgentTool>): any {
-	let resolvedArguments: any
-
-	const choice = (response as { choices?: Choice[] }).choices?.[0]
-	if (!choice) throw new Error('No choices in response')
+export function normalizeResponse(response: any, tools: Map<string, PageAgentTool>): any {
+	if (!isJsonObject(response) || !Array.isArray(response.choices)) {
+		throw invalidResponse('Response must contain a choices array', response)
+	}
+	const choice = response.choices[0] as Choice | undefined
+	if (!isJsonObject(choice)) throw invalidResponse('No valid choice in response', response)
 
 	const message = choice.message
-	if (!message) throw new Error('No message in choice')
+	if (!isJsonObject(message)) throw invalidResponse('No valid message in choice', response)
 
-	const toolCall = message.tool_calls?.[0]
+	if (message.tool_calls !== undefined && !Array.isArray(message.tool_calls)) {
+		throw invalidResponse('message.tool_calls must be an array', message.tool_calls)
+	}
+	const toolCalls = (message.tool_calls ?? []) as ResponseToolCall[]
+	if (toolCalls.length > 1) {
+		throw invalidResponse('Expected exactly one tool call, but received multiple', response)
+	}
 
-	// fix level and location of arguments
-
-	if (toolCall?.function?.arguments) {
-		resolvedArguments = safeJsonParse(toolCall.function.arguments)
-
-		// case: sometimes the model only returns the action level
-		if (toolCall.function.name && toolCall.function.name !== 'AgentOutput') {
-			log(`#1: fixing tool_call`)
-			resolvedArguments = { action: safeJsonParse(resolvedArguments) }
-		}
+	let canonicalOutput: JsonObject
+	const toolCall = toolCalls[0]
+	if (toolCall) {
+		canonicalOutput = canonicalizeNativeToolCall(toolCall, tools)
+	} else if (typeof message.content === 'string' && message.content.trim()) {
+		const parsedContent = extractSingleJsonObject(message.content)
+		canonicalOutput = canonicalizeObject(parsedContent, tools)
 	} else {
-		// case: sometimes the model returns json in content instead of tool_calls
-		if (message.content) {
-			const content = message.content.trim()
-			const jsonInContent = retrieveJsonFromString(content)
-			if (jsonInContent) {
-				resolvedArguments = safeJsonParse(jsonInContent)
-
-				// case: sometimes the content json includes upper level wrapper
-				if (resolvedArguments?.name === 'AgentOutput') {
-					log(`#2: fixing tool_call`)
-					resolvedArguments = safeJsonParse(resolvedArguments.arguments)
-				}
-
-				// case: sometimes even 2-levels of wrapping
-				if (resolvedArguments?.type === 'function') {
-					log(`#3: fixing tool_call`)
-					resolvedArguments = safeJsonParse(resolvedArguments.function.arguments)
-				}
-
-				// case: and sometimes action level only
-				// todo: needs better detection logic
-				if (
-					!resolvedArguments?.action &&
-					!resolvedArguments?.evaluation_previous_goal &&
-					!resolvedArguments?.memory &&
-					!resolvedArguments?.next_goal &&
-					!resolvedArguments?.thinking
-				) {
-					log(`#4: fixing tool_call`)
-					resolvedArguments = { action: safeJsonParse(resolvedArguments) }
-				}
-			} else {
-				throw new Error('No tool_call and the message content does not contain valid JSON')
-			}
-		} else {
-			throw new Error('No tool_call nor message content is present')
-		}
+		throw invalidResponse('No tool call or non-empty message content is present', response)
 	}
 
-	// fix double stringified arguments
-	resolvedArguments = safeJsonParse(resolvedArguments)
-	if (resolvedArguments.action) {
-		resolvedArguments.action = safeJsonParse(resolvedArguments.action)
+	canonicalOutput.action = validateAction(canonicalOutput.action, tools)
+	const validation = buildAgentOutputSchema(tools).safeParse(canonicalOutput)
+	if (!validation.success) {
+		throw new InvokeError(
+			InvokeErrorTypes.INVALID_TOOL_ARGS,
+			`AgentOutput does not match the canonical schema: ${z.prettifyError(validation.error)}`
+		)
 	}
+	canonicalOutput = validation.data as unknown as JsonObject
 
-	// validate and fix action input using tool schemas
-	if (resolvedArguments.action && tools) {
-		resolvedArguments.action = validateAction(resolvedArguments.action, tools)
-	}
-
-	// fix incomplete formats
-	if (!resolvedArguments.action) {
-		log(`#5: fixing tool_call`)
-		resolvedArguments.action = { wait: { seconds: 1 } }
-	}
-
-	// pack back to standard format
 	return {
 		...response,
 		choices: [
@@ -110,7 +88,7 @@ export function normalizeResponse(response: any, tools?: Map<string, PageAgentTo
 							function: {
 								...(toolCall?.function || {}),
 								name: 'AgentOutput',
-								arguments: JSON.stringify(resolvedArguments),
+								arguments: JSON.stringify(canonicalOutput),
 							},
 						},
 					],
@@ -120,19 +98,155 @@ export function normalizeResponse(response: any, tools?: Map<string, PageAgentTo
 	}
 }
 
-/**
- * Validate action against tool schemas. Provides clear error messages
- * instead of letting the union schema produce unreadable errors.
- *
- * Also coerces primitive inputs for single-field tools:
- * e.g. `{"click_element_by_index": 2}` → `{"click_element_by_index": {"index": 2}}`
- */
-function validateAction(action: any, tools: Map<string, PageAgentTool>): any {
-	if (typeof action !== 'object' || action === null) return action
+/** Convert a native macro or inner-action tool call to canonical AgentOutput input. */
+function canonicalizeNativeToolCall(
+	toolCall: ResponseToolCall,
+	tools: Map<string, PageAgentTool>
+): JsonObject {
+	if (!isJsonObject(toolCall) || !isJsonObject(toolCall.function)) {
+		throw invalidResponse('Tool call is missing a valid function object', toolCall)
+	}
+	const name = toolCall.function.name
+	if (typeof name !== 'string' || !name) {
+		throw invalidResponse('Tool call is missing function.name', toolCall)
+	}
+	if (toolCall.function.arguments === undefined) {
+		throw invalidResponse(`Tool call "${name}" is missing function.arguments`, toolCall)
+	}
 
-	const toolName = Object.keys(action)[0]
-	if (!toolName) return action
+	const args =
+		name === 'AgentOutput'
+			? parseJsonArgument(toolCall.function.arguments, `arguments for tool "${name}"`)
+			: parseCompatibleActionInput(toolCall.function.arguments)
+	if (name === 'AgentOutput') return canonicalizeObject(args, tools)
 
+	// Compatibility for providers that call an inner action directly.
+	return { action: { [name]: args } }
+}
+
+/** Convert recognized legacy wrappers to the canonical AgentOutput object. */
+function canonicalizeObject(
+	input: unknown,
+	tools: Map<string, PageAgentTool>,
+	depth = 0
+): JsonObject {
+	if (depth > 4) throw invalidResponse('AgentOutput wrappers are nested too deeply', input)
+
+	const value = parseJsonArgument(input, 'AgentOutput payload')
+	if (!isJsonObject(value)) {
+		throw invalidResponse('AgentOutput payload must be a JSON object', value)
+	}
+
+	if ('action' in value && isJsonObject(value.action)) return value
+
+	const wrapperKinds = [
+		isJsonObject(value.function),
+		typeof value.name === 'string' && 'arguments' in value,
+		typeof value.tool_name === 'string',
+		typeof value.action === 'string',
+	].filter(Boolean).length
+	if (wrapperKinds > 1) {
+		throw invalidResponse('AgentOutput payload contains conflicting wrapper formats', value)
+	}
+
+	// OpenAI-style function wrapper: { type, function: { name, arguments } }
+	if (isJsonObject(value.function)) {
+		assertOnlyKeys(value, ['id', 'type', 'function'], 'function wrapper')
+		if ('type' in value && value.type !== 'function') {
+			throw invalidResponse('function wrapper type must be "function"', value)
+		}
+		return canonicalizeNamedWrapper(value.function.name, value.function.arguments, tools, depth + 1)
+	}
+
+	// OpenAI-style call body: { name, arguments }
+	if (typeof value.name === 'string' && 'arguments' in value) {
+		assertOnlyKeys(value, ['name', 'arguments'], 'name/arguments wrapper')
+		return canonicalizeNamedWrapper(value.name, value.arguments, tools, depth + 1)
+	}
+
+	// Legacy Tl body: { tool_name, parameters|args }
+	if (typeof value.tool_name === 'string') {
+		assertSingleArgumentField(value, 'Tl wrapper')
+		assertOnlyKeys(value, ['tool_name', 'parameters', 'args'], 'Tl wrapper')
+		return canonicalizeNamedWrapper(
+			value.tool_name,
+			value.parameters ?? value.args ?? {},
+			tools,
+			depth + 1
+		)
+	}
+
+	// Legacy string action: { action: "tool", parameters|args }
+	if (typeof value.action === 'string') {
+		const actionName = value.action
+		assertSingleArgumentField(value, 'string-action wrapper')
+		assertOnlyKeys(value, ['action', 'parameters', 'args'], 'string-action wrapper')
+		return {
+			action: {
+				[actionName]: parseCompatibleActionInput(value.parameters ?? value.args ?? {}),
+			},
+		}
+	}
+
+	// Compatibility for an action-only object, e.g. { wait: { seconds: 1 } }.
+	const keys = Object.keys(value)
+	const canonicalFields = new Set(['evaluation_previous_goal', 'memory', 'next_goal', 'action'])
+	if (keys.some((key) => tools.has(key)) || (keys.length === 1 && !canonicalFields.has(keys[0]!))) {
+		return { action: value }
+	}
+
+	throw invalidResponse('JSON object does not contain a recognizable AgentOutput action', value)
+}
+
+function canonicalizeNamedWrapper(
+	name: unknown,
+	args: unknown,
+	tools: Map<string, PageAgentTool>,
+	depth: number
+): JsonObject {
+	if (typeof name !== 'string' || !name) {
+		throw invalidResponse('Function wrapper is missing a valid name', { name, args })
+	}
+
+	const parsedArgs =
+		name === 'AgentOutput'
+			? parseJsonArgument(args, `arguments for tool "${name}"`)
+			: parseCompatibleActionInput(args)
+	if (name === 'AgentOutput') return canonicalizeObject(parsedArgs, tools, depth)
+	return { action: { [name]: parsedArgs } }
+}
+
+function assertSingleArgumentField(value: JsonObject, label: string): void {
+	if ('parameters' in value && 'args' in value) {
+		throw invalidResponse(`${label} contains both parameters and args`, value)
+	}
+}
+
+function assertOnlyKeys(value: JsonObject, allowed: string[], label: string): void {
+	const unexpected = Object.keys(value).filter((key) => !allowed.includes(key))
+	if (unexpected.length > 0) {
+		throw invalidResponse(`${label} contains unexpected fields: ${unexpected.join(', ')}`, value)
+	}
+}
+
+/** Validate that action has exactly one registered key and schema-valid input. */
+function validateAction(action: unknown, tools: Map<string, PageAgentTool>): JsonObject {
+	if (!isJsonObject(action)) {
+		throw new InvokeError(
+			InvokeErrorTypes.INVALID_TOOL_ARGS,
+			'AgentOutput.action must be a JSON object with exactly one action'
+		)
+	}
+
+	const actionNames = Object.keys(action)
+	if (actionNames.length !== 1) {
+		throw new InvokeError(
+			InvokeErrorTypes.INVALID_TOOL_ARGS,
+			`AgentOutput.action must contain exactly one action; received ${actionNames.length}`
+		)
+	}
+
+	const toolName = actionNames[0]!
 	const tool = tools.get(toolName)
 	if (!tool) {
 		const available = Array.from(tools.keys()).join(', ')
@@ -142,21 +256,18 @@ function validateAction(action: any, tools: Map<string, PageAgentTool>): any {
 		)
 	}
 
-	let value = action[toolName]
+	let input = parseCompatibleActionInput(action[toolName])
 	const schema = tool.inputSchema
 
-	// coerce primitive input for single-field tools
-	if (schema instanceof z.ZodObject && value !== null && typeof value !== 'object') {
-		const requiredKey = Object.keys(schema.shape).find(
-			(k) => !(schema.shape as Record<string, z.ZodType>)[k].safeParse(undefined).success
+	// Compatibility for historical primitive inputs to single-field actions.
+	if (schema instanceof z.ZodObject && input !== null && typeof input !== 'object') {
+		const requiredKeys = Object.keys(schema.shape).filter(
+			(key) => !(schema.shape as Record<string, z.ZodType>)[key].safeParse(undefined).success
 		)
-		if (requiredKey) {
-			log(`coercing primitive action input for "${toolName}"`)
-			value = { [requiredKey]: value }
-		}
+		if (requiredKeys.length === 1) input = { [requiredKeys[0]!]: input }
 	}
 
-	const result = schema.safeParse(value)
+	const result = schema.safeParse(input)
 	if (!result.success) {
 		throw new InvokeError(
 			InvokeErrorTypes.INVALID_TOOL_ARGS,
@@ -167,135 +278,122 @@ function validateAction(action: any, tools: Map<string, PageAgentTool>): any {
 	return { [toolName]: result.data }
 }
 
-/**
- * Safely parse JSON, return original input if not json.
- */
-function safeJsonParse(input: any): any {
-	if (typeof input === 'string') {
+/** Parse a provider argument that must contain JSON, including double encoding. */
+function parseJsonArgument(input: unknown, label: string): unknown {
+	let value = input
+	for (let depth = 0; depth < 4 && typeof value === 'string'; depth++) {
 		try {
-			return JSON.parse(input.trim())
-		} catch {
-			return input
+			value = JSON.parse(value.trim())
+		} catch (error) {
+			if (depth > 0) return value
+			throw invalidResponse(`Failed to parse ${label} as JSON`, input, error)
 		}
 	}
-	return input
+	return value
+}
+
+/** Parse legacy JSON-encoded action input while preserving raw string primitives. */
+function parseCompatibleActionInput(input: unknown): unknown {
+	let value = input
+	for (let depth = 0; depth < 4 && typeof value === 'string'; depth++) {
+		try {
+			value = JSON.parse(value.trim())
+		} catch {
+			return value
+		}
+	}
+	return value
 }
 
 /**
- * Extract and parse JSON from a string.
- * - Treat content between the first `{` and the last `}` as JSON.
- * - Try to parse that content as JSON and return the parsed value (object/array/primitive) if successful, otherwise return null.
- * - If parsing fails, attempt to repair common JSON errors (e.g., unescaped quotes inside string values).
+ * Extract exactly one balanced JSON object from assistant content.
+ * Surrounding prose, markdown fences, and known tags are tolerated, but two
+ * top-level objects are rejected instead of guessing which one is authoritative.
  */
-function retrieveJsonFromString(str: string): any {
+function extractSingleJsonObject(content: string): unknown {
+	const trimmed = content.trim()
 	try {
-		const json = /({[\s\S]*})/.exec(str) ?? []
-		if (json.length === 0) {
-			return null
-		}
-		return JSON.parse(json[0]!)
+		return JSON.parse(trimmed)
 	} catch {
-		// Attempt to repair unescaped quotes inside string values
-		try {
-			const json = /({[\s\S]*})/.exec(str)
-			if (json && json[0]) {
-				const repaired = repairUnescapedQuotes(json[0])
-				return JSON.parse(repaired)
-			}
-		} catch {
-			// Repair failed
-		}
-		return null
+		// Continue with string-aware balanced-object extraction.
 	}
-}
 
-/**
- * Repair unescaped ASCII double quotes inside JSON string values.
- * Replaces them with Chinese quotes 「」 to avoid breaking JSON parsing.
- */
-function repairUnescapedQuotes(str: string): string {
-	let result = ''
-	let i = 0
+	const objects: string[] = []
+	let start = -1
+	let depth = 0
+	let inString = false
+	let escaped = false
 
-	while (i < str.length) {
-		const char = str[i]
-
-		// Handle escaped characters
-		if (char === '\\') {
-			result += char + (str[i + 1] || '')
-			i += 2
+	for (let index = 0; index < trimmed.length; index++) {
+		const char = trimmed[index]
+		if (inString) {
+			if (escaped) {
+				escaped = false
+			} else if (char === '\\') {
+				escaped = true
+			} else if (char === '"') {
+				inString = false
+			}
 			continue
 		}
 
-		// Handle string start
-		if (char === '"') {
-			result += char
-			i++
-
-			// Collect string content until we find the real end
-			let stringContent = ''
-			let hasOpenReplacementQuote = false
-			while (i < str.length) {
-				const innerChar = str[i]
-
-				// Handle escaped characters inside string
-				if (innerChar === '\\') {
-					stringContent += innerChar + (str[i + 1] || '')
-					i += 2
-					continue
-				}
-
-				// Check if this is the end of the string
-				if (innerChar === '"') {
-					// Look ahead to see if this is a structural quote
-					const afterQuote = str.slice(i + 1).trimStart()
-					const isStructural =
-						afterQuote === '' ||
-						afterQuote.startsWith(',') ||
-						afterQuote.startsWith('}') ||
-						afterQuote.startsWith(']') ||
-						afterQuote.startsWith(':')
-
-					if (isStructural) {
-						// This is the real end of the string
-						result += stringContent + innerChar
-						i++
-						break
-					} else {
-						// Replace each unescaped quote independently so paired quotes do not
-						// consume the actual closing quote of the JSON string.
-						stringContent += hasOpenReplacementQuote ? '」' : '「'
-						hasOpenReplacementQuote = !hasOpenReplacementQuote
-						i++
-						continue
-					}
-				}
-
-				stringContent += innerChar
-				i++
+		if (char === '"' && depth > 0) {
+			inString = true
+		} else if (char === '{') {
+			if (depth === 0) start = index
+			depth++
+		} else if (char === '}' && depth > 0) {
+			depth--
+			if (depth === 0 && start >= 0) {
+				objects.push(trimmed.slice(start, index + 1))
+				start = -1
 			}
-		} else {
-			result += char
-			i++
 		}
 	}
 
-	return result
+	if (depth !== 0 || inString) {
+		throw invalidResponse('Assistant content contains incomplete JSON', content)
+	}
+	if (objects.length === 0) {
+		throw invalidResponse('Assistant content does not contain a JSON object', content)
+	}
+	if (objects.length > 1) {
+		throw invalidResponse(
+			`Assistant content contains ${objects.length} JSON objects; expected exactly one`,
+			content
+		)
+	}
+
+	try {
+		return JSON.parse(objects[0]!)
+	} catch (error) {
+		throw invalidResponse('Extracted AgentOutput object is not valid JSON', objects[0], error)
+	}
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function invalidResponse(message: string, rawResponse: unknown, rawError?: unknown): InvokeError {
+	return new InvokeError(InvokeErrorTypes.INVALID_RESPONSE, message, rawError, rawResponse)
+}
+
+interface ResponseToolCall {
+	id?: string
+	type?: 'function'
+	function?: {
+		name?: string
+		arguments?: unknown
+	}
 }
 
 interface Choice {
 	message?: {
 		role?: 'assistant'
-		content?: string
-		tool_calls?: {
-			id?: string
-			type?: 'function'
-			function?: {
-				name?: string
-				arguments?: string
-			}
-		}[]
+		content?: string | null
+		tool_calls?: ResponseToolCall[]
 	}
-	index?: 0
-	finish_reason?: 'tool_calls'
+	index?: number
+	finish_reason?: string
 }

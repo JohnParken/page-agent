@@ -11,8 +11,8 @@ import {
 import { Panel, type PanelConfig } from '@page-agent/ui'
 
 export * from '@page-agent/core'
-export { TlAiClient } from '@page-agent/llms'
-export type { TlAiConfig } from '@page-agent/llms'
+export { DsAiClient, TlAiClient } from '@page-agent/llms'
+export type { DsAiConfig, TlAiConfig } from '@page-agent/llms'
 
 export type PageAgentConfig<TController extends PageControllerAdapter = PageController> =
 	AgentConfig &

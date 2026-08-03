@@ -140,11 +140,11 @@ export interface LLMConfig {
 	 * Built-in provider selection.
 	 * @default 'openai'
 	 */
-	provider?: 'openai' | 'tl'
+	provider?: 'openai' | 'tl' | 'ds'
 
 	/**
-	 * Tl AI specific: agent host, e.g. "api.example.com".
-	 * Required when provider is 'tl'.
+	 * Gateway provider specific: agent host, e.g. "api.example.com".
+	 * Required when provider is 'tl' (or 'ds' in gateway mode).
 	 */
 	endpointAgent?: string
 
@@ -164,10 +164,22 @@ export interface LLMConfig {
 	trVersion?: string
 
 	/**
-	 * Tl AI specific: tool calling mode, either 'api' or 'system_prompt'.
-	 * Defaults to 'system_prompt' when the provider is 'tl'.
+	 * Tl / DS specific: tool calling mode, either 'api' or 'system_prompt'.
+	 * Defaults to 'system_prompt' when the provider is 'tl' (or 'ds').
 	 */
 	toolCallingMode?: 'api' | 'system_prompt'
+
+	/**
+	 * DS specific: explicit transport mode ('gateway' | 'api').
+	 * When omitted, inferred from `endpointAgent` / `baseURL`.
+	 */
+	dsMode?: 'gateway' | 'api'
+
+	/** DS (api mode): maximum output tokens. */
+	maxTokens?: number
+
+	/** DS (api mode): apply `modelPatch` to the request body (default false). */
+	applyModelPatch?: boolean
 }
 
 export interface ResolvedLLMConfig {

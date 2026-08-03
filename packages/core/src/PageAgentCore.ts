@@ -10,7 +10,15 @@ import * as z from 'zod/v4'
 import SYSTEM_PROMPT from './prompts/system_prompt.md?raw'
 import SYSTEM_PROMPT_TOOLS from './prompts/system_prompt_tools.md?raw'
 import { tools } from './tools'
-import { assert, fetchLlmsTxt, normalizeResponse, suppress, uid, waitFor } from './utils'
+import {
+	assert,
+	buildAgentOutputSchema,
+	fetchLlmsTxt,
+	normalizeResponse,
+	suppress,
+	uid,
+	waitFor,
+} from './utils'
 
 import type {
 	AgentActivity,
@@ -28,21 +36,15 @@ import type { BrowserState, PageControllerAdapter } from '@page-agent/page-contr
 export { tool, type PageAgentTool, type ToolContext } from './tools'
 export type * from './types'
 
+/**
+ * Providers whose client only supports `system_prompt` tool calling. For these,
+ * PageAgentCore injects the canonical AgentOutput schema into the system prompt
+ * instead of relying on native function calling.
+ */
+const SYSTEM_PROMPT_PROVIDERS: ReadonlySet<string> = new Set(['tl', 'ds'])
+
 export type PageAgentCoreConfig<TController extends PageControllerAdapter = PageControllerAdapter> =
 	AgentConfig & { pageController: TController }
-
-/** Hand-written example parameters per tool, shown in the "Built-in action formats" table. */
-const TOOL_EXAMPLES: Record<string, string> = {
-	done: '{"text":"Task completed.","success":true}',
-	wait: '{"seconds":1}',
-	ask_user: '{"question":"Which option should I choose?"}',
-	click_element_by_index: '{"index":12}',
-	input_text: '{"index":7,"text":"search terms"}',
-	select_dropdown_option: '{"index":9,"text":"Option label"}',
-	scroll: '{"down":true,"num_pages":0.5}',
-	scroll_horizontally: '{"right":true,"pixels":300,"index":15}',
-	execute_javascript: '{"script":"return document.title"}',
-}
 
 /**
  * AI agent for browser automation.
@@ -126,8 +128,9 @@ export class PageAgentCore<
 	constructor(config: PageAgentCoreConfig<TController>) {
 		super()
 
-		const toolCallingMode =
-			config.provider === 'tl' ? config.toolCallingMode ?? 'system_prompt' : config.toolCallingMode
+		const toolCallingMode = SYSTEM_PROMPT_PROVIDERS.has(config.provider ?? '')
+			? config.toolCallingMode ?? 'system_prompt'
+			: config.toolCallingMode
 		this.config = { ...config, toolCallingMode, maxSteps: config.maxSteps ?? 40 }
 
 		this.#llm = new LLM(this.config)
@@ -395,30 +398,13 @@ export class PageAgentCore<
 	}
 
 	/**
-	 * Merge all tools into a single MacroTool with the following input:
-	 * - thinking: string
-	 * - evaluation_previous_goal: string
-	 * - memory: string
-	 * - next_goal: string
-	 * - action: { toolName: toolInput }
-	 * where action must be selected from tools defined in this.tools
+	 * Merge all runtime actions into the canonical AgentOutput macro tool.
+	 * Reflection strings are optional; `action` is required and must contain
+	 * exactly one entry selected from `this.tools`.
 	 */
 	#packMacroTool(): Tool<MacroToolInput, MacroToolResult> {
 		const tools = this.tools
-
-		const actionSchemas = Array.from(tools.entries()).map(([toolName, tool]) => {
-			return z.object({ [toolName]: tool.inputSchema }).describe(tool.description)
-		})
-
-		const actionSchema = z.union(actionSchemas as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]])
-
-		const macroToolSchema = z.object({
-			// thinking: z.string().optional(),
-			evaluation_previous_goal: z.string().optional(),
-			memory: z.string().optional(),
-			next_goal: z.string().optional(),
-			action: actionSchema,
-		})
+		const macroToolSchema = buildAgentOutputSchema(tools)
 
 		return {
 			description: 'You MUST call this tool every step!',
@@ -492,82 +478,65 @@ export class PageAgentCore<
 	/**
 	 * Get system prompt, dynamically replace language settings based on configured language.
 	 *
-	 * In `system_prompt` tool-calling mode, tool definitions are injected dynamically
-	 * as a `<tools>` block (JSON Schema) generated from the live `this.tools` map,
-	 * so that any runtime tool additions/removals (customTools, execute_javascript
-	 * toggle, ask_user toggle, etc.) are reflected accurately.
+	 * In `system_prompt` tool-calling mode, the canonical AgentOutput input schema
+	 * is injected dynamically. The schema is built by the same method used to
+	 * validate the native AgentOutput tool, so prompt and parser cannot drift.
 	 *
 	 * In other modes, only the macro-tool output-format documentation is appended;
 	 * the actual tool schemas are delivered to the LLM via the native function-calling API.
 	 */
 	#getSystemPrompt(): string {
-		let prompt: string
+		const usesSystemPromptTools =
+			this.config.toolCallingMode === 'system_prompt' &&
+			SYSTEM_PROMPT_PROVIDERS.has(this.config.provider ?? '')
+		const outputContract = usesSystemPromptTools
+			? this.#buildSystemPromptOutputContract()
+			: this.#buildNativeToolOutputContract()
 
 		if (this.config.customSystemPrompt) {
-			prompt = this.config.customSystemPrompt
-		} else {
-			const targetLanguage = this.config.language === 'zh-CN' ? '中文' : 'English'
-			const systemPrompt = SYSTEM_PROMPT.replace(
-				/Default working language: \*\*.*?\*\*/,
-				`Default working language: **${targetLanguage}**`
-			)
-
-			// MacroTool output-format documentation is always included for the default prompt
-			prompt = `${systemPrompt}\n\n${SYSTEM_PROMPT_TOOLS.replace(
-				'<!-- tool-table -->',
-				this.#buildToolsTable()
-			)}`
+			// Native API mode already carries the AgentOutput schema in the tools request.
+			// System-prompt mode must append the canonical schema even for custom prompts.
+			return usesSystemPromptTools
+				? `${this.config.customSystemPrompt}\n\n${outputContract}`
+				: this.config.customSystemPrompt
 		}
 
-		// In system_prompt tool-calling mode, inject the dynamic <tools> block.
-		// This also applies when a customSystemPrompt is provided (e.g. MultiPageAgent)
-		// so that tool schemas are still available to the model.
-		if (this.config.provider === 'tl' && this.config.toolCallingMode === 'system_prompt') {
-			prompt += `\n\n${this.#buildToolsBlock()}`
-		}
-
-		return prompt
-	}
-
-	/**
-	 * Build the "Built-in action formats" table from the live `this.tools` map.
-	 * Disabled tools (e.g. `execute_javascript` behind experimentalScriptExecutionTool,
-	 * `ask_user` without a callback) are omitted, so the model never attempts a
-	 * tool that would fail with "Unknown action".
-	 */
-	#buildToolsTable(): string {
-		const rows = Array.from(this.tools.entries()).map(([name, t]) => {
-			const example = TOOL_EXAMPLES[name] ?? '{...}'
-			const purpose = t.description.replaceAll('|', '\\|').replace(/\s*\n+\s*/g, ' ')
-			return `| \`${name}\` | \`${example}\` | ${purpose} |`
-		})
-		return `Built-in action formats:\n\n| Action | Parameters | Purpose |\n| ------ | ---------- | ------- |\n${rows.join(
-			'\n'
+		const targetLanguage = this.config.language === 'zh-CN' ? '中文' : 'English'
+		const systemPrompt = SYSTEM_PROMPT.replace(
+			/Default working language: \*\*.*?\*\*/,
+			`Default working language: **${targetLanguage}**`
+		)
+		return `${systemPrompt}\n\n${SYSTEM_PROMPT_TOOLS.replace(
+			'<!-- output-contract -->',
+			outputContract
 		)}`
 	}
 
 	/**
-	 * Build the `<tools>` block string for system_prompt tool-calling mode.
-	 *
-	 * Each tool is rendered as a JSON object following the OpenAI function-tool
-	 * shape: `{ type: "function", function: { name, description, parameters } }`,
-	 * where `parameters` is the JSON Schema converted from the tool's Zod
-	 * `inputSchema` via `z.toJSONSchema()`.
+	 * Build the only wire contract advertised in system-prompt mode: one raw JSON
+	 * object matching the exact AgentOutput input schema. Inner actions are part
+	 * of that schema instead of being advertised as separate function calls.
 	 */
-	#buildToolsBlock(): string {
-		const toolDescriptors: object[] = []
-		for (const [name, t] of this.tools.entries()) {
-			toolDescriptors.push({
-				type: 'function',
-				function: {
-					name,
-					description: t.description,
-					parameters: z.toJSONSchema(t.inputSchema as z.ZodType),
-				},
-			})
-		}
-		const toolsJson = JSON.stringify(toolDescriptors, null, 2)
-		return `<tools>\n${toolsJson}\n</tools>`
+	#buildSystemPromptOutputContract(): string {
+		// Match the JSON Schema dialect used by zodToOpenAITool in @page-agent/llms.
+		const schema = z.toJSONSchema(buildAgentOutputSchema(this.tools), { target: 'draft-7' })
+		return `<output_contract mode="system_prompt">
+Return exactly one raw JSON object matching the schema below. The object itself is the complete AgentOutput
+input. Do not wrap it in AgentOutput, tool_call, function, name/arguments, XML, markdown, or explanatory
+text. Do not call an inner action as a top-level tool.
+
+<agent_output_schema>
+${JSON.stringify(schema, null, 2)}
+</agent_output_schema>
+</output_contract>`
+	}
+
+	/** Build the transport instruction for native function-calling providers. */
+	#buildNativeToolOutputContract(): string {
+		return `<output_contract mode="native_tool_call">
+Call the native AgentOutput tool exactly once. Its arguments are the canonical output object. Do not call
+an inner action tool directly and do not place the AgentOutput object in assistant message content.
+</output_contract>`
 	}
 
 	/**
