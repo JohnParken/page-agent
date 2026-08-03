@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>协作子 iframe 操作测试页</title>
+		<style>
+			:root {
+				font-family:
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				background: #fffaf2;
+				color: #342b1f;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				padding: 1rem;
+			}
+
+			header,
+			section {
+				margin-bottom: 0.85rem;
+				padding: 0.9rem;
+				border: 1px solid #efc98f;
+				border-radius: 0.65rem;
+				background: #ffffff;
+			}
+
+			h1,
+			h2,
+			p {
+				margin-top: 0;
+			}
+
+			h1 {
+				margin-bottom: 0.35rem;
+				font-size: 1.35rem;
+			}
+
+			h2 {
+				font-size: 1rem;
+			}
+
+			.badge {
+				display: inline-block;
+				margin-bottom: 0.5rem;
+				padding: 0.3rem 0.6rem;
+				border-radius: 999px;
+				background: #fff0d6;
+				color: #875600;
+				font-size: 0.78rem;
+				font-weight: 750;
+			}
+
+			.grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+				gap: 0.65rem;
+			}
+
+			.card {
+				display: flex;
+				flex-direction: column;
+				gap: 0.45rem;
+				padding: 0.7rem;
+				border: 1px solid #ead9bf;
+				border-radius: 0.5rem;
+				background: #fffdf9;
+			}
+
+			button,
+			input,
+			select {
+				font: inherit;
+			}
+
+			button {
+				min-height: 2.4rem;
+				padding: 0.5rem 0.75rem;
+				border: 1px solid #b66d00;
+				border-radius: 0.42rem;
+				background: #b66d00;
+				color: #ffffff;
+				font-weight: 680;
+				cursor: pointer;
+			}
+
+			input,
+			select {
+				width: 100%;
+				padding: 0.55rem 0.65rem;
+				border: 1px solid #c9aa7b;
+				border-radius: 0.42rem;
+				background: #ffffff;
+			}
+
+			.result {
+				margin-bottom: 0;
+				color: #6c5a40;
+				font-size: 0.84rem;
+			}
+
+			.horizontal-scroll {
+				display: flex;
+				gap: 0.6rem;
+				overflow-x: auto;
+				scroll-behavior: smooth;
+			}
+
+			.horizontal-item {
+				min-width: 190px;
+				padding: 0.7rem;
+				border: 1px solid #c9aa7b;
+				border-radius: 0.42rem;
+				background: #fff6e8;
+			}
+
+			#child-vertical-scroll {
+				height: 95px;
+				overflow-y: auto;
+				border: 1px solid #c9aa7b;
+				border-radius: 0.42rem;
+				background: #fffdf9;
+			}
+
+			#child-vertical-content {
+				height: 360px;
+				padding: 0.7rem;
+				background: linear-gradient(#fff6e8, #ffe0ac);
+			}
+
+			#child-page-bottom {
+				padding: 11rem 1rem 1rem;
+				text-align: center;
+				color: #6c5a40;
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<span class="badge">子 iframe · 仅安装 iframe bridge</span>
+			<h1>协作子页面操作区</h1>
+			<p>此页面没有 PageAgent。所有控件都由父页面 PageAgent 通过 bridge 观察和操作。</p>
+		</header>
+
+		<section aria-labelledby="basic-actions-heading">
+			<h2 id="basic-actions-heading">子 iframe：点击、输入、选择</h2>
+			<div class="grid">
+				<div class="card">
+					<strong>点击</strong>
+					<button id="child-button" type="button">子页面测试按钮</button>
+					<p id="child-click-result" class="result">尚未点击</p>
+				</div>
+				<div class="card">
+					<label for="child-input"><strong>文本输入</strong></label>
+					<input id="child-input" aria-label="子页面备注" placeholder="请输入备注" />
+				</div>
+				<div class="card">
+					<label for="child-select"><strong>下拉选择</strong></label>
+					<select id="child-select" aria-label="子页面套餐">
+						<option>基础版</option>
+						<option>专业版</option>
+					</select>
+				</div>
+			</div>
+		</section>
+
+		<section aria-labelledby="scroll-actions-heading">
+			<h2 id="scroll-actions-heading">子 iframe：纵向与横向滚动</h2>
+			<p><strong>纵向滚动区域</strong></p>
+			<div id="child-vertical-scroll" data-scrollable aria-label="子页面纵向区域">
+				<div id="child-vertical-content">
+					纵向区域顶部<br /><br /><br /><br /><br />纵向区域底部
+				</div>
+			</div>
+
+			<p><strong>横向滚动列表</strong></p>
+			<div
+				id="child-horizontal-scroll"
+				class="horizontal-scroll"
+				data-scrollable
+				aria-label="子页面横向列表"
+			>
+				<div class="horizontal-item">子页面卡片一</div>
+				<div class="horizontal-item">子页面卡片二</div>
+				<div class="horizontal-item">子页面卡片三</div>
+				<div class="horizontal-item">子页面卡片四</div>
+				<div class="horizontal-item">子页面卡片五</div>
+			</div>
+		</section>
+
+		<div id="child-page-bottom">子 iframe 文档纵向滚动终点</div>
+
+		<script type="module">
+			import { FrameBridgeHost, PageController } from '/lib/iframe-bridge.js'
+
+			const controller = new PageController({
+				viewportExpansion: -1,
+				includeAttributes: ['id', 'aria-label'],
+			})
+			const host = new FrameBridgeHost({
+				controller,
+				allowedParentOrigins: ['http://127.0.0.1:4173'],
+			})
+			host.start()
+
+			window.childPageController = controller
+			window.frameBridgeHost = host
+
+			document.querySelector('#child-button').addEventListener('click', (event) => {
+				event.currentTarget.dataset.clicked = 'true'
+				document.querySelector('#child-click-result').textContent = '子页面按钮已点击'
+			})
+		</script>
+	</body>
+</html>

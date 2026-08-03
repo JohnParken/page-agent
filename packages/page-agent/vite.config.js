@@ -15,9 +15,12 @@ export default defineConfig({
 	publicDir: false,
 	build: {
 		lib: {
-			entry: resolve(__dirname, 'src/PageAgent.ts'),
+			entry: {
+				'page-agent': resolve(__dirname, 'src/PageAgent.ts'),
+				'iframe-bridge': resolve(__dirname, 'src/iframe-bridge.ts'),
+			},
 			name: 'PageAgent',
-			fileName: 'page-agent',
+			fileName: (_format, entryName) => `${entryName}.js`,
 			formats: ['es'],
 		},
 		outDir: resolve(__dirname, 'dist', 'esm'),

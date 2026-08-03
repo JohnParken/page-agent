@@ -9,6 +9,10 @@
         ".": {
             "types": "./src/PageAgent.ts",
             "default": "./src/PageAgent.ts"
+        },
+        "./iframe-bridge": {
+            "types": "./src/iframe-bridge.ts",
+            "default": "./src/iframe-bridge.ts"
         }
     },
     "publishConfig": {
@@ -20,6 +24,11 @@
                 "types": "./dist/esm/PageAgent.d.ts",
                 "import": "./dist/esm/page-agent.js",
                 "default": "./dist/esm/page-agent.js"
+            },
+            "./iframe-bridge": {
+                "types": "./dist/esm/iframe-bridge.d.ts",
+                "import": "./dist/esm/iframe-bridge.js",
+                "default": "./dist/esm/iframe-bridge.js"
             }
         }
     },

@@ -84,6 +84,8 @@ await agent.execute('Click the login button')
 
 For more programmatic usage, see [📖 Documentations](https://alibaba.github.io/page-agent/docs/introduction/overview).
 
+For cooperative cross-origin iframe support, see the [iframe bridge integration guide](docs/cross-origin-iframe-bridge.md).
+
 ## 🧪 Test Page Agent Tools Locally
 
 The repository includes a local test page that covers text input, checkboxes, radio buttons, dropdowns, form submission, clicks, dialogs, asynchronous DOM updates, scrolling, and JavaScript execution.
@@ -144,7 +146,7 @@ The demo resolves Tl configuration in this order, from highest to lowest priorit
 
 1. Query parameters on `page-agent.demo.js`
 2. Build-time `LLM_*` environment variables loaded from the root `.env`
-3. Demo defaults (`provider=openai`, `model=qwen3.5-plus`); Tl has no default endpoint
+3. Demo defaults (`provider=tl`, `toolCallingMode=system_prompt`, `model=qwen3.5-plus`, `endpointAgent=http://127.0.0.1:8089`); override the endpoint with `LLM_ENDPOINT_AGENT` at build time or `endpointAgent` in the script query
 
 All supported demo configuration values are:
 

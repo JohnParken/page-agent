@@ -23,12 +23,13 @@ import type {
 	MacroToolInput,
 	MacroToolResult,
 } from './types'
-import type { BrowserState, PageController } from '@page-agent/page-controller'
+import type { BrowserState, PageControllerAdapter } from '@page-agent/page-controller'
 
 export { tool, type PageAgentTool, type ToolContext } from './tools'
 export type * from './types'
 
-export type PageAgentCoreConfig = AgentConfig & { pageController: PageController }
+export type PageAgentCoreConfig<TController extends PageControllerAdapter = PageControllerAdapter> =
+	AgentConfig & { pageController: TController }
 
 /** Hand-written example parameters per tool, shown in the "Built-in action formats" table. */
 const TOOL_EXAMPLES: Record<string, string> = {
@@ -73,12 +74,14 @@ const TOOL_EXAMPLES: Record<string, string> = {
  *    - NOT included in LLM context
  *    - Types: thinking, executing, executed, retrying, error
  */
-export class PageAgentCore extends EventTarget {
+export class PageAgentCore<
+	TController extends PageControllerAdapter = PageControllerAdapter,
+> extends EventTarget {
 	readonly id = uid()
-	readonly config: PageAgentCoreConfig & { maxSteps: number }
+	readonly config: PageAgentCoreConfig<TController> & { maxSteps: number }
 	readonly tools: typeof tools
-	/** PageController for DOM operations */
-	readonly pageController: PageController
+	/** Controller used for page observation and actions. */
+	readonly pageController: TController
 
 	task = ''
 	taskId = ''
@@ -120,7 +123,7 @@ export class PageAgentCore extends EventTarget {
 		browserState: null as BrowserState | null,
 	}
 
-	constructor(config: PageAgentCoreConfig) {
+	constructor(config: PageAgentCoreConfig<TController>) {
 		super()
 
 		const toolCallingMode =
@@ -282,8 +285,8 @@ export class PageAgentCore extends EventTarget {
 
 					console.log(chalk.blue.bold('👀 Observing...'))
 
-					this.#states.browserState = await this.pageController.getBrowserState()
-					await this.#handleObservations(step)
+					this.#states.browserState = await this.pageController.getBrowserState({ signal })
+					await this.#handleObservations(step, signal)
 
 					// assemble prompts
 
@@ -616,7 +619,7 @@ export class PageAgentCore extends EventTarget {
 	 * @todo loop detection
 	 * @todo console error
 	 */
-	async #handleObservations(step: number): Promise<void> {
+	async #handleObservations(step: number, signal: AbortSignal): Promise<void> {
 		// Accumulated wait time warning
 		if (this.#states.totalWaitTime >= 3) {
 			this.pushObservation(
@@ -630,7 +633,7 @@ export class PageAgentCore extends EventTarget {
 		if (currentURL !== this.#states.lastURL) {
 			this.pushObservation(`Page navigated to → ${currentURL}`)
 			this.#states.lastURL = currentURL
-			await waitFor(0.5) // wait for page to stabilize
+			await waitFor(0.5, signal) // wait for page to stabilize
 		}
 
 		// Remaining steps warning

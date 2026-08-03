@@ -8,7 +8,8 @@
         "packages/ui",
         "packages/llms",
         "packages/core",
-        "packages/page-agent"
+        "packages/page-agent",
+        "packages/e2e"
     ],
     "description": "AI-powered UI agent for web applications",
     "author": "Simon<gaomeng1900>",
@@ -23,13 +24,15 @@
         "npm": "^11.6.3"
     },
     "scripts": {
+        "demo:iframe-bridge": "npm run build --workspace=@page-agent/page-controller && npm run build:demo --workspace=page-agent && npm run demo:iframe-bridge --workspace=@page-agent/e2e",
         "dev:demo": "npm run dev:demo --workspace=page-agent",
         "build": "node scripts/build.js",
         "build:libs": "node scripts/build-libs.js",
         "version": "node scripts/sync-version.js",
         "postpublish": "npm run postpublish --workspaces --if-present",
-        "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+        "typecheck": "tsc --noEmit -p tsconfig.typecheck.json && npm run typecheck --workspace=@page-agent/e2e",
         "test": "npm test --workspaces --if-present",
+        "test:e2e": "npm run build --workspace=@page-agent/page-controller && npm run build:demo --workspace=page-agent && npm run test:e2e --workspace=@page-agent/e2e",
         "test:live": "npm run test:live --workspaces --if-present",
         "lint": "eslint .",
         "ci": "node scripts/ci.js",

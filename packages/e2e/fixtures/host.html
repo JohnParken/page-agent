@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>PageAgent 跨域 iframe 中文测试页</title>
+		<style>
+			:root {
+				font-family:
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				background: #f3f6fb;
+				color: #18233a;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+			}
+
+			main {
+				width: min(1080px, 100%);
+				margin: 0 auto;
+				padding: clamp(1rem, 3vw, 2rem);
+			}
+
+			header,
+			section {
+				margin-bottom: 1rem;
+				padding: clamp(1rem, 2.5vw, 1.4rem);
+				border: 1px solid #d7e0ee;
+				border-radius: 0.8rem;
+				background: #ffffff;
+			}
+
+			h1,
+			h2,
+			h3,
+			p {
+				margin-top: 0;
+			}
+
+			h1 {
+				margin-bottom: 0.5rem;
+				font-size: clamp(1.6rem, 4vw, 2.3rem);
+			}
+
+			h2 {
+				margin-bottom: 0.4rem;
+				font-size: 1.25rem;
+			}
+
+			.scope-label {
+				display: inline-flex;
+				align-items: center;
+				margin-bottom: 0.75rem;
+				padding: 0.32rem 0.65rem;
+				border-radius: 999px;
+				background: #dce9ff;
+				color: #254f97;
+				font-size: 0.78rem;
+				font-weight: 750;
+			}
+
+			.scope-label.child {
+				background: #fff0d6;
+				color: #875600;
+			}
+
+			.agent-runner {
+				display: grid;
+				gap: 0.75rem;
+			}
+
+			textarea,
+			input,
+			select,
+			button {
+				font: inherit;
+			}
+
+			textarea,
+			input,
+			select {
+				width: 100%;
+				padding: 0.58rem 0.7rem;
+				border: 1px solid #aebbd1;
+				border-radius: 0.45rem;
+				background: #ffffff;
+				color: inherit;
+			}
+
+			textarea {
+				min-height: 7rem;
+				resize: vertical;
+				line-height: 1.55;
+			}
+
+			button {
+				min-height: 2.5rem;
+				padding: 0.55rem 0.9rem;
+				border: 1px solid #315ca7;
+				border-radius: 0.45rem;
+				background: #315ca7;
+				color: #ffffff;
+				font-weight: 680;
+				cursor: pointer;
+			}
+
+			button:disabled {
+				border-color: #aebbd1;
+				background: #aebbd1;
+				cursor: wait;
+			}
+
+			.toolbar,
+			.capabilities {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.55rem;
+			}
+
+			.capabilities {
+				margin: 0;
+				padding: 0;
+				list-style: none;
+			}
+
+			.capabilities li {
+				padding: 0.3rem 0.55rem;
+				border-radius: 999px;
+				background: #edf3ff;
+				color: #315ca7;
+				font-size: 0.78rem;
+				font-weight: 650;
+			}
+
+			.status {
+				min-height: 1.4rem;
+				margin-bottom: 0;
+				color: #526078;
+			}
+
+			.status[data-tone='success'] {
+				color: #146c43;
+			}
+
+			.status[data-tone='error'] {
+				color: #a52834;
+			}
+
+			.test-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+				gap: 0.75rem;
+				margin-top: 1rem;
+			}
+
+			.test-card {
+				display: flex;
+				flex-direction: column;
+				gap: 0.5rem;
+				padding: 0.85rem;
+				border: 1px solid #d7e0ee;
+				border-radius: 0.6rem;
+				background: #f8faff;
+			}
+
+			.test-card p {
+				margin-bottom: 0;
+				color: #526078;
+				font-size: 0.85rem;
+			}
+
+			.horizontal-scroll {
+				display: flex;
+				gap: 0.65rem;
+				overflow-x: auto;
+				scroll-behavior: smooth;
+			}
+
+			.horizontal-item {
+				min-width: 190px;
+				padding: 0.75rem;
+				border: 1px solid #aebbd1;
+				border-radius: 0.45rem;
+				background: #ffffff;
+			}
+
+			.frame-shell {
+				overflow: hidden;
+				border: 3px solid #e79b28;
+				border-radius: 0.75rem;
+				background: #fffaf2;
+			}
+
+			.frame-header {
+				padding: 0.75rem 0.9rem;
+				border-bottom: 1px solid #f0cf9e;
+				background: #fff0d6;
+				color: #704700;
+				font-weight: 750;
+			}
+
+			iframe {
+				display: block;
+				width: 100%;
+				height: 670px;
+				border: 0;
+				background: #ffffff;
+			}
+
+			.note {
+				margin: 0.8rem 0 0;
+				padding: 0.7rem 0.8rem;
+				border-left: 4px solid #315ca7;
+				background: #edf3ff;
+				color: #40516d;
+				line-height: 1.55;
+			}
+
+			#parent-page-bottom {
+				padding: 10rem 1rem 2rem;
+				text-align: center;
+				color: #526078;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<header>
+				<span class="scope-label">父页面 · PageAgent 安装在这里</span>
+				<h1>PageAgent 跨域 iframe 测试页</h1>
+				<p>
+					页面只保留一个父页面 Agent 和一个协作子 iframe。父页面 Agent 使用 iframe bridge
+					观察并操作子页面元素。
+				</p>
+			</header>
+
+			<section data-page-agent-ignore="true" aria-labelledby="agent-heading">
+				<h2 id="agent-heading">运行父页面 PageAgent</h2>
+				<div class="agent-runner">
+					<textarea id="agent-task" aria-label="PageAgent 测试任务">
+请完成父页面和子 iframe 的完整测试：等待父页面异步内容加载；点击父页面按钮，在父页面姓名中输入“张三”，选择“杭州”，将父页面横向列表向右滚动；然后操作橙色边框内的子 iframe，点击子页面按钮，在子页面备注中输入“桥接测试成功”，选择“专业版”，分别滚动子页面的纵向区域和横向列表；使用 JavaScript 读取父页面标题；最后询问我是否确认完成并报告每项结果。</textarea
+					>
+					<div class="toolbar">
+						<button id="run-agent-task" type="button">运行测试任务</button>
+						<button id="stop-agent-task" type="button">停止任务</button>
+						<span id="agent-status" class="status" role="status" aria-live="polite">
+							正在初始化 PageAgent…
+						</span>
+					</div>
+				</div>
+			</section>
+
+			<section aria-labelledby="capabilities-heading">
+				<h2 id="capabilities-heading">本测试页覆盖的 PageAgent 工具类型</h2>
+				<ul class="capabilities">
+					<li>点击</li>
+					<li>文本输入</li>
+					<li>下拉选择</li>
+					<li>纵向滚动</li>
+					<li>横向滚动</li>
+					<li>JavaScript（仅父页面）</li>
+					<li>等待 / 询问用户 / 完成任务</li>
+				</ul>
+				<p class="note">
+					“等待、询问用户、完成任务”属于 Agent 流程能力，不对应特定页面控件；跨域 bridge 不会向子
+					iframe 开放 JavaScript 执行。
+				</p>
+			</section>
+
+			<section aria-labelledby="parent-heading">
+				<span class="scope-label">① 父页面元素</span>
+				<h2 id="parent-heading">父页面操作测试区</h2>
+				<div class="test-grid">
+					<div class="test-card">
+						<strong>点击</strong>
+						<button id="parent-button" type="button">父页面测试按钮</button>
+						<p id="parent-click-result">尚未点击</p>
+					</div>
+					<div class="test-card">
+						<label for="parent-name"><strong>文本输入</strong></label>
+						<input id="parent-name" aria-label="父页面姓名" placeholder="请输入姓名" />
+					</div>
+					<div class="test-card">
+						<label for="parent-city"><strong>下拉选择</strong></label>
+						<select id="parent-city" aria-label="父页面城市">
+							<option>北京</option>
+							<option>杭州</option>
+							<option>深圳</option>
+						</select>
+					</div>
+					<div class="test-card">
+						<strong>等待异步内容</strong>
+						<p id="parent-delayed-content" aria-live="polite">父页面异步内容加载中…</p>
+					</div>
+				</div>
+
+				<h3>父页面横向滚动</h3>
+				<div
+					id="parent-horizontal-scroll"
+					class="horizontal-scroll"
+					data-scrollable
+					aria-label="父页面横向列表"
+				>
+					<div class="horizontal-item">父页面卡片一</div>
+					<div class="horizontal-item">父页面卡片二</div>
+					<div class="horizontal-item">父页面卡片三</div>
+					<div class="horizontal-item">父页面卡片四</div>
+					<div class="horizontal-item">父页面卡片五</div>
+				</div>
+			</section>
+
+			<section aria-labelledby="child-heading">
+				<span class="scope-label child">② 子 iframe · 仅安装 bridge</span>
+				<h2 id="child-heading">通过父页面 PageAgent 操作下方子页面</h2>
+				<div class="frame-shell">
+					<div class="frame-header">
+						子 iframe 边界 · http://127.0.0.1:4174/child.html · 未安装 PageAgent
+					</div>
+					<iframe
+						id="cooperative-frame"
+						data-page-agent-bridge
+						title="协作子 iframe 测试页面"
+						src="http://127.0.0.1:4174/child.html"
+					></iframe>
+				</div>
+			</section>
+
+			<div id="parent-page-bottom">父页面纵向滚动终点</div>
+		</main>
+
+		<script src="/page-agent/page-agent.demo.js?autoInit=false"></script>
+		<script type="module">
+			import { FrameAwarePageController, PageController } from '/lib/iframe-bridge.js'
+			import { bindAgentRunner, installDemoPageAgent } from '/page-agent-setup.js'
+
+			const controller = new FrameAwarePageController({
+				localController: new PageController({
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+					enableMask: true,
+				}),
+				frameSelector: 'iframe[data-page-agent-bridge]',
+				allowedChildOrigins: ['http://127.0.0.1:4174'],
+				handshakeTimeoutMs: 500,
+				requestTimeoutMs: 2_000,
+			})
+			window.pageController = controller
+
+			const agent = installDemoPageAgent({
+				pageController: controller,
+				pageName: '跨域 iframe 父页面',
+				instructions:
+					'页面中橙色粗边框明确标记子 iframe。你可以通过 bridge 操作其中的元素，但 execute_javascript 只能在父页面运行。',
+			})
+			bindAgentRunner(agent, {
+				taskInput: document.querySelector('#agent-task'),
+				runButton: document.querySelector('#run-agent-task'),
+				stopButton: document.querySelector('#stop-agent-task'),
+				statusOutput: document.querySelector('#agent-status'),
+			})
+
+			document.querySelector('#parent-button').addEventListener('click', () => {
+				document.querySelector('#parent-click-result').textContent = '父页面按钮已点击'
+			})
+
+			window.setTimeout(() => {
+				document.querySelector('#parent-delayed-content').textContent = '父页面异步内容已加载'
+			}, 1_200)
+		</script>
+	</body>
+</html>
