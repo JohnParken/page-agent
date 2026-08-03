@@ -199,7 +199,7 @@ bridge 的 origin 校验和能力白名单解决的是“谁能连接、能做�
 npm run test:e2e
 ```
 
-该命令先构建 `@page-agent/page-controller`，再运行 Playwright 的跨域 bridge 测试。测试 fixture 使用两个本地 HTTP origin：父页面 `http://127.0.0.1:4173/host.html`，子页面 `http://127.0.0.1:4174/child.html`。测试覆盖本地与远程观察聚合、click/input/select/scroll 路由、不可用 frame 的降级，以及远程 `executeJavascript` 被拒绝；不需要真实 LLM 或 API key。
+该命令先构建 `@page-agent/page-controller` 和父页面 PageAgent Demo，再运行 Playwright 的跨域 bridge 测试。测试 fixture 使用两个本地 HTTP origin：父页面 `http://127.0.0.1:4173/host.html`，子页面 `http://127.0.0.1:4174/child.html`。测试覆盖本地与远程观察聚合、click/input/select/纵横向 scroll 路由，以及远程 `executeJavascript` 被拒绝；测试不会真正调用 LLM。
 
 ### 手动可视 Demo
 
@@ -214,7 +214,9 @@ npm run demo:iframe-bridge
 -   父页面（SDK 接入方）：`http://127.0.0.1:4173/host.html`
 -   子页面（iframe 页面提供方）：`http://127.0.0.1:4174/child.html`
 
-在父页面中确认本地元素和 cooperative iframe 的内容都出现在观察结果中，再尝试点击、输入、选择和滚动。可在 DevTools 的 Console/Network 中查看 iframe 的实际 origin、CSP 和加载错误；不要把 demo 的本地 allow-list 或测试 key 直接复制到生产环境。
+页面用蓝色标记父页面区域、橙色粗边框标记子 iframe。父页面和子页面均提供点击、文本输入、下拉选择及纵横向滚动目标，便于通过父页面 PageAgent 测试本地与桥接操作。可在 DevTools 的 Console/Network 中查看 iframe 的实际 origin、CSP 和加载错误；不要把 Demo 的本地 allow-list 直接复制到生产环境。
+
+该中文 Demo 只在父页面安装 PageAgent，子页面仅安装 `PageController + FrameBridgeHost`，不会创建 Agent 或调用 LLM。父页面 PageAgent 默认使用内置 `TlAiClient` 的 `system_prompt` 模式，默认 endpoint 为 `http://127.0.0.1:8089`；使用本地 Tl 代理时，需另开终端运行 `npm run start:tl-proxy -w @page-agent/llms`。也可在仓库根目录 `.env` 中用 `LLM_ENDPOINT_AGENT` 和 `LLM_MODEL_NAME` 覆盖默认配置。`execute_javascript` 只在父页面本地执行，父页面不能通过 bridge 在子页面执行脚本。
 
 ## 9. 常见错误排查
 

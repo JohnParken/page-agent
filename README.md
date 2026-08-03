@@ -173,7 +173,7 @@ The demo resolves Tl configuration in this order, from highest to lowest priorit
 
 1. Query parameters on `page-agent.demo.js`
 2. Build-time `LLM_*` environment variables loaded from the root `.env`
-3. Demo defaults (`provider=openai`, `model=qwen3.5-plus`); Tl has no default endpoint
+3. Demo defaults (`provider=tl`, `toolCallingMode=system_prompt`, `model=qwen3.5-plus`, `endpointAgent=http://127.0.0.1:8089`); override the endpoint with `LLM_ENDPOINT_AGENT` at build time or `endpointAgent` in the script query
 
 All supported demo configuration values are:
 

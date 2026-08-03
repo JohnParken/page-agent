@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const fixturesDirectory = resolve(currentDirectory, 'fixtures')
 const controllerDistDirectory = resolve(currentDirectory, '../page-controller/dist/lib')
+const pageAgentDistDirectory = resolve(currentDirectory, '../page-agent/dist/iife')
 
 const contentTypes = {
 	'.css': 'text/css; charset=utf-8',
@@ -32,10 +33,15 @@ function createFixtureServer(port) {
 			}
 
 			const isLibraryAsset = requestURL.pathname.startsWith('/lib/')
+			const isPageAgentAsset = requestURL.pathname.startsWith('/page-agent/')
 			const relativePath = decodeURIComponent(requestURL.pathname)
-				.replace(isLibraryAsset ? /^\/lib\// : /^\/+/, '')
+				.replace(isLibraryAsset ? /^\/lib\// : isPageAgentAsset ? /^\/page-agent\// : /^\/+/, '')
 				.replace(/^\/+/, '')
-			const root = isLibraryAsset ? controllerDistDirectory : fixturesDirectory
+			const root = isLibraryAsset
+				? controllerDistDirectory
+				: isPageAgentAsset
+					? pageAgentDistDirectory
+					: fixturesDirectory
 			const filePath = resolveInside(root, relativePath || 'host.html')
 			if (!filePath) {
 				response.writeHead(403).end('Forbidden')
