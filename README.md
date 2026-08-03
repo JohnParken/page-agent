@@ -128,33 +128,6 @@ LLM_MODEL_NAME=qwen3.5-plus
 LLM_TOOL_CALLING_MODE=system_prompt
 ```
 
-#### Complete `.env` template for TlAiClient
-
-Copy the following template to the repository-root `.env` when enabling the built-in `TlAiClient` in the
-demo environment:
-
-```dotenv
-# Required: select the built-in TlAiClient.
-LLM_PROVIDER=tl
-
-# Required: Tl service base URL. Do not include /chatbbc/init_session or /chatbbc/chat.
-# Local development proxy:
-LLM_ENDPOINT_AGENT=http://localhost:8089
-# Direct Tl service example:
-# LLM_ENDPOINT_AGENT=https://tl.example.com
-
-# Required: model or prompt name sent during session initialization.
-LLM_MODEL_NAME=qwen3.5-plus
-
-# Optional Tl request metadata. Leave empty when the service does not require it.
-LLM_APP_ID=
-LLM_TR_CODE=
-LLM_TR_VERSION=
-
-# Optional: system_prompt (default and recommended) or api.
-LLM_TOOL_CALLING_MODE=system_prompt
-```
-
 Only `LLM_PROVIDER`, `LLM_ENDPOINT_AGENT`, and `LLM_MODEL_NAME` are required by PageAgent. Whether
 `LLM_APP_ID`, `LLM_TR_CODE`, and `LLM_TR_VERSION` must contain values depends on the target Tl service.
 `LLM_BASE_URL` and `LLM_API_KEY` are OpenAI-provider settings and are not used by the built-in `TlAiClient`.
@@ -230,14 +203,6 @@ requires a secret, keep it on a trusted server and expose a suitable authenticat
 
 `TlProxyServer` is a development simulator and should not be deployed as the production Tl service. Its
 configuration is independent from the browser configuration:
-
-| Proxy variable        | Default             | Purpose                             |
-| --------------------- | ------------------- | ----------------------------------- |
-| `PROXY_PORT`          | `8089`              | Local proxy listening port          |
-| `QWEN_BASE_URL`       | Project testing API | Upstream OpenAI-compatible endpoint |
-| `QWEN_MODEL`          | `qwen3.5-plus`      | Upstream model                      |
-| `TL_PROXY_LOG_LEVEL`  | `info`              | `debug`, `info`, `warn`, or `error` |
-| `TL_PROXY_LOG_SILENT` | `0`                 | Set to `1` to disable console echo  |
 
 See [TlProxy_README.md](packages/llms/src/dev-tools/TlProxy_README.md) for proxy behavior and diagnostics.
 
