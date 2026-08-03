@@ -436,6 +436,7 @@ export class TlAiClient implements LLMClient {
 	 * Read a response without assuming network chunks align with SSE boundaries.
 	 * SSE responses are decoded into the accumulated content; legacy plain-text
 	 * responses are returned unchanged.
+	 * TODO：eventType to message
 	 */
 	private async readStream(response: Response, abortSignal?: AbortSignal): Promise<string> {
 		const reader = response.body?.getReader()
@@ -497,6 +498,7 @@ export class TlAiClient implements LLMClient {
 			if (dataLines.length === 0) continue
 			const eventData = dataLines.join('\n')
 			if (eventData === '[DONE]' || eventType === 'done' || eventType === 'end') break
+			if (eventType === 'message') continue
 			if (eventType === 'error') {
 				throw new InvokeError(
 					InvokeErrorTypes.INVALID_RESPONSE,
