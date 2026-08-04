@@ -48,7 +48,9 @@
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js",
         "start:tl-proxy": "TL_PROXY_LOG_LEVEL=debug node src/dev-tools/TlProxyServer.ts",
-        "test:tl-proxy": "node src/dev-tools/test-tl-proxy.ts"
+        "test:tl-proxy": "node src/dev-tools/test-tl-proxy.ts",
+        "start:ds-proxy": "DS_PROXY_LOG_LEVEL=debug node src/dev-tools/DsProxyServer.ts",
+        "test:ds-proxy": "node src/dev-tools/test-ds-proxy.ts"
     },
     "dependencies": {
         "chalk": "^5.3.0"

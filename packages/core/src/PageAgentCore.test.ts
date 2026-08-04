@@ -553,6 +553,7 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 				data: { txt: string }
 			}
 			expect(chatBody.data.txt).toContain('<output_contract mode="system_prompt">')
+			expect(chatBody.data.txt).toContain('<deepseek_json_output>')
 			expect(chatBody.data.txt).toContain('<agent_output_schema>')
 			expect(chatBody.data.txt).toContain('"done"')
 		})
@@ -583,6 +584,8 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			expect(body.tools).toBeUndefined()
 			const systemContent = body.messages.find((m) => m.role === 'system')?.content ?? ''
 			expect(systemContent).toContain('<output_contract mode="system_prompt">')
+			expect(systemContent).toContain('<deepseek_json_output>')
+			expect(systemContent).toContain('"action":{"done"')
 			expect(systemContent).toContain('<agent_output_schema>')
 		})
 

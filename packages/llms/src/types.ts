@@ -164,8 +164,10 @@ export interface LLMConfig {
 	trVersion?: string
 
 	/**
-	 * Tl / DS specific: tool calling mode, either 'api' or 'system_prompt'.
-	 * Defaults to 'system_prompt' when the provider is 'tl' (or 'ds').
+	 * Tl / DS specific tool-calling mode.
+	 * Tl accepts 'api' or 'system_prompt'. Ds intentionally supports
+	 * 'system_prompt' only and rejects 'api' with a configuration error.
+	 * Defaults to 'system_prompt' for both providers.
 	 */
 	toolCallingMode?: 'api' | 'system_prompt'
 

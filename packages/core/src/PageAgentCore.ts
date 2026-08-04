@@ -520,10 +520,21 @@ export class PageAgentCore<
 	#buildSystemPromptOutputContract(): string {
 		// Match the JSON Schema dialect used by zodToOpenAITool in @page-agent/llms.
 		const schema = z.toJSONSchema(buildAgentOutputSchema(this.tools), { target: 'draft-7' })
+		const deepSeekJsonGuidance =
+			this.config.provider === 'ds'
+				? `
+<deepseek_json_output>
+DeepSeek JSON Output mode is enabled. Emit one complete, valid JSON object and no surrounding text.
+This example demonstrates the JSON envelope only; the current schema remains authoritative for the action:
+{"evaluation_previous_goal":"...","memory":"...","next_goal":"...","action":{"done":{"text":"...","success":true}}}
+</deepseek_json_output>
+`
+				: ''
 		return `<output_contract mode="system_prompt">
 Return exactly one raw JSON object matching the schema below. The object itself is the complete AgentOutput
 input. Do not wrap it in AgentOutput, tool_call, function, name/arguments, XML, markdown, or explanatory
 text. Do not call an inner action as a top-level tool.
+${deepSeekJsonGuidance}
 
 <agent_output_schema>
 ${JSON.stringify(schema, null, 2)}
