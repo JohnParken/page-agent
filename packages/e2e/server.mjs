@@ -3,11 +3,34 @@ import { stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { config as dotenvConfig } from 'dotenv'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
+const projectRoot = resolve(currentDirectory, '../..')
 const fixturesDirectory = resolve(currentDirectory, 'fixtures')
 const controllerDistDirectory = resolve(currentDirectory, '../page-controller/dist/lib')
 const pageAgentDistDirectory = resolve(currentDirectory, '../page-agent/dist/iife')
+
+// Load .env from project root
+dotenvConfig({ path: resolve(projectRoot, '.env') })
+
+/**
+ * LLM configuration env vars, exposed to the browser via /api/env-config.
+ * Prefix with PUBLIC_LLM_ to keep them separate from other env vars.
+ */
+function getEnvConfig() {
+	return {
+		LLM_PROVIDER: process.env.LLM_PROVIDER || 'tlclient',
+		LLM_MODEL_NAME: process.env.LLM_MODEL_NAME || 'qwen3.5-plus',
+		OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || '',
+		OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+		TL_ENDPOINT_AGENT: process.env.TL_ENDPOINT_AGENT || 'localhost:8089',
+		TL_APP_ID: process.env.TL_APP_ID || '',
+		TL_TR_CODE: process.env.TL_TR_CODE || '',
+		TL_TR_VERSION: process.env.TL_TR_VERSION || '',
+		TL_TOOL_CALLING_MODE: process.env.TL_TOOL_CALLING_MODE || 'system_prompt',
+	}
+}
 
 const contentTypes = {
 	'.css': 'text/css; charset=utf-8',
@@ -29,6 +52,17 @@ function createFixtureServer(port) {
 			const requestURL = new URL(request.url || '/', `http://127.0.0.1:${port}`)
 			if (requestURL.pathname === '/health') {
 				response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end('ok')
+				return
+			}
+
+			// Expose LLM env config to the browser
+			if (requestURL.pathname === '/api/env-config') {
+				response.writeHead(200, {
+					'Content-Type': 'application/json',
+					'Cache-Control': 'no-store',
+					'Access-Control-Allow-Origin': '*',
+				})
+				response.end(JSON.stringify(getEnvConfig()))
 				return
 			}
 

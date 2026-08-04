@@ -357,7 +357,7 @@
 			})
 			window.pageController = controller
 
-			const agent = installDemoPageAgent({
+			const agent = await installDemoPageAgent({
 				pageController: controller,
 				pageName: '跨域 iframe 父页面',
 				instructions:

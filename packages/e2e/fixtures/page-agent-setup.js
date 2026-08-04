@@ -1,40 +1,121 @@
-const DEFAULT_MODEL = 'qwen3.5-plus'
-const DEFAULT_BASE_URL = 'https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run'
-const DEFAULT_TL_ENDPOINT_AGENT = 'http://127.0.0.1:8089'
-
-function queryConfig() {
-	const params = new URLSearchParams(window.location.search)
-	const buildConfig = window.pageAgentDemoConfig || {}
-	return {
-		...buildConfig,
-		provider: params.get('provider') || 'tl',
-		model: params.get('model') || buildConfig.model || DEFAULT_MODEL,
-		baseURL: params.get('baseURL') || buildConfig.baseURL || DEFAULT_BASE_URL,
-		apiKey: params.get('apiKey') || buildConfig.apiKey || 'NA',
-		endpointAgent:
-			params.get('endpointAgent') || buildConfig.endpointAgent || DEFAULT_TL_ENDPOINT_AGENT,
-		appId: params.get('appId') || buildConfig.appId,
-		trCode: params.get('trCode') || buildConfig.trCode,
-		trVersion: params.get('trVersion') || buildConfig.trVersion,
-		toolCallingMode: 'system_prompt',
+/**
+ * Fetch LLM configuration from the server's /api/env-config endpoint.
+ * Returns an empty object on failure (e.g. server not yet ready).
+ */
+async function fetchEnvConfig() {
+	try {
+		const response = await fetch('/api/env-config')
+		if (!response.ok) {
+			console.warn(`[PageAgent] /api/env-config returned ${response.status}, using defaults`)
+			return {}
+		}
+		return await response.json()
+	} catch (error) {
+		console.warn('[PageAgent] Failed to fetch env config, using defaults:', error)
+		return {}
 	}
 }
 
 /**
- * Install a Chinese PageAgent instance for the local iframe-bridge demo.
- * Query parameters can override the demo LLM settings when testing another endpoint.
+ * Build LLM configuration from .env config and URL query parameters.
+ *
+ * Priority (highest to lowest):
+ *   1. URL query parameters (provider, model, baseURL, apiKey, endpointAgent, etc.)
+ *   2. .env file values (fetched from /api/env-config)
+ *   3. Built-in defaults
+ *
+ * Supported providers:
+ *   - tlclient      → provider: 'tl' (Tl AI / chatbbc client)
+ *   - openaiclient  → provider: 'openai' (OpenAI-compatible client, default)
+ *
+ * @param {object} envConfig - The env config object from /api/env-config
+ * @returns {object} PageAgent configuration object
  */
-export function installDemoPageAgent({ pageController, pageName, instructions }) {
+function queryConfig(envConfig = {}) {
+	const params = new URLSearchParams(window.location.search)
+	const buildConfig = window.pageAgentDemoConfig || {}
+
+	// Determine provider: URL param > .env > built-in default
+	const provider = params.get('provider') || envConfig.LLM_PROVIDER || 'tlclient'
+
+	const config = {
+		...buildConfig,
+		model: params.get('model') || envConfig.LLM_MODEL_NAME || buildConfig.model || 'qwen3.5-plus',
+		language: 'zh-CN',
+		experimentalScriptExecutionTool: true,
+	}
+
+	if (provider === 'openaiclient') {
+		config.provider = 'openai'
+		config.baseURL =
+			params.get('baseURL') ||
+			envConfig.OPENAI_BASE_URL ||
+			buildConfig.baseURL ||
+			'https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run'
+		config.apiKey = params.get('apiKey') || envConfig.OPENAI_API_KEY || 'NA'
+		config.toolCallingMode = undefined // not needed for OpenAI client
+	} else {
+		// Default: tlclient
+		config.provider = 'tl'
+		config.endpointAgent =
+			params.get('endpointAgent') || envConfig.TL_ENDPOINT_AGENT || 'http://127.0.0.1:8089'
+		config.appId = params.get('appId') || envConfig.TL_APP_ID || undefined
+		config.trCode = params.get('trCode') || envConfig.TL_TR_CODE || undefined
+		config.trVersion = params.get('trVersion') || envConfig.TL_TR_VERSION || undefined
+		config.toolCallingMode = envConfig.TL_TOOL_CALLING_MODE || 'system_prompt'
+	}
+
+	return config
+}
+
+/**
+ * Install a PageAgent instance for the local iframe-bridge demo.
+ * Reads LLM config from .env (via /api/env-config) and URL query parameters.
+ *
+ * Query parameters can override any .env setting when testing with a different endpoint.
+ *
+ * @param {object} options
+ * @param {object} options.pageController - The FrameAwarePageController instance
+ * @param {string} options.pageName - Display name for the page
+ * @param {string} options.instructions - Additional system instructions
+ * @returns {Promise<object>} The installed PageAgent instance
+ */
+export async function installDemoPageAgent({ pageController, pageName, instructions }) {
 	if (!window.PageAgent) throw new Error('PageAgent 演示脚本尚未加载')
 	if (window.pageAgent) window.pageAgent.dispose()
 
+	// Fetch env config from server
+	const envConfig = await fetchEnvConfig()
+	const config = queryConfig(envConfig)
+
+	// Validate configuration for the selected provider
+	if (config.provider === 'openai' && !config.baseURL) {
+		throw new Error(
+			'[PageAgent] OpenAI client requires OPENAI_BASE_URL. ' +
+				'Set it in .env or pass via ?baseURL=... query parameter.'
+		)
+	}
+	if (config.provider === 'tl' && !config.endpointAgent) {
+		throw new Error(
+			'[PageAgent] TL client requires TL_ENDPOINT_AGENT. ' +
+				'Set it in .env or pass via ?endpointAgent=... query parameter.'
+		)
+	}
+
+	console.info(
+		`[PageAgent] Initializing with provider: ${config.provider}` +
+			(config.provider === 'openai'
+				? `, model: ${config.model}, baseURL: ${config.baseURL}`
+				: `, model: ${config.model}, endpointAgent: ${config.endpointAgent}`)
+	)
+
 	const agent = new window.PageAgent({
-		...queryConfig(),
+		...config,
 		pageController,
 		language: 'zh-CN',
 		experimentalScriptExecutionTool: true,
 		instructions: {
-			system: `你正在操作“${pageName}”中文测试页。请严格按用户要求操作；完成后简洁报告每项结果。${instructions}`,
+			system: `你正在操作"${pageName}"中文测试页。请严格按用户要求操作；完成后简洁报告每项结果。${instructions}`,
 		},
 	})
 
