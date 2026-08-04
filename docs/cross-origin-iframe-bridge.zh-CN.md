@@ -189,7 +189,108 @@ bridge 的 origin 校验和能力白名单解决的是“谁能连接、能做�
 -   某个子 frame 未安装 host、被 CSP/X-Frame-Options 阻止、origin 不在白名单、握手/请求超时或端口断开时，该 frame 会标记为 unavailable；本地页面和其他可用协作 frame 仍可继续工作。
 -   如果应用需要区分降级原因，可监听 `bridgeerror`/`invalidate` 事件或检查稳定的 `FrameBridgeError.code`（如 `TIMEOUT`、`CONNECTION_CLOSED`、`STALE_TREE`、`CAPABILITY_DENIED`），记录错误码而不是把敏感状态写入日志。
 
-## 8. 自动测试与手动可视 Demo
+## 8. 在现有测试应用中部署双域 HTTPS bridge
+
+本节适用于已经存在的父应用和独立部署的子应用，不依赖特定前端框架。继续使用双方应用现有的构建和发布命令，把下面的占位 origin 换成测试环境的最终值，不要把仓库里的 demo server 当作部署方案。
+
+示例使用以下测试环境 origin：
+
+-   父应用：`https://parent.test.example`
+-   直接子 iframe：`https://child.test.example`
+-   LLM gateway：`https://llm-gateway.test.example`
+
+这些域名只是占位符。origin 只包含 scheme、host 和可选 port；`/embedded` 这类路径应放在 iframe 的 `src` 中，不能放入 allow-list。HTTPS 测试环境中父、子都必须使用 HTTPS；HTTP 子页面会成为 mixed content，也不能代表实际部署的安全属性。
+
+### 分别构建父、子应用
+
+1.  在父应用中安装 `page-agent` 和 `@page-agent/page-controller`，使用应用原有的生产构建流程，并保留公开的 ESM export（`page-agent` 和 `page-agent/iframe-bridge`）。父 bundle 拥有 `PageAgent`、LLM 配置和本地 controller。
+2.  在子应用中安装 `@page-agent/page-controller`，使用应用原有的生产构建流程打包 `@page-agent/page-controller/iframe-bridge`。子 bundle 必须创建 `FrameBridgeHost`，不能创建 `PageAgent`、调用 LLM 或包含 LLM key。父、子依赖版本应保持兼容。
+3.  如果无法修改子应用以安装并启动 `FrameBridgeHost`，bridge 就无法观察或操作该子页面。CORS 头不能把不协作的子页面变成可桥接页面；应采用受支持的集成方式，或不把该 iframe 纳入 bridge。
+
+仓库根目录的 `npm run test:e2e` 和 `npm run demo:iframe-bridge` 只用于本地 fixture 验证，不是部署命令；不要发布仓库 demo server，也不要暴露它的 `/api/env-config`。该接口是浏览器测试辅助接口，绝不能用来下发真实密钥。
+
+### 配置运行时 origin 与 controller
+
+双方必须配置同一对精确 origin：父 allow-list 写子页面，子 allow-list 写父页面。应通过双方应用受信任的测试环境配置下发这些值，不要接受浏览器 query 参数并把它直接作为 origin allow-list：
+
+```ts
+// Parent application, served from https://parent.test.example
+import { PageAgent } from 'page-agent'
+import { FrameAwarePageController, PageController } from 'page-agent/iframe-bridge'
+
+const childOrigin = 'https://child.test.example'
+const pageController = new FrameAwarePageController({
+    localController: new PageController(),
+    frameSelector: 'iframe[data-page-agent-bridge]',
+    allowedChildOrigins: [childOrigin],
+})
+
+const agent = new PageAgent({
+    pageController,
+    provider: 'tl',
+    endpointAgent: 'https://llm-gateway.test.example',
+    model: 'test-model',
+})
+```
+
+```html
+<!-- Parent application -->
+<iframe
+    data-page-agent-bridge
+    src="https://child.test.example/embedded"
+    title="Test widget"
+    sandbox="allow-scripts allow-same-origin"
+></iframe>
+```
+
+```ts
+// Child application, served from https://child.test.example
+import { FrameBridgeHost, PageController } from '@page-agent/page-controller/iframe-bridge'
+
+const bridgeHost = new FrameBridgeHost({
+    controller: new PageController(),
+    allowedParentOrigins: ['https://parent.test.example'],
+    capabilities: [
+        'observe',
+        'click',
+        'input',
+        'select',
+        'scroll',
+        'scrollHorizontally',
+        'cleanup',
+    ],
+})
+bridgeHost.start()
+```
+
+不要在任一 allow-list 中使用 `*`、`null`、路径或 query。经过代理或重定向后，应重新核对最终的 scheme、host 和 port；origin 变化必须作为父、子双方协调的配置发布。bridge 只支持 direct child iframe，永远不会转发 `executeJavascript`；该操作只留在父页面本地 controller。
+
+### 配置 HTTPS、CSP 与 LLM gateway
+
+-   父页面响应设置 CSP `frame-src https://child.test.example`（或等价的 `child-src` 策略）；子页面响应设置 CSP `frame-ancestors https://parent.test.example`。
+-   不要发送 `X-Frame-Options: DENY`。父子跨域时 `SAMEORIGIN` 同样会阻止嵌入；应移除它，或换成与目标父页面兼容的策略。
+-   使用 `sandbox` 时保留 `allow-scripts` 让 host 运行，并保留 `allow-same-origin` 让子页面保持配置的 HTTPS origin。缺少后者会产生不透明的 `null` origin，精确 origin 握手会拒绝它。
+-   bridge 使用 `postMessage` 和 `MessageChannel`，父、子之间**不需要 CORS**。只有实际使用 `fetch`/XHR 的 API 才需要 CORS。如果父页面直接调用 LLM gateway，gateway 必须使用 HTTPS，并且只允许精确的父页面 origin 及所需方法/请求头。
+-   长期 LLM/API 凭据应保存在受信任的服务器或 gateway。不要把它们放进子 bundle、iframe URL、bridge 消息或仓库 demo 接口；如果浏览器确实必须携带 token，应使用仅限测试环境、短时有效且权限受限的 token。
+
+### 部署顺序、验收与回滚
+
+按以下顺序发布：
+
+1.  先部署或启用 HTTPS LLM gateway 及其只允许父页面 origin 的 CORS 策略。凭据不能进入两个 bundle；确认重定向不会改变浏览器看到的 origin。
+2.  再构建并部署子应用，启动 `FrameBridgeHost`，设置最终的 `allowedParentOrigins`，并应用子页面 `frame-ancestors`/X-Frame-Options 策略。
+3.  最后构建并部署父应用，设置最终的 `allowedChildOrigins`、iframe `src`、`frameSelector`、父页面 `frame-src` 策略和 LLM gateway endpoint。
+
+只有满足以下条件才算验收通过：
+
+-   父页面能通过 HTTPS 加载 direct child，且 Console 没有 mixed-content、CSP 或 X-Frame-Options 错误；子 host 完成经过 origin 校验的握手。
+-   父 controller 能观察本地内容和子页面区块，并成功路由支持的 click、input、select、scroll 操作。子页面导航后先刷新观察，再使用新的索引。
+-   远程 `executeJavascript` 请求被拒绝；子页面不可用时，父页面本地操作仍能继续。
+-   Network/Console 显示 LLM 请求只发往配置的 HTTPS gateway，CORS 只允许父页面 origin；HTML、JavaScript、URL 和消息中都没有 key。
+
+如果子版本不健康，先把父应用回滚到不选择或不 bridge 该 iframe 的版本（或移除 `data-page-agent-bridge`，让该跨域 iframe 退出 Page Agent 自动化）。父页面本地 controller 仍可操作父文档，但不能读取跨域子页面。随后再停用或回滚子侧 host。不要通过扩大 allow-list 来修复部署错误；重新完成验收后再恢复 bridge。
+
+## 9. 自动测试与手动可视 Demo
 
 ### 自动测试
 
@@ -218,7 +319,7 @@ npm run demo:iframe-bridge
 
 该中文 Demo 只在父页面安装 PageAgent，子页面仅安装 `PageController + FrameBridgeHost`，不会创建 Agent 或调用 LLM。父页面 PageAgent 默认使用内置 `TlAiClient` 的 `system_prompt` 模式，默认 endpoint 为 `http://127.0.0.1:8089`；使用本地 Tl 代理时，需另开终端运行 `npm run start:tl-proxy -w @page-agent/llms`。也可在仓库根目录 `.env` 中用 `LLM_ENDPOINT_AGENT` 和 `LLM_MODEL_NAME` 覆盖默认配置。`execute_javascript` 只在父页面本地执行，父页面不能通过 bridge 在子页面执行脚本。
 
-## 9. 常见错误排查
+## 10. 常见错误排查
 
 | 现象 / 错误码                                            | 常见原因                                                                                                                         | 排查与修复                                                                                                                                                                      |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -232,7 +333,7 @@ npm run demo:iframe-bridge
 | “需要配置 CORS”或把 API key 放到 child                   | 把 postMessage bridge 与 fetch/CORS、LLM 配置混淆                                                                                | bridge 不需要 CORS；LLM 只在父页面配置。只有子页面自己发起跨域 API 请求时，才按该 API 的要求配置 CORS                                                                           |
 | `ERR_MODULE_NOT_FOUND`、`exports` 或 script tag 加载失败 | 使用了非 ESM 入口、深度导入 `src/` 或包版本不匹配                                                                                | 使用 NPM 安装和文档中的次级 ESM import；父子依赖版本保持兼容，重新构建后再验证                                                                                                  |
 
-## 10. 上线前检查清单
+## 11. 上线前检查清单
 
 -   [ ] 父页面和子页面使用 HTTPS，并把端口、scheme、host 写成双方都确认过的精确 origin；没有 `*`、`null`、路径或 query。
 -   [ ] `frameSelector` 足够具体（例如 `iframe[data-page-agent-bridge]`），只包含确实要接入的直接子 iframe。

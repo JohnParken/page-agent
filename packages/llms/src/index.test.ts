@@ -124,12 +124,15 @@ describe('LLM client selection', () => {
 	})
 
 	it('uses TlAiClient when provider is tl', () => {
+		const failureLogger = vi.fn()
 		const llm = new LLM({
 			provider: 'tl',
 			endpointAgent: 'api.example.com',
 			model: 'my-model',
+			tlFailureLogger: failureLogger,
 		})
 		expect(llm.client).toBeInstanceOf(TlAiClient)
+		expect((llm.client as TlAiClient).config.failureLogger).toBe(failureLogger)
 	})
 
 	it('uses DsAiClient when provider is ds with endpointAgent (gateway)', () => {

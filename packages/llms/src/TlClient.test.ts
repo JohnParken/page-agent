@@ -509,6 +509,128 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 // ---------- Error handling ----------
 
 describe('TlAiClient.invoke — errors', () => {
+	it('logs the raw non-SSE response when tool-call parsing fails', async () => {
+		const failureLogger = vi.fn()
+		const { client, fetchMock } = makeClient({ failureLogger })
+		setupSession(fetchMock, 'failed-session')
+		fetchMock.mockResolvedValueOnce(textStreamResponse('not valid tool JSON'))
+
+		await expect(
+			client.invoke(
+				[{ role: 'user', content: 'request text must not be copied into the failure log' }],
+				{ greet: makeTool() },
+				signal
+			)
+		).rejects.toMatchObject({ type: InvokeErrorTypes.INVALID_RESPONSE })
+
+		expect(failureLogger).toHaveBeenCalledTimes(1)
+		const entry = failureLogger.mock.calls[0][0]
+		expect(entry).toMatchObject({
+			stage: 'response_parse',
+			endpoint: 'http://localhost:8089/chatbbc/chat',
+			sessionId: 'failed-session',
+			requestId: expect.any(String),
+			response: {
+				status: 200,
+				contentType: 'text/plain',
+				rawBody: 'not valid tool JSON',
+				accumulatedContent: 'not valid tool JSON',
+			},
+			error: {
+				name: 'InvokeError',
+				type: InvokeErrorTypes.INVALID_RESPONSE,
+				retryable: true,
+			},
+		})
+		expect(JSON.stringify(entry)).not.toContain('request text must not be copied')
+	})
+
+	it('logs both the raw SSE body and accumulated model content from normalize failures', async () => {
+		const failureLogger = vi.fn()
+		const { client, fetchMock } = makeClient({ failureLogger })
+		setupSession(fetchMock)
+		const accumulatedContent =
+			'{"memory":"Search for "widgets" next.","action":{"greet":{"name":"x"}}}'
+		const rawBody =
+			`event: chunk\ndata: ${JSON.stringify({ content: accumulatedContent })}\n\n` +
+			'event: done\ndata: {"finished":true}\n\n'
+		fetchMock.mockResolvedValueOnce(sseResponse([rawBody]))
+		const syntaxError = new SyntaxError('Unexpected token at position 22')
+
+		await expect(
+			client.invoke([], { greet: makeTool() }, signal, {
+				normalizeResponse: () => {
+					throw new InvokeError(
+						InvokeErrorTypes.INVALID_RESPONSE,
+						'Extracted AgentOutput object is not valid JSON',
+						syntaxError,
+						accumulatedContent
+					)
+				},
+			})
+		).rejects.toMatchObject({ type: InvokeErrorTypes.INVALID_RESPONSE })
+
+		expect(failureLogger).toHaveBeenCalledTimes(1)
+		expect(failureLogger.mock.calls[0][0]).toMatchObject({
+			stage: 'response_parse',
+			response: {
+				rawBody,
+				accumulatedContent,
+			},
+			error: {
+				message: 'Extracted AgentOutput object is not valid JSON',
+				rawError: {
+					name: 'SyntaxError',
+					message: 'Unexpected token at position 22',
+				},
+				rawResponse: accumulatedContent,
+			},
+		})
+	})
+
+	it('logs parsed tool details when argument validation fails', async () => {
+		const failureLogger = vi.fn()
+		const { client, fetchMock } = makeClient({ failureLogger })
+		setupSession(fetchMock)
+		const rawContent = JSON.stringify({ tool_name: 'greet', parameters: { name: 123 } })
+		fetchMock.mockResolvedValueOnce(chatResponse(rawContent))
+
+		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+			type: InvokeErrorTypes.INVALID_TOOL_ARGS,
+		})
+
+		expect(failureLogger).toHaveBeenCalledWith(
+			expect.objectContaining({
+				stage: 'tool_args_validation',
+				response: expect.objectContaining({
+					rawBody: rawContent,
+					accumulatedContent: rawContent,
+				}),
+				toolCall: { name: 'greet', args: { name: 123 } },
+			})
+		)
+	})
+
+	it('does not let an async failure logger error replace the original invocation error', async () => {
+		const { client, fetchMock } = makeClient({
+			failureLogger: async () => {
+				throw new Error('disk full')
+			},
+		})
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(textStreamResponse('not json'))
+
+		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+			type: InvokeErrorTypes.INVALID_RESPONSE,
+		})
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'[TlAiClient] Failure logger threw while recording a tool error',
+			expect.objectContaining({ message: 'disk full' })
+		)
+		consoleSpy.mockRestore()
+	})
+
 	it('throws INVALID_RESPONSE when response content is not valid JSON', async () => {
 		const { client, fetchMock } = makeClient()
 		setupSession(fetchMock)

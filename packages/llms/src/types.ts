@@ -50,6 +50,52 @@ export interface InvokeOptions {
 	normalizeResponse?: (response: any) => any
 }
 
+/** Stage at which a Tl tool invocation failed after receiving the chat response. */
+export type TlFailureStage =
+	| 'response_parse'
+	| 'tool_lookup'
+	| 'tool_args_parse'
+	| 'tool_args_validation'
+	| 'tool_execution'
+
+/** Serializable error details included in a Tl failure log entry. */
+export interface TlFailureLogError {
+	name: string
+	message: string
+	type?: string
+	retryable?: boolean
+	rawError?: unknown
+	rawResponse?: unknown
+}
+
+/**
+ * Diagnostic record emitted once when a Tl response cannot produce a successful tool invocation.
+ * Request bodies and headers are intentionally excluded because they may contain credentials or page data.
+ * Raw response fields may still contain model or page content and must be handled as sensitive data.
+ */
+export interface TlFailureLogEntry {
+	timestamp: string
+	stage: TlFailureStage
+	endpoint: string
+	requestId: string
+	sessionId: string
+	response: {
+		status: number
+		statusText: string
+		contentType: string
+		rawBody?: string
+		accumulatedContent?: string
+	}
+	toolCall?: {
+		name?: string
+		args?: unknown
+	}
+	error: TlFailureLogError
+}
+
+/** Callback for persisting Tl failure logs, for example to a file in a Node host. */
+export type TlFailureLogger = (entry: TlFailureLogEntry) => void | Promise<void>
+
 /**
  * LLM Client interface
  * Note: Does not use generics because each tool in the tools array has different types
@@ -162,6 +208,13 @@ export interface LLMConfig {
 	 * Tl AI specific: transaction version.
 	 */
 	trVersion?: string
+
+	/**
+	 * Tl-specific failure logger. Defaults to a structured console.error entry.
+	 * Browser clients can inspect it locally; Node hosts can append the entry to a file.
+	 * Entries contain raw model responses and must be stored as sensitive data.
+	 */
+	tlFailureLogger?: TlFailureLogger
 
 	/**
 	 * Tl / DS specific tool-calling mode.

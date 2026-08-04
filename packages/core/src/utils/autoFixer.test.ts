@@ -60,6 +60,33 @@ describe('normalizeResponse', () => {
 		expect(normalizedArgs(normalized)).toEqual(canonical)
 	})
 
+	it('parses a string-encoded action in native AgentOutput arguments and preserves reflection', () => {
+		const canonical = {
+			evaluation_previous_goal: 'The page loaded. Verdict: Success',
+			memory: 'The page is ready.',
+			next_goal: 'Wait for the next update.',
+			action: { click_element_by_index: { index: 0 } },
+		}
+		const response = toolCallResponse('AgentOutput', {
+			...canonical,
+			action: JSON.stringify(canonical.action),
+		})
+
+		const normalized = normalizeResponse(response, testTools)
+
+		expect(normalizedArgs(normalized)).toEqual(canonical)
+	})
+
+	it('parses a string-encoded action in native AgentOutput arguments without reflection', () => {
+		const action = { wait: { seconds: 2 } }
+		const normalized = normalizeResponse(
+			toolCallResponse('AgentOutput', { action: JSON.stringify(action) }),
+			testTools
+		)
+
+		expect(normalizedArgs(normalized)).toEqual({ action })
+	})
+
 	it('keeps AgentOutput wrappers as compatibility input but emits canonical arguments', () => {
 		const canonical = { action: { wait: { seconds: 1 } } }
 		const wrapped = {
@@ -246,6 +273,43 @@ describe('normalizeResponse', () => {
 			() =>
 				normalizeResponse(
 					contentResponse(JSON.stringify({ action: { imaginary: {} } })),
+					testTools
+				),
+			InvokeErrorTypes.INVALID_TOOL_ARGS,
+			/Unknown action "imaginary"/
+		)
+	})
+
+	it('rejects multiple actions in a string-encoded canonical action', () => {
+		expectInvokeError(
+			() =>
+				normalizeResponse(
+					contentResponse(
+						JSON.stringify({
+							evaluation_previous_goal: 'The page loaded.',
+							action: JSON.stringify({
+								wait: { seconds: 1 },
+								click_element_by_index: { index: 7 },
+							}),
+						})
+					),
+					testTools
+				),
+			InvokeErrorTypes.INVALID_TOOL_ARGS,
+			/exactly one action; received 2/
+		)
+	})
+
+	it('rejects unknown actions in a string-encoded canonical action', () => {
+		expectInvokeError(
+			() =>
+				normalizeResponse(
+					contentResponse(
+						JSON.stringify({
+							memory: 'The page is ready.',
+							action: JSON.stringify({ imaginary: {} }),
+						})
+					),
 					testTools
 				),
 			InvokeErrorTypes.INVALID_TOOL_ARGS,

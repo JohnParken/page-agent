@@ -82,6 +82,19 @@ await agent.execute('点击登录按钮')
 
 跨域 iframe 协作接入请参阅[iframe bridge 中文集成指南](./cross-origin-iframe-bridge.zh-CN.md)（[English](./cross-origin-iframe-bridge.md)）。
 
+### 在现有测试应用中接入跨域 iframe
+
+bridge 可以让现有父应用中的 Page Agent 观察并操作另一个 HTTPS origin 上、愿意协作的直接子 iframe。父、子应用都必须集成各自的 controller，并成对配置精确的 `allowedChildOrigins` / `allowedParentOrigins`；如果无法修改子应用以启动 `FrameBridgeHost`，就无法桥接。bridge 使用 `postMessage`，父、子页面之间不需要 CORS；只有 LLM gateway 等实际 API 请求需要 CORS，并且 gateway 应使用 HTTPS、只允许精确的父页面 origin，长期凭据保留在受信任服务器。请参阅[双域部署章节](./cross-origin-iframe-bridge.zh-CN.md#8-在现有测试应用中部署双域-https-bridge)了解 CSP、sandbox、验收和回滚。
+
+仓库 fixture 仅用于本地验证，可运行：
+
+```bash
+npm run test:e2e
+npm run demo:iframe-bridge
+```
+
+这些命令使用本地 HTTP fixture，不是生产部署命令。不要发布仓库 demo server 或暴露其 `/api/env-config` 测试接口，也不要把真实 API key 放进该接口或任何子 bundle。
+
 ## 🤝 贡献
 
 欢迎社区贡献！请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md) 了解安装与贡献指南。

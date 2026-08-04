@@ -137,6 +137,18 @@ function canonicalizeObject(
 		throw invalidResponse('AgentOutput payload must be a JSON object', value)
 	}
 
+	// Some providers encode the canonical nested action object as a JSON string.
+	// Parse that compatibility shape before classifying `{ action: "..." }` as the
+	// legacy string-action wrapper. Ordinary string action names (for example
+	// `{ action: 'wait', args: ... }`) do not yield a JsonObject and remain on
+	// the legacy path, so their strict key checks and semantics remain unchanged.
+	if (typeof value.action === 'string') {
+		const parsedAction = parseCompatibleActionInput(value.action)
+		if (isJsonObject(parsedAction)) {
+			return { ...value, action: parsedAction }
+		}
+	}
+
 	if ('action' in value && isJsonObject(value.action)) return value
 
 	const wrapperKinds = [

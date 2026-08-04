@@ -125,3 +125,155 @@ and tree revisions are scoped to the latest observation. If a frame navigates, t
 or loses its host, its section is marked unavailable while local and other cooperative
 frames continue to work. Dispose both the parent controller and child host when the page
 or application is torn down.
+
+## Deploy an existing test application across two HTTPS origins
+
+Use this procedure when you already have a parent application and a separately deployed
+child application. It is framework-agnostic: keep using each application's existing build
+and release commands, and replace the placeholder origins below with the final values.
+
+The example uses these test-environment origins:
+
+-   Parent application: `https://parent.test.example`
+-   Direct child iframe: `https://child.test.example`
+-   LLM gateway: `https://llm-gateway.test.example`
+
+All three are placeholders. An origin is only the scheme, host, and optional port; paths
+such as `/embedded` belong in the iframe `src`, not in an allow-list. The parent and child
+must be served over HTTPS in an HTTPS test environment. An HTTP child is mixed content and
+does not provide the same security properties as the deployed configuration.
+
+### Build the parent and child separately
+
+1.  In the parent application, install `page-agent` and
+    `@page-agent/page-controller`. Bundle the parent with the application's normal
+    production build and retain the public ESM exports (`page-agent` and
+    `page-agent/iframe-bridge`). The parent bundle owns `PageAgent`, the LLM configuration,
+    and the local controller.
+2.  In the child application, install `@page-agent/page-controller`. Bundle
+    `@page-agent/page-controller/iframe-bridge` with the application's normal production
+    build. The child bundle must create a `FrameBridgeHost`; it must not create a
+    `PageAgent`, call an LLM, or contain an LLM key. Keep the parent and child package
+    versions compatible.
+3.  If the child application cannot be changed to install and start `FrameBridgeHost`,
+    this bridge cannot observe or operate it. CORS headers do not make an uncooperative
+    child bridgeable; use a supported integration or leave that iframe outside the
+    bridge.
+
+The repository's `npm run test:e2e` and `npm run demo:iframe-bridge` commands build and
+serve repository fixtures for local verification only. They are not deployment commands;
+do not publish the repository demo server or expose its `/api/env-config` endpoint. That
+endpoint is a browser-facing test helper and must never be used to deliver real secrets.
+
+### Configure runtime origins and controllers
+
+Set the same exact origin pair in both applications. The parent allow-list names the child;
+the child allow-list names the parent. Supply these values through each application's
+trusted test-environment configuration; do not accept an arbitrary browser query parameter
+as an origin allow-list entry:
+
+```ts
+// Parent application, served from https://parent.test.example
+import { PageAgent } from 'page-agent'
+import { FrameAwarePageController, PageController } from 'page-agent/iframe-bridge'
+
+const childOrigin = 'https://child.test.example'
+const pageController = new FrameAwarePageController({
+    localController: new PageController(),
+    frameSelector: 'iframe[data-page-agent-bridge]',
+    allowedChildOrigins: [childOrigin],
+})
+
+const agent = new PageAgent({
+    pageController,
+    provider: 'tl',
+    endpointAgent: 'https://llm-gateway.test.example',
+    model: 'test-model',
+})
+```
+
+```html
+<!-- Parent application -->
+<iframe
+    data-page-agent-bridge
+    src="https://child.test.example/embedded"
+    title="Test widget"
+    sandbox="allow-scripts allow-same-origin"
+></iframe>
+```
+
+```ts
+// Child application, served from https://child.test.example
+import { FrameBridgeHost, PageController } from '@page-agent/page-controller/iframe-bridge'
+
+const bridgeHost = new FrameBridgeHost({
+    controller: new PageController(),
+    allowedParentOrigins: ['https://parent.test.example'],
+    capabilities: [
+        'observe',
+        'click',
+        'input',
+        'select',
+        'scroll',
+        'scrollHorizontally',
+        'cleanup',
+    ],
+})
+bridgeHost.start()
+```
+
+Do not use `*`, `null`, a path, or a query string in either allow-list. Verify the final
+scheme, host, and port after any proxy or redirect; a changed origin must be released as a
+coordinated parent-and-child configuration change. The bridge supports direct child frames
+only, and it never forwards `executeJavascript`; that operation remains local to the
+parent controller.
+
+### Configure HTTPS, CSP, and the LLM gateway
+
+-   On the parent response, set CSP `frame-src https://child.test.example` (or the
+    equivalent `child-src` policy). On the child response, set CSP
+    `frame-ancestors https://parent.test.example`.
+-   Do not send `X-Frame-Options: DENY`. `SAMEORIGIN` also blocks this cross-origin
+    embedding; remove it or replace it with a policy compatible with the intended parent.
+-   If using `sandbox`, retain `allow-scripts` so the host can run and `allow-same-origin`
+    so the child keeps its configured HTTPS origin. Without the latter, the browser uses an
+    opaque `null` origin and the exact-origin handshake is rejected.
+-   The bridge uses `postMessage` and `MessageChannel`; it does **not** require CORS
+    headers between the parent and child. Configure CORS only for APIs that actually use
+    `fetch`/XHR. If the parent calls the LLM gateway directly, the gateway must use HTTPS
+    and allow only the exact parent origin (and the required methods/headers).
+-   Keep long-lived LLM/API credentials on a trusted server or gateway. Never put them in
+    the child bundle, iframe URL, bridge messages, or a repository demo endpoint. A
+    browser-facing token, if unavoidable, must be short-lived and scoped to the test
+    environment.
+
+### Deploy, accept, and roll back
+
+Deploy in this order:
+
+1.  Deploy or enable the HTTPS LLM gateway and its exact-parent-origin CORS policy. Keep
+    gateway credentials out of both bundles and verify that redirects do not change the
+    browser-visible origin.
+2.  Build and deploy the child application. Start `FrameBridgeHost`, set its final
+    `allowedParentOrigins`, and apply the child `frame-ancestors`/X-Frame-Options policy.
+3.  Build and deploy the parent application with the final `allowedChildOrigins`, iframe
+    `src`, `frameSelector`, parent `frame-src` policy, and LLM gateway endpoint.
+
+Accept the deployment only after all of the following are true:
+
+-   The parent page loads the direct child over HTTPS without mixed-content, CSP, or
+    X-Frame-Options errors, and the child host completes the origin-checked handshake.
+-   The parent controller observes local content and the child section, then successfully
+    routes the supported click, input, select, and scroll operations. Refresh observation
+    after child navigation before using new indices.
+-   A remote `executeJavascript` request is rejected, and an unavailable child does not
+    stop local parent operations.
+-   Browser Network/Console checks show LLM requests only to the configured HTTPS gateway,
+    CORS limited to the parent origin, and no key in HTML, JavaScript, URLs, or messages.
+
+If the child release is unhealthy, first roll the parent back to the last version that did
+not select or bridge that iframe (or remove `data-page-agent-bridge` and leave the
+cross-origin iframe outside Page Agent automation). The parent local controller continues
+to operate the parent document, but cannot read the cross-origin child. Then disable or roll
+back the child host. Do not widen an allow-list to recover from a deployment error. Re-run
+the acceptance checks before re-enabling the bridge.

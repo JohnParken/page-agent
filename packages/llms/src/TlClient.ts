@@ -2,8 +2,6 @@
  * Tl AI Client
  * Supports session initialization and streaming chat for the chatbbc API.
  */
-import * as z from 'zod/v4'
-
 import { InvokeError, InvokeErrorTypes } from './errors'
 import {
 	describeError,
@@ -13,7 +11,16 @@ import {
 	readStreamResponse,
 } from './streaming'
 
-import type { InvokeOptions, InvokeResult, LLMClient, Message, Tool } from './types'
+import type {
+	InvokeOptions,
+	InvokeResult,
+	LLMClient,
+	Message,
+	TlFailureLogEntry,
+	TlFailureLogger,
+	TlFailureStage,
+	Tool,
+} from './types'
 
 /**
  * Tool calling mode for Tl AI.
@@ -35,6 +42,25 @@ export interface TlAiConfig {
 	toolCallingMode?: ToolCallingMode
 	/** Optional custom fetch implementation. */
 	customFetch?: typeof globalThis.fetch
+	/**
+	 * Called once when a received chat response fails during parsing, validation, or tool execution.
+	 * Defaults to a structured console.error log. Node hosts may use this callback to write a local file.
+	 * Entries contain raw model responses and must be stored as sensitive data.
+	 */
+	failureLogger?: TlFailureLogger
+}
+
+interface TlResponseTrace {
+	endpoint: string
+	requestId: string
+	sessionId: string
+	status: number
+	statusText: string
+	contentType: string
+	rawBody?: string
+	accumulatedContent?: string
+	toolName?: string
+	toolArgs?: unknown
 }
 
 interface InitSessionRequest {
@@ -66,8 +92,10 @@ interface ChatRequest {
  * Client for Tl AI chatbbc API.
  */
 export class TlAiClient implements LLMClient {
-	config: Required<Omit<TlAiConfig, 'customFetch'>> & Pick<TlAiConfig, 'customFetch'>
+	config: Required<Omit<TlAiConfig, 'customFetch' | 'failureLogger'>> &
+		Pick<TlAiConfig, 'customFetch' | 'failureLogger'>
 	private fetch: typeof globalThis.fetch
+	private failureLogger: TlFailureLogger
 
 	constructor(config: TlAiConfig) {
 		if (!config.endpointAgent || !config.model) {
@@ -85,8 +113,14 @@ export class TlAiClient implements LLMClient {
 			trVersion: config.trVersion ?? '',
 			toolCallingMode: config.toolCallingMode ?? 'system_prompt',
 			customFetch: config.customFetch,
+			failureLogger: config.failureLogger,
 		}
 		this.fetch = config.customFetch ?? fetch.bind(globalThis)
+		this.failureLogger =
+			config.failureLogger ??
+			((entry) => {
+				console.error('[TlAiClient] Tool invocation failed', entry)
+			})
 	}
 
 	/**
@@ -209,22 +243,65 @@ export class TlAiClient implements LLMClient {
 	private async parseStreamingResponse(
 		response: Response,
 		tools: Record<string, Tool>,
+		trace: TlResponseTrace,
 		abortSignal?: AbortSignal,
 		normalizeResponse?: (response: any) => any
 	): Promise<{ toolName: string; toolArgs: unknown }> {
 		const rawContent = await readStreamResponse(response, abortSignal)
+		trace.rawBody = rawContent
 
-		const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+		const contentType = trace.contentType
 		const isSseResponse = /^(?:\uFEFF)?(?:id|event|data|retry):/m.test(rawContent)
 		if (contentType.includes('text/event-stream') || isSseResponse) {
-			return parseAccumulatedContent(
-				parseChatbbcSseContent(rawContent, 'TlAiClient').content,
-				tools,
-				normalizeResponse
-			)
+			trace.accumulatedContent = parseChatbbcSseContent(rawContent, 'TlAiClient').content
+			return parseAccumulatedContent(trace.accumulatedContent, tools, normalizeResponse)
 		}
 
+		trace.accumulatedContent = rawContent
 		return parseAccumulatedContent(rawContent, tools, normalizeResponse)
+	}
+
+	private async logFailure(
+		stage: TlFailureStage,
+		error: unknown,
+		trace: TlResponseTrace
+	): Promise<void> {
+		const invokeError = error instanceof InvokeError ? error : undefined
+		const entry: TlFailureLogEntry = {
+			timestamp: new Date().toISOString(),
+			stage,
+			endpoint: trace.endpoint,
+			requestId: trace.requestId,
+			sessionId: trace.sessionId,
+			response: {
+				status: trace.status,
+				statusText: trace.statusText,
+				contentType: trace.contentType,
+				rawBody: trace.rawBody,
+				accumulatedContent: trace.accumulatedContent,
+			},
+			toolCall:
+				trace.toolName !== undefined || trace.toolArgs !== undefined
+					? {
+							name: trace.toolName,
+							args: toJsonSafe(trace.toolArgs),
+						}
+					: undefined,
+			error: {
+				name: error instanceof Error ? error.name : 'UnknownError',
+				message: error instanceof Error ? error.message : String(error),
+				type: invokeError?.type,
+				retryable: invokeError?.retryable,
+				rawError: toJsonSafe(invokeError?.rawError),
+				rawResponse: toJsonSafe(invokeError?.rawResponse),
+			},
+		}
+
+		try {
+			await this.failureLogger(entry)
+		} catch (loggerError: unknown) {
+			console.error('[TlAiClient] Failure logger threw while recording a tool error', loggerError)
+		}
 	}
 
 	async invoke(
@@ -257,12 +334,13 @@ export class TlAiClient implements LLMClient {
 				.join('\n')
 		}
 
+		const requestId = this.generateRequestId()
 		const requestBody: ChatRequest = {
 			appId: this.config.appId,
 			trCode: this.config.trCode,
 			trVersion: this.config.trVersion,
 			timestamp: Date.now(),
-			requestId: this.generateRequestId(),
+			requestId,
 			data: {
 				session_id: sessionId,
 				txt: chatText,
@@ -340,80 +418,135 @@ export class TlAiClient implements LLMClient {
 			)
 		}
 
-		// 5. Parse streaming response.
-		const { toolName, toolArgs } = await this.parseStreamingResponse(
-			response,
-			tools,
-			abortSignal,
-			options?.normalizeResponse
-		)
-
-		// 6. Validate tool exists.
-		const tool = tools[toolName]
-		if (!tool) {
-			throw new InvokeError(
-				InvokeErrorTypes.UNKNOWN,
-				`Tool "${toolName}" not found in tools`,
-				undefined,
-				{ toolName, availableTools: Object.keys(tools) }
-			)
+		const trace: TlResponseTrace = {
+			endpoint: url,
+			requestId,
+			sessionId,
+			status: response.status,
+			statusText: response.statusText,
+			contentType: response.headers.get('content-type')?.toLowerCase() ?? '',
 		}
+		let failureStage: TlFailureStage = 'response_parse'
 
-		// 7. Parse and validate tool arguments.
-		let parsedArgs: unknown = toolArgs
-		if (typeof toolArgs === 'string') {
-			try {
-				parsedArgs = JSON.parse(toolArgs)
-			} catch (error: unknown) {
+		try {
+			// 5. Parse streaming response.
+			const { toolName, toolArgs } = await this.parseStreamingResponse(
+				response,
+				tools,
+				trace,
+				abortSignal,
+				options?.normalizeResponse
+			)
+			trace.toolName = toolName
+			trace.toolArgs = toolArgs
+
+			// 6. Validate tool exists.
+			failureStage = 'tool_lookup'
+			const tool = tools[toolName]
+			if (!tool) {
 				throw new InvokeError(
-					InvokeErrorTypes.INVALID_TOOL_ARGS,
-					'Failed to parse tool arguments as JSON',
-					error,
-					{ rawArgs: toolArgs }
+					InvokeErrorTypes.UNKNOWN,
+					`Tool "${toolName}" not found in tools`,
+					undefined,
+					{ toolName, availableTools: Object.keys(tools) }
 				)
 			}
-		}
 
-		const validation = tool.inputSchema.safeParse(parsedArgs)
-		if (!validation.success) {
-			console.error(z.prettifyError(validation.error))
-			throw new InvokeError(
-				InvokeErrorTypes.INVALID_TOOL_ARGS,
-				'Tool arguments validation failed',
-				validation.error,
-				{ rawArgs: parsedArgs }
-			)
-		}
-		const toolInput = validation.data
+			// 7. Parse and validate tool arguments.
+			failureStage = 'tool_args_parse'
+			let parsedArgs: unknown = toolArgs
+			if (typeof toolArgs === 'string') {
+				try {
+					parsedArgs = JSON.parse(toolArgs)
+				} catch (error: unknown) {
+					throw new InvokeError(
+						InvokeErrorTypes.INVALID_TOOL_ARGS,
+						'Failed to parse tool arguments as JSON',
+						error,
+						{ rawArgs: toolArgs }
+					)
+				}
+			}
+			trace.toolArgs = parsedArgs
 
-		// 8. Execute tool.
-		let toolResult: unknown
-		try {
-			toolResult = await tool.execute(toolInput)
+			failureStage = 'tool_args_validation'
+			const validation = tool.inputSchema.safeParse(parsedArgs)
+			if (!validation.success) {
+				throw new InvokeError(
+					InvokeErrorTypes.INVALID_TOOL_ARGS,
+					'Tool arguments validation failed',
+					validation.error,
+					{ rawArgs: parsedArgs }
+				)
+			}
+			const toolInput = validation.data
+			trace.toolArgs = toolInput
+
+			// 8. Execute tool.
+			failureStage = 'tool_execution'
+			let toolResult: unknown
+			try {
+				toolResult = await tool.execute(toolInput)
+			} catch (error: unknown) {
+				if ((error as any)?.name === 'AbortError') throw error
+				throw new InvokeError(
+					InvokeErrorTypes.TOOL_EXECUTION_ERROR,
+					`Tool execution failed: ${(error as Error)?.message}`,
+					error,
+					{ toolName, args: toolInput }
+				)
+			}
+
+			// 9. Return result.
+			return {
+				toolCall: {
+					name: toolName,
+					args: toolInput,
+				},
+				toolResult,
+				usage: {
+					promptTokens: 0,
+					completionTokens: 0,
+					totalTokens: 0,
+				},
+				rawResponse: { toolName, toolArgs: toolInput },
+				rawRequest: requestBody,
+			}
 		} catch (error: unknown) {
 			if ((error as any)?.name === 'AbortError') throw error
-			throw new InvokeError(
-				InvokeErrorTypes.TOOL_EXECUTION_ERROR,
-				`Tool execution failed: ${(error as Error)?.message}`,
-				error,
-				{ toolName, args: toolInput }
-			)
-		}
-
-		// 9. Return result.
-		return {
-			toolCall: {
-				name: toolName,
-				args: toolInput,
-			},
-			toolResult,
-			usage: {
-				promptTokens: 0,
-				completionTokens: 0,
-				totalTokens: 0,
-			},
-			rawResponse: { toolName, toolArgs: toolInput },
-			rawRequest: requestBody,
+			await this.logFailure(failureStage, error, trace)
+			throw error
 		}
 	}
+}
+
+function toJsonSafe(value: unknown, seen = new WeakSet<object>()): unknown {
+	if (value === undefined || value === null) return value
+	if (typeof value === 'number') return Number.isFinite(value) ? value : String(value)
+	if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
+		return String(value)
+	}
+	if (typeof value !== 'object') return value
+	if (seen.has(value)) return '[Circular]'
+	seen.add(value)
+	if (value instanceof Error) {
+		const details = Object.fromEntries(
+			Object.entries(value)
+				.filter(([key]) => key !== 'cause')
+				.map(([key, item]) => [key, toJsonSafe(item, seen)])
+		)
+		return {
+			name: value.name,
+			message: value.message,
+			stack: value.stack,
+			cause: toJsonSafe(value.cause, seen),
+			...details,
+		}
+	}
+	if (value instanceof Date) return value.toISOString()
+	if (Array.isArray(value)) return value.map((item) => toJsonSafe(item, seen))
+
+	return Object.fromEntries(
+		Object.entries(value).map(([key, item]) => [key, toJsonSafe(item, seen)])
+	)
 }

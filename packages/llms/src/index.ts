@@ -12,6 +12,9 @@ import type {
 	LLMConfig,
 	Message,
 	ResolvedLLMConfig,
+	TlFailureLogEntry,
+	TlFailureLogger,
+	TlFailureStage,
 	Tool,
 } from './types'
 
@@ -23,6 +26,9 @@ export type {
 	LLMClient,
 	LLMConfig,
 	Message,
+	TlFailureLogEntry,
+	TlFailureLogger,
+	TlFailureStage,
 	Tool,
 	TlAiConfig,
 }
@@ -48,6 +54,7 @@ export class LLM extends EventTarget {
 				trCode: config.trCode,
 				trVersion: config.trVersion,
 				toolCallingMode: config.toolCallingMode,
+				failureLogger: config.tlFailureLogger,
 				customFetch: config.customFetch,
 			})
 		} else if (config.provider === 'ds') {

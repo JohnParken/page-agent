@@ -86,6 +86,28 @@ For more programmatic usage, see [📖 Documentations](https://alibaba.github.io
 
 For cooperative cross-origin iframe support, see the [iframe bridge integration guide](docs/cross-origin-iframe-bridge.md).
 
+### Cross-origin iframe in an existing test application
+
+The bridge can let a Page Agent in an existing parent app observe and operate a cooperative,
+direct child iframe from a different HTTPS origin. The parent and child must both integrate
+their controllers and use paired, exact `allowedChildOrigins` / `allowedParentOrigins` values;
+if the child cannot be modified to start `FrameBridgeHost`, it cannot be bridged. The bridge
+uses `postMessage`, so it does not need CORS between the two pages. CORS is only for APIs such
+as an LLM gateway, which must use HTTPS, allow the exact parent origin, and keep long-lived
+credentials on a trusted server. See the [two-origin deployment chapter](docs/cross-origin-iframe-bridge.md#deploy-an-existing-test-application-across-two-https-origins)
+for CSP, sandbox, acceptance, and rollback guidance.
+
+For repository-only fixture verification, run:
+
+```bash
+npm run test:e2e
+npm run demo:iframe-bridge
+```
+
+These commands use local HTTP fixtures and are not production deployment commands. Do not
+publish the repository demo server or expose its `/api/env-config` test endpoint, and never
+put real API keys in that endpoint or any child bundle.
+
 ## 🧪 Test Page Agent Tools Locally
 
 The repository includes a local test page that covers text input, checkboxes, radio buttons, dropdowns, form submission, clicks, dialogs, asynchronous DOM updates, scrolling, and JavaScript execution.
