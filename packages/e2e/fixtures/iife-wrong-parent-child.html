@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Iframe bridge parent rejecting child</title>
+	</head>
+	<body>
+		<button id="never-exposed">Never exposed</button>
+		<script src="/controller-iife/page-agent-frame-host.iife.min.js"></script>
+		<script>
+			window.frameHostHandle = window.PageAgentFrameHost.startFrameBridge({
+				allowedParentOrigins: ['http://localhost:4173'],
+			})
+			window.frameBridgeHost = window.frameHostHandle.host
+		</script>
+	</body>
+</html>

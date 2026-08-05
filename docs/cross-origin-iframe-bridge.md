@@ -9,8 +9,11 @@ operations that it explicitly opts into.
 
 ## Install and import
 
-Version 1 is NPM/ESM-only. Use the secondary entry points rather than a script tag or a
-UMD bundle:
+The bridge keeps its NPM/ESM secondary entry points and also ships separate, self-contained
+parent and child IIFE files. Use the ESM imports below for bundled applications; classic-script
+pages should follow the [Chinese IIFE integration guide](./cross-origin-iframe-bridge-script.zh-CN.md).
+Do not load an ESM secondary entry directly through a classic `<script>` tag or use an IIFE as
+the Node/ESM default entry.
 
 ```bash
 npm install page-agent @page-agent/page-controller

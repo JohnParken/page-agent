@@ -9,6 +9,7 @@ const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(currentDirectory, '../..')
 const fixturesDirectory = resolve(currentDirectory, 'fixtures')
 const controllerDistDirectory = resolve(currentDirectory, '../page-controller/dist/lib')
+const controllerIifeDistDirectory = resolve(currentDirectory, '../page-controller/dist/iife')
 const pageAgentDistDirectory = resolve(currentDirectory, '../page-agent/dist/iife')
 
 // Load .env from project root
@@ -67,15 +68,27 @@ function createFixtureServer(port) {
 			}
 
 			const isLibraryAsset = requestURL.pathname.startsWith('/lib/')
+			const isControllerIifeAsset = requestURL.pathname.startsWith('/controller-iife/')
 			const isPageAgentAsset = requestURL.pathname.startsWith('/page-agent/')
 			const relativePath = decodeURIComponent(requestURL.pathname)
-				.replace(isLibraryAsset ? /^\/lib\// : isPageAgentAsset ? /^\/page-agent\// : /^\/+/, '')
+				.replace(
+					isLibraryAsset
+						? /^\/lib\//
+						: isControllerIifeAsset
+							? /^\/controller-iife\//
+							: isPageAgentAsset
+								? /^\/page-agent\//
+								: /^\/+/,
+					''
+				)
 				.replace(/^\/+/, '')
 			const root = isLibraryAsset
 				? controllerDistDirectory
-				: isPageAgentAsset
-					? pageAgentDistDirectory
-					: fixturesDirectory
+				: isControllerIifeAsset
+					? controllerIifeDistDirectory
+					: isPageAgentAsset
+						? pageAgentDistDirectory
+						: fixturesDirectory
 			const filePath = resolveInside(root, relativePath || 'host.html')
 			if (!filePath) {
 				response.writeHead(403).end('Forbidden')

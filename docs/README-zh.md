@@ -80,7 +80,7 @@ await agent.execute('点击登录按钮')
 
 更多编程用法，请参阅 [📖 文档](https://alibaba.github.io/page-agent/docs/introduction/overview)。
 
-跨域 iframe 协作接入请参阅[iframe bridge 中文集成指南](./cross-origin-iframe-bridge.zh-CN.md)（[English](./cross-origin-iframe-bridge.md)）。
+跨域 iframe 协作接入请参阅[iframe bridge 中文集成指南](./cross-origin-iframe-bridge.zh-CN.md)（[English](./cross-origin-iframe-bridge.md)）；普通 `<script>` 页面请参阅[IIFE 接入指南](./cross-origin-iframe-bridge-script.zh-CN.md)。
 
 ### 在现有测试应用中接入跨域 iframe
 

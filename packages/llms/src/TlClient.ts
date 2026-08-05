@@ -88,6 +88,8 @@ interface ChatRequest {
 	}
 }
 
+type TlOperation = 'INIT_SESSION' | 'CHAT'
+
 /**
  * Client for Tl AI chatbbc API.
  */
@@ -96,6 +98,27 @@ export class TlAiClient implements LLMClient {
 		Pick<TlAiConfig, 'customFetch' | 'failureLogger'>
 	private fetch: typeof globalThis.fetch
 	private failureLogger: TlFailureLogger
+
+	private logRequest(operation: TlOperation, url: string, body: unknown): void {
+		console.info(`[TlClient] 📤 ${operation} request:`, {
+			url,
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				...(operation === 'CHAT' ? { Accept: 'text/event-stream' } : {}),
+			},
+			body,
+		})
+	}
+
+	private logResponse(operation: TlOperation, response: Response, body: unknown): void {
+		console.info(`[TlClient] 📥 ${operation} response:`, {
+			status: response.status,
+			statusText: response.statusText,
+			contentType: response.headers.get('content-type') ?? '',
+			body,
+		})
+	}
 
 	constructor(config: TlAiConfig) {
 		if (!config.endpointAgent || !config.model) {
@@ -144,6 +167,7 @@ export class TlAiClient implements LLMClient {
 				],
 			},
 		}
+		this.logRequest('INIT_SESSION', url, requestBody)
 
 		let response: Response
 		try {
@@ -166,13 +190,38 @@ export class TlAiClient implements LLMClient {
 			)
 		}
 
+		let rawBody: string
+		try {
+			rawBody = await response.text()
+		} catch (error: unknown) {
+			if ((error as any)?.name === 'AbortError') throw error
+			throw new InvokeError(
+				InvokeErrorTypes.INVALID_RESPONSE,
+				'Session initialization response body could not be read',
+				error
+			)
+		}
+
+		let data: any
+		let parseError: unknown
+		try {
+			data = JSON.parse(rawBody)
+		} catch (error: unknown) {
+			parseError = error
+		}
+		this.logResponse('INIT_SESSION', response, parseError ? rawBody : data)
+
+		if (parseError && response.ok) {
+			throw new InvokeError(
+				InvokeErrorTypes.INVALID_RESPONSE,
+				'Session initialization response is not valid JSON',
+				parseError,
+				rawBody
+			)
+		}
+
 		if (!response.ok) {
-			let errorData: unknown
-			try {
-				errorData = await response.json()
-			} catch {
-				errorData = {}
-			}
+			const errorData: unknown = parseError ? {} : data
 			const serverMessage = (errorData as any)?.message || response.statusText || 'Request failed'
 			const type =
 				response.status === 401 || response.status === 403
@@ -190,18 +239,6 @@ export class TlAiClient implements LLMClient {
 			)
 			invokeError.statusCode = response.status
 			throw invokeError
-		}
-
-		let data: any
-		try {
-			data = await response.json()
-		} catch (error: unknown) {
-			if ((error as any)?.name === 'AbortError') throw error
-			throw new InvokeError(
-				InvokeErrorTypes.INVALID_RESPONSE,
-				'Session initialization response is not valid JSON',
-				error
-			)
 		}
 
 		if (data?.code !== undefined && data.code !== 0) {
@@ -249,6 +286,7 @@ export class TlAiClient implements LLMClient {
 	): Promise<{ toolName: string; toolArgs: unknown }> {
 		const rawContent = await readStreamResponse(response, abortSignal)
 		trace.rawBody = rawContent
+		this.logResponse('CHAT', response, rawContent)
 
 		const contentType = trace.contentType
 		const isSseResponse = /^(?:\uFEFF)?(?:id|event|data|retry):/m.test(rawContent)
@@ -357,6 +395,7 @@ export class TlAiClient implements LLMClient {
 
 		// 3. Call chat endpoint.
 		const url = `${this.config.endpointAgent}/chatbbc/chat`
+		this.logRequest('CHAT', url, requestBody)
 
 		let response: Response
 		try {
@@ -384,7 +423,15 @@ export class TlAiClient implements LLMClient {
 		if (!response.ok) {
 			let errorData: unknown
 			try {
-				errorData = await response.json()
+				const rawErrorBody = await response.text()
+				let responseBody: unknown = rawErrorBody
+				try {
+					errorData = JSON.parse(rawErrorBody)
+					responseBody = errorData
+				} catch {
+					errorData = {}
+				}
+				this.logResponse('CHAT', response, responseBody)
 			} catch {
 				errorData = {}
 			}

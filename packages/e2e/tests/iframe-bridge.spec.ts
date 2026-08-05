@@ -40,6 +40,25 @@ type DemoWindow = Window & {
 		status: string
 	}
 	frameBridgeHost?: unknown
+	frameBridgeHandle?: {
+		controller: ControllerHandle
+		dispose(): void
+	}
+	frameHostHandle?: {
+		host: { capabilities: readonly string[] }
+		dispose(): void
+	}
+	iifeUnhandledRejections?: string[]
+	PageAgentFrameBridge?: {
+		FrameAwarePageController: new (...args: never[]) => unknown
+		PageController: new (...args: never[]) => unknown
+		createFrameAwareController(options: unknown): unknown
+	}
+	PageAgentFrameHost?: {
+		FrameBridgeHost: new (...args: never[]) => unknown
+		PageController: new (...args: never[]) => unknown
+		startFrameBridge(options: unknown): unknown
+	}
 }
 
 const hostOrigin = 'http://127.0.0.1:4173'
@@ -267,3 +286,175 @@ test.describe('cross-origin iframe bridge demo', () => {
 		expect(await frame.evaluate(() => document.body.dataset.remoteExecuted)).toBeUndefined()
 	})
 })
+
+test.describe('standalone iframe bridge IIFE bundles', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/iife-host.html')
+		await expect(page).toHaveURL(`${hostOrigin}/iife-host.html`)
+		await expect
+			.poll(() => page.evaluate(() => Boolean((window as DemoWindow).PageAgentFrameBridge)))
+			.toBe(true)
+		await expect
+			.poll(() => page.evaluate(() => Boolean((window as DemoWindow).pageController)))
+			.toBe(true)
+		const frame = await cooperativeIifeFrame(page)
+		await expect
+			.poll(() => frame.evaluate(() => Boolean((window as DemoWindow).frameBridgeHost)))
+			.toBe(true)
+	})
+
+	test('loads both globals through classic scripts', async ({ page }) => {
+		const parentApi = await page.evaluate(() => {
+			const api = (window as DemoWindow).PageAgentFrameBridge
+			return {
+				controller: typeof api?.FrameAwarePageController,
+				localController: typeof api?.PageController,
+				create: typeof api?.createFrameAwareController,
+				scriptTypes: [...document.scripts].map((script) => script.type),
+			}
+		})
+		expect(parentApi).toEqual({
+			controller: 'function',
+			localController: 'function',
+			create: 'function',
+			scriptTypes: ['', ''],
+		})
+
+		const frame = await cooperativeIifeFrame(page)
+		const childApi = await frame.evaluate(() => {
+			const api = (window as DemoWindow).PageAgentFrameHost
+			return {
+				host: typeof api?.FrameBridgeHost,
+				controller: typeof api?.PageController,
+				start: typeof api?.startFrameBridge,
+				scriptTypes: [...document.scripts].map((script) => script.type),
+			}
+		})
+		expect(childApi).toEqual({
+			host: 'function',
+			controller: 'function',
+			start: 'function',
+			scriptTypes: ['', ''],
+		})
+	})
+
+	test('observes and performs authorized child actions', async ({ page }) => {
+		const state = await controller(page)
+		const childButton = markerIndex(state.content, /<button[^>]*id=child-button/)
+		const childInput = markerIndex(state.content, /<input[^>]*id=child-input/)
+		const childSelect = markerIndex(state.content, /<select[^>]*id=child-select/)
+		const childScroll = markerIndex(state.content, /<div[^>]*aria-label=Child vertical area/)
+		const frame = await cooperativeIifeFrame(page)
+
+		expect((await action(page, 'clickElement', [childButton])).success).toBe(true)
+		await expect(frame.locator('#child-button')).toHaveAttribute('data-clicked', 'true')
+
+		expect((await action(page, 'inputText', [childInput, 'IIFE input'])).success).toBe(true)
+		await expect(frame.locator('#child-input')).toHaveValue('IIFE input')
+
+		expect((await action(page, 'selectOption', [childSelect, 'Pro'])).success).toBe(true)
+		await expect(frame.locator('#child-select')).toHaveValue('pro')
+
+		const beforeScroll = await frame
+			.locator('#child-scroll')
+			.evaluate((element) => element.scrollTop)
+		expect(
+			(await action(page, 'scroll', [{ index: childScroll, down: true, numPages: 0.5 }])).success
+		).toBe(true)
+		await expect
+			.poll(() => frame.locator('#child-scroll').evaluate((element) => element.scrollTop))
+			.toBeGreaterThan(beforeScroll)
+
+		expect(await page.evaluate(() => (window as DemoWindow).iifeUnhandledRejections)).toEqual([])
+	})
+
+	test('defaults the script host to observe-only', async ({ page }) => {
+		await page.goto('/iife-observe-host.html')
+		const frame = await observeOnlyIifeFrame(page)
+		await expect
+			.poll(() => frame.evaluate(() => (window as DemoWindow).frameHostHandle?.host.capabilities))
+			.toEqual(['observe'])
+
+		const state = await controller(page)
+		const button = markerIndex(state.content, /<button[^>]*id=observe-only-button/)
+		const result = await action(page, 'clickElement', [button])
+		expect(result.success).toBe(false)
+		expect(result.message).toContain('CAPABILITY_DENIED')
+	})
+
+	test('reconnects after the child iframe reloads', async ({ page }) => {
+		expect((await controller(page)).content).toContain('id=child-button')
+		const frame = await cooperativeIifeFrame(page)
+		await frame.evaluate(() => window.location.reload())
+		const reloadedFrame = await cooperativeIifeFrame(page)
+		await expect
+			.poll(() => reloadedFrame.evaluate(() => Boolean((window as DemoWindow).frameBridgeHost)))
+			.toBe(true)
+		await expect.poll(async () => (await controller(page)).content).toContain('id=child-button')
+	})
+
+	test('rejects mismatched child and parent origins', async ({ page }) => {
+		const cases = [
+			['iife-wrong-child-host.html', 'CAPABILITY_DENIED'],
+			['iife-wrong-parent-host.html', 'TIMEOUT'],
+		] as const
+		for (const [fixture, errorCode] of cases) {
+			await page.goto(`/${fixture}`)
+			const state = await controller(page)
+			expect(state.content).toContain('unavailable="true"')
+			expect(state.content).toContain(errorCode)
+		}
+	})
+
+	test('validates script options and disposes idempotently', async ({ page }) => {
+		const validationMessages = await page.evaluate(() => {
+			const api = (window as DemoWindow).PageAgentFrameBridge
+			if (!api) throw new Error('Parent IIFE API is missing')
+			const invalidOptions = [
+				{ frameSelector: '', allowedChildOrigins: ['http://127.0.0.1:4174'] },
+				{ frameSelector: 'iframe', allowedChildOrigins: [] },
+				{ frameSelector: 'iframe', allowedChildOrigins: ['*'] },
+				{ frameSelector: 'iframe', allowedChildOrigins: ['http://127.0.0.1:4174/path'] },
+			]
+			return invalidOptions.map((options) => {
+				try {
+					api.createFrameAwareController(options)
+					return 'no error'
+				} catch (error) {
+					return error instanceof Error ? error.message : String(error)
+				}
+			})
+		})
+		expect(validationMessages.every((message) => message !== 'no error')).toBe(true)
+
+		const disposedError = await page.evaluate(async () => {
+			const handle = (window as DemoWindow).frameBridgeHandle
+			if (!handle) throw new Error('Parent IIFE handle is missing')
+			handle.dispose()
+			handle.dispose()
+			try {
+				await handle.controller.getBrowserState()
+				return 'no error'
+			} catch (error) {
+				return error instanceof Error ? error.message : String(error)
+			}
+		})
+		expect(disposedError).toContain('disposed')
+	})
+})
+
+async function cooperativeIifeFrame(page: Page): Promise<Frame> {
+	await expect
+		.poll(() => page.frames().find((frame) => frame.url() === `${childOrigin}/iife-child.html`))
+		.toBeTruthy()
+	return page.frames().find((frame) => frame.url() === `${childOrigin}/iife-child.html`)!
+}
+
+async function observeOnlyIifeFrame(page: Page): Promise<Frame> {
+	await expect
+		.poll(() =>
+			page.frames().find((frame) => frame.url() === `${childOrigin}/iife-observe-child.html`)
+		)
+		.toBeTruthy()
+	return page.frames().find((frame) => frame.url() === `${childOrigin}/iife-observe-child.html`)!
+}

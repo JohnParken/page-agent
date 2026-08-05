@@ -1,5 +1,7 @@
 # SDK 跨域 iframe PostMessage 桥改造方案
 
+> 历史方案说明：本文记录首版 ESM bridge 的设计边界。后续已增加独立、可选的父/子 IIFE 构建；当前接入方式以 [`cross-origin-iframe-bridge.zh-CN.md`](./cross-origin-iframe-bridge.zh-CN.md) 和 [`cross-origin-iframe-bridge-script.zh-CN.md`](./cross-origin-iframe-bridge-script.zh-CN.md) 为准。默认根入口仍不会静态引入 bridge runtime。
+
 ## 总结
 
 - 技术上可行，但仅限“协作式 iframe”：子页面必须主动加载桥脚本。`postMessage` 是受控跨域通信机制，不能让宿主页单方面绕过同源策略读取任意第三方 DOM。[MDN：window.postMessage](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage)
@@ -88,10 +90,10 @@ host.start()
 ## 假设与明确边界
 
 - 只支持显式标记的动态直接子 iframe；未标记 iframe 忽略，已标记但未接桥的 iframe 明确报告不可用。
-- 首版只发布 NPM/ESM 子入口，不新增桥的 CDN/IIFE 产物，也不支持递归嵌套；协议保留逐跳组合能力。
+- 首版当时只发布 NPM/ESM 子入口；后续已补充父/子独立 IIFE，但仍不支持递归嵌套，协议保留逐跳组合能力。
 - 默认能力为读取、点击、输入、选择、横纵滚动；不提供远端任意脚本、远端光标同步或自动重试变更型动作。
 - `sandbox` 至少需要 `allow-scripts allow-same-origin`；否则脚本无法运行或 origin 变为不可安全认证的 opaque origin。[MDN：iframe sandbox](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe)
 - 子站仍需允许被宿主页嵌入；CSP `frame-ancestors` 或 `X-Frame-Options` 可以直接阻止加载，桥不能绕过。[MDN：frame-ancestors](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/frame-ancestors)
 - 合成事件仍可能不具备真实用户激活，支付、文件选择、剪贴板、弹窗等受保护能力不保证可自动化。
 - 完全不可控的第三方 iframe 不在纯 SDK 方案能力范围内；这类页面只能另行评估浏览器扩展、受控同源代理或外部浏览器自动化。
-- 本阶段仅完成评估与实施方案，不修改项目代码。
+- 本文对应的历史阶段仅完成评估与实施方案；后续实现状态以文首链接的当前指南为准。

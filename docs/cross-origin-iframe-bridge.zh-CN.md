@@ -22,9 +22,9 @@ Page Agent 的可选 iframe bridge 允许父页面上的 Page Agent 观察并操
 4. 父页面再次检查消息来源和 origin，建立一条专用 `MessageChannel`；后续请求只走这个端口。
 5. 父页面先获取带索引的浏览器状态，再用最新索引路由 click、input、select 或 scroll。
 
-## 2. 安装与 ESM import
+## 2. 安装与接入形式
 
-Bridge 是 NPM/ESM-only 的次级入口。生产应用应使用打包器和 ESM import，不要把这些入口当作 script tag、UMD 或 IIFE 文件使用。
+Bridge 保留 NPM/ESM 次级入口，同时提供父、子两个独立且自包含的 IIFE 文件。使用 Vite、Webpack 等构建应用时优先采用下述 ESM import；无法使用模块构建的已有页面可参阅[经典 script / IIFE 接入指南](./cross-origin-iframe-bridge-script.zh-CN.md)。不要直接把 ESM 次级入口放进普通 `<script>`，也不要把 IIFE 当作 Node/ESM 默认入口。
 
 父页面（SDK 接入方）安装：
 
@@ -124,7 +124,7 @@ bridgeHost.start()
 
 `allowedParentOrigins` 是**子页面允许连接它的父页面 origin**；同样只接受精确的 HTTP(S) origin，拒绝通配符和路径。`allowedChildOrigins` 则是**父页面允许被它连接的子页面 origin**。两者不是同一个配置项的别名：对于 `https://app.example.com` 嵌入 `https://widgets.example.com`，父页面写 `allowedChildOrigins: ['https://widgets.example.com']`，子页面写 `allowedParentOrigins: ['https://app.example.com']`。
 
-`capabilities` 可选；省略时默认为全部安全 bridge 能力。建议按最小权限原则只公开实际需要的能力，例如只读组件可以配置 `['observe']`。父页面请求未被子页面广告的能力会收到 `CAPABILITY_DENIED`。
+直接构造底层 `FrameBridgeHost` 时，`capabilities` 可选且保留既有的全部安全 bridge 能力默认值。经典 script 的 `startFrameBridge()` 便捷 API 则采用更严格的 `['observe']` 默认值。两种形式都建议按最小权限原则只公开实际需要的能力；父页面请求未被子页面广告的能力会收到 `CAPABILITY_DENIED`。
 
 ## 5. CORS、LLM Key 与浏览器嵌入策略
 

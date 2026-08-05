@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Page Agent iframe bridge script 示例（子页面）</title>
+		<style>
+			body {
+				font-family: system-ui, sans-serif;
+				margin: 2rem;
+				min-height: 800px;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>iframe 子页面 Host</h1>
+		<p>本页面运行于 <code>http://127.0.0.1:4174</code>。</p>
+		<button id="child-button">子页面按钮</button>
+		<label>备注 <input id="child-note" /></label>
+
+		<script src="../../packages/page-controller/dist/iife/page-agent-frame-host.iife.min.js"></script>
+		<script>
+			if (!window.PageAgentFrameHost) {
+				throw new Error('PageAgentFrameHost is unavailable')
+			}
+
+			var bridge = window.PageAgentFrameHost.startFrameBridge({
+				allowedParentOrigins: ['http://127.0.0.1:4173'],
+				capabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
+				controllerOptions: {
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+				},
+			})
+
+			window.addEventListener('pagehide', function () {
+				bridge.dispose()
+			})
+		</script>
+	</body>
+</html>

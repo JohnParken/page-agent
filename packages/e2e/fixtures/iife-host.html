@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Iframe bridge IIFE parent</title>
+	</head>
+	<body>
+		<button id="parent-button">Parent button</button>
+		<iframe
+			id="iife-cooperative-frame"
+			data-page-agent-bridge
+			title="IIFE child"
+			src="http://127.0.0.1:4174/iife-child.html"
+		></iframe>
+
+		<script src="/page-agent/page-agent-frame-bridge.iife.min.js"></script>
+		<script>
+			if (!window.PageAgentFrameBridge) throw new Error('PageAgentFrameBridge is unavailable')
+
+			window.iifeUnhandledRejections = []
+			window.addEventListener('unhandledrejection', function (event) {
+				window.iifeUnhandledRejections.push(String(event.reason))
+			})
+
+			window.frameBridgeHandle = window.PageAgentFrameBridge.createFrameAwareController({
+				frameSelector: 'iframe[data-page-agent-bridge]',
+				allowedChildOrigins: ['http://127.0.0.1:4174'],
+				handshakeTimeoutMs: 500,
+				requestTimeoutMs: 2000,
+				localControllerOptions: {
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+				},
+			})
+			window.pageController = window.frameBridgeHandle.controller
+
+			window.addEventListener('pagehide', function () {
+				window.frameBridgeHandle.dispose()
+			})
+		</script>
+	</body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Iframe bridge rejected parent origin</title>
+	</head>
+	<body>
+		<iframe
+			data-page-agent-bridge
+			title="Parent-rejecting IIFE child"
+			src="http://127.0.0.1:4174/iife-wrong-parent-child.html"
+		></iframe>
+		<script src="/page-agent/page-agent-frame-bridge.iife.min.js"></script>
+		<script>
+			window.frameBridgeHandle = window.PageAgentFrameBridge.createFrameAwareController({
+				frameSelector: 'iframe[data-page-agent-bridge]',
+				allowedChildOrigins: ['http://127.0.0.1:4174'],
+				handshakeTimeoutMs: 100,
+				localControllerOptions: { viewportExpansion: -1 },
+			})
+			window.pageController = window.frameBridgeHandle.controller
+		</script>
+	</body>
+</html>

@@ -39,6 +39,7 @@ export default defineConfig(() => ({
 			formats: ['iife'],
 		},
 		outDir: resolve(__dirname, 'dist', 'iife'),
+		emptyOutDir: false,
 		cssCodeSplit: true,
 		// minify: false,
 		rollupOptions: {

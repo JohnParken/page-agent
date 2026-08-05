@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Iframe bridge observe-only child</title>
+	</head>
+	<body>
+		<button id="observe-only-button">Observe-only button</button>
+		<script src="/controller-iife/page-agent-frame-host.iife.min.js"></script>
+		<script>
+			window.frameHostHandle = window.PageAgentFrameHost.startFrameBridge({
+				allowedParentOrigins: ['http://127.0.0.1:4173'],
+				controllerOptions: { viewportExpansion: -1, includeAttributes: ['id'] },
+			})
+			window.frameBridgeHost = window.frameHostHandle.host
+		</script>
+	</body>
+</html>

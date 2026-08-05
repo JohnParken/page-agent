@@ -56,8 +56,9 @@
     },
     "homepage": "https://alibaba.github.io/page-agent/",
     "scripts": {
-        "build": "vite build && tsup --config tsup.config.js && npm run build:demo",
+        "build": "vite build && tsup --config tsup.config.js && npm run build:demo && npm run build:iife",
         "build:demo": "vite build --config vite.iife.config.js",
+        "build:iife": "vite build --config vite.iframe-iife.config.js",
         "dev:demo": "node ../../scripts/dev-demo.js",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js"

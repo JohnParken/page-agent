@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Page Agent iframe bridge script 示例（父页面）</title>
+		<style>
+			body {
+				font-family: system-ui, sans-serif;
+				margin: 2rem;
+			}
+			iframe {
+				border: 2px solid #d97706;
+				height: 360px;
+				width: 100%;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>父页面 Bridge</h1>
+		<p>本页面运行于 <code>http://127.0.0.1:4173</code>。</p>
+		<button id="parent-button">父页面按钮</button>
+		<iframe
+			data-page-agent-bridge
+			src="http://127.0.0.1:4174/examples/iframe-bridge-script/child.html"
+			title="iframe bridge script 示例"
+			sandbox="allow-scripts allow-same-origin"
+		></iframe>
+
+		<script src="../../packages/page-agent/dist/iife/page-agent-frame-bridge.iife.min.js"></script>
+		<script>
+			if (!window.PageAgentFrameBridge) {
+				throw new Error('PageAgentFrameBridge is unavailable')
+			}
+
+			var bridge = window.PageAgentFrameBridge.createFrameAwareController({
+				frameSelector: 'iframe[data-page-agent-bridge]',
+				allowedChildOrigins: ['http://127.0.0.1:4174'],
+				localControllerOptions: {
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+				},
+			})
+
+			window.pageAgentFrameController = bridge.controller
+			window.addEventListener('pagehide', function () {
+				bridge.dispose()
+			})
+		</script>
+	</body>
+</html>

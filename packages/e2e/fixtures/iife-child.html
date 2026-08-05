@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Iframe bridge IIFE child</title>
+		<style>
+			#child-scroll { height: 80px; overflow-y: auto; }
+			#child-scroll-content { height: 500px; }
+			body { min-height: 1400px; }
+		</style>
+	</head>
+	<body>
+		<button id="child-button">Child button</button>
+		<p id="child-click-result">Not clicked</p>
+		<label>Child input <input id="child-input" /></label>
+		<label>
+			Child select
+			<select id="child-select">
+				<option value="basic">Basic</option>
+				<option value="pro">Pro</option>
+			</select>
+		</label>
+		<div id="child-scroll" data-scrollable aria-label="Child vertical area">
+			<div id="child-scroll-content">Scroll start<br />Scroll end</div>
+		</div>
+
+		<script src="/controller-iife/page-agent-frame-host.iife.min.js"></script>
+		<script>
+			if (!window.PageAgentFrameHost) throw new Error('PageAgentFrameHost is unavailable')
+
+			window.frameHostHandle = window.PageAgentFrameHost.startFrameBridge({
+				allowedParentOrigins: ['http://127.0.0.1:4173'],
+				capabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
+				controllerOptions: {
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+				},
+			})
+			window.frameBridgeHost = window.frameHostHandle.host
+
+			document.querySelector('#child-button').addEventListener('click', function (event) {
+				event.currentTarget.dataset.clicked = 'true'
+				document.querySelector('#child-click-result').textContent = 'Clicked'
+			})
+
+			window.addEventListener('pagehide', function () {
+				window.frameHostHandle.dispose()
+			})
+		</script>
+	</body>
+</html>

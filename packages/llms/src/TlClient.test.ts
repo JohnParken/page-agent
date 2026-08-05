@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import * as z from 'zod/v4'
 
 import { InvokeError, InvokeErrorTypes } from './errors'
@@ -130,6 +130,72 @@ describe('TlAiClient.invoke — request construction', () => {
 		expect(fetchMock.mock.calls[3][0]).toBe('http://localhost:8089/chatbbc/chat')
 		expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string).data.session_id).toBe('session_1')
 		expect(JSON.parse(fetchMock.mock.calls[3][1]!.body as string).data.session_id).toBe('session_2')
+	})
+})
+
+// ---------- Wire logging ----------
+
+describe('TlAiClient — wire logging', () => {
+	it('logs client send and receive packets with titles distinct from TlProxy', async () => {
+		const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+		const { client, fetchMock } = makeClient()
+		setupSession(fetchMock, 'logged-session')
+		const rawChatResponse = JSON.stringify({
+			tool_name: 'greet',
+			parameters: { name: 'logged' },
+		})
+		fetchMock.mockResolvedValueOnce(chatResponse(rawChatResponse))
+
+		try {
+			await client.invoke(
+				[{ role: 'user', content: 'show the wire packets' }],
+				{ greet: makeTool() },
+				signal
+			)
+
+			expect(infoSpy).toHaveBeenCalledTimes(4)
+			expect(infoSpy).toHaveBeenNthCalledWith(
+				1,
+				'[TlClient] 📤 INIT_SESSION request:',
+				expect.objectContaining({
+					url: 'http://localhost:8089/chatbbc/init_session',
+					method: 'POST',
+					body: expect.objectContaining({ requestId: expect.any(String) }),
+				})
+			)
+			expect(infoSpy).toHaveBeenNthCalledWith(
+				2,
+				'[TlClient] 📥 INIT_SESSION response:',
+				expect.objectContaining({
+					status: 200,
+					body: initSessionBody('logged-session'),
+				})
+			)
+			expect(infoSpy).toHaveBeenNthCalledWith(
+				3,
+				'[TlClient] 📤 CHAT request:',
+				expect.objectContaining({
+					url: 'http://localhost:8089/chatbbc/chat',
+					body: expect.objectContaining({
+						data: expect.objectContaining({
+							session_id: 'logged-session',
+							txt: 'user: show the wire packets',
+							stream: true,
+						}),
+					}),
+				})
+			)
+			expect(infoSpy).toHaveBeenNthCalledWith(
+				4,
+				'[TlClient] 📥 CHAT response:',
+				expect.objectContaining({ status: 200, body: rawChatResponse })
+			)
+			for (const [title] of infoSpy.mock.calls) {
+				expect(title).not.toContain('[TlProxy]')
+			}
+		} finally {
+			infoSpy.mockRestore()
+		}
 	})
 })
 

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Iframe bridge observe-only parent</title>
+	</head>
+	<body>
+		<iframe
+			data-page-agent-bridge
+			title="Observe-only IIFE child"
+			src="http://127.0.0.1:4174/iife-observe-child.html"
+		></iframe>
+		<script src="/page-agent/page-agent-frame-bridge.iife.min.js"></script>
+		<script>
+			window.frameBridgeHandle = window.PageAgentFrameBridge.createFrameAwareController({
+				frameSelector: 'iframe[data-page-agent-bridge]',
+				allowedChildOrigins: ['http://127.0.0.1:4174'],
+				localControllerOptions: { viewportExpansion: -1, includeAttributes: ['id'] },
+			})
+			window.pageController = window.frameBridgeHandle.controller
+		</script>
+	</body>
+</html>

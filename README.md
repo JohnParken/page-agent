@@ -84,7 +84,7 @@ await agent.execute('Click the login button')
 
 For more programmatic usage, see [📖 Documentations](https://alibaba.github.io/page-agent/docs/introduction/overview).
 
-For cooperative cross-origin iframe support, see the [iframe bridge integration guide](docs/cross-origin-iframe-bridge.md).
+For cooperative cross-origin iframe support, see the [iframe bridge integration guide](docs/cross-origin-iframe-bridge.md). A standalone classic-script/IIFE integration is also available in the [Chinese IIFE guide](docs/cross-origin-iframe-bridge-script.zh-CN.md).
 
 ### Cross-origin iframe in an existing test application
 
