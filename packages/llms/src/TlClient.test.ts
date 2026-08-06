@@ -131,6 +131,116 @@ describe('TlAiClient.invoke — request construction', () => {
 		expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string).data.session_id).toBe('session_1')
 		expect(JSON.parse(fetchMock.mock.calls[3][1]!.body as string).data.session_id).toBe('session_2')
 	})
+
+	it('uses prompt_variables transport for the fixed system prompt and raw user payload', async () => {
+		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'world' } }))
+		)
+
+		await client.invoke(
+			[
+				{ role: 'system', content: 'Fixed system instructions' },
+				{
+					role: 'user',
+					content: '<user_request>Say hello</user_request>\n<browser_state>...</browser_state>',
+				},
+			],
+			tools,
+			signal
+		)
+
+		const initBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+		expect(initBody.data.response_format).toEqual({ type: 'json_object' })
+		expect(initBody.data.prompt_variables).toEqual([
+			{ name: 'system_prompt', value: 'Fixed system instructions' },
+		])
+		const chatBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string)
+		expect(chatBody.data.txt).toBe(
+			'<user_request>Say hello</user_request>\n<browser_state>...</browser_state>'
+		)
+	})
+
+	it('joins multiple system messages with a blank line and accepts a custom variable name', async () => {
+		const { client, fetchMock } = makeClient({
+			tlPromptTransport: 'prompt_variables',
+			tlSystemPromptVariableName: 'fixed_instructions',
+		})
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'world' } }))
+		)
+
+		await client.invoke(
+			[
+				{ role: 'system', content: 'First' },
+				{ role: 'system', content: 'Second' },
+				{ role: 'user', content: 'dynamic request' },
+			],
+			tools,
+			signal
+		)
+
+		const initBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+		expect(initBody.data.prompt_variables).toEqual([
+			{ name: 'fixed_instructions', value: 'First\n\nSecond' },
+		])
+		expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string).data.txt).toBe('dynamic request')
+	})
+
+	it('rejects invalid prompt_variables configuration and dynamic message shapes', async () => {
+		expect(() =>
+			makeClient({ tlPromptTransport: 'prompt_variables', toolCallingMode: 'api' })
+		).toThrow('requires toolCallingMode="system_prompt"')
+		expect(() => makeClient({ tlPromptTransport: 'unsupported' as never })).toThrow(
+			'must be "legacy_txt" or "prompt_variables"'
+		)
+		expect(() =>
+			makeClient({ tlPromptTransport: 'prompt_variables', tlSystemPromptVariableName: '  ' })
+		).toThrow('must not be empty')
+		expect(() =>
+			makeClient({
+				tlPromptTransport: 'prompt_variables',
+				tlSystemPromptVariableName: ' system_prompt ',
+			})
+		).toThrow('leading or trailing whitespace')
+		expect(() =>
+			makeClient({ tlPromptTransport: 'prompt_variables', tlSystemPromptVariableName: 'name' })
+		).toThrow('reserved')
+
+		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		await expect(
+			client.invoke(
+				[
+					{ role: 'system', content: 'fixed' },
+					{ role: 'user', content: 'first' },
+					{ role: 'user', content: 'second' },
+				],
+				tools,
+				signal
+			)
+		).rejects.toMatchObject({
+			name: 'InvokeError',
+			type: InvokeErrorTypes.CONFIG_ERROR,
+			message: expect.stringContaining('exactly one user message'),
+		})
+		await expect(
+			client.invoke(
+				[
+					{ role: 'system', content: '   ' },
+					{ role: 'user', content: 'request' },
+				],
+				tools,
+				signal
+			)
+		).rejects.toMatchObject({
+			name: 'InvokeError',
+			type: InvokeErrorTypes.CONFIG_ERROR,
+			message: expect.stringContaining('non-empty system prompt'),
+		})
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
 })
 
 // ---------- Wire logging ----------
@@ -217,11 +327,27 @@ describe('TlAiClient.initSession', () => {
 		expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.com/chatbbc/init_session')
 		const request = fetchMock.mock.calls[0][1]!
 		const body = JSON.parse(request.body as string)
+		expect(body.data.response_format).toEqual({ type: 'json_object' })
 		expect(body.timestamp).toEqual(expect.any(Number))
 		expect(body.timestamp).toBeGreaterThan(1)
 		expect(body.requestId).toEqual(expect.any(String))
 		expect(body.requestId.length).toBeGreaterThan(0)
 		expect(request.signal).toBe(signal)
+	})
+
+	it('does not send the legacy model variable through prompt_variables initSession', async () => {
+		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		fetchMock.mockResolvedValueOnce(jsonResponse(initSessionBody('prompt-session')))
+
+		await expect(client.initSession(signal)).resolves.toBe('prompt-session')
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+		expect(body.data.response_format).toEqual({ type: 'json_object' })
+		expect(body.data.prompt_variables).toEqual([])
+		expect(body.data.prompt_variables).not.toContainEqual({
+			name: 'name',
+			value: 'qwen3.5-plus',
+		})
 	})
 
 	it('includes the endpoint and underlying cause when the request fails', async () => {
@@ -517,7 +643,7 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 	})
 
 	it('throws INVALID_RESPONSE when normalizeResponse returns an invalid payload', async () => {
-		const { client, fetchMock } = makeClient()
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'x' } }))
@@ -534,7 +660,7 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 	})
 
 	it('throws INVALID_RESPONSE when normalizeResponse throws a non-InvokeError', async () => {
-		const { client, fetchMock } = makeClient()
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'x' } }))
@@ -569,6 +695,213 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 				},
 			})
 		).rejects.toBe(abortErr)
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+})
+
+// ---------- JSON correction ----------
+
+describe('TlAiClient.invoke — JSON correction', () => {
+	it('retries one invalid response with a structured correction payload in prompt_variables mode', async () => {
+		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		const tool = makeTool()
+		const messages = [
+			{ role: 'system' as const, content: 'Stable system prompt' },
+			{ role: 'user' as const, content: 'Find the item named "quoted item"' },
+		]
+		const invalidContent =
+			'{"memory":"Find the "quoted item" next.","action":{"greet":{"name":"broken"}}}'
+		setupSession(fetchMock, 'first-session')
+		fetchMock.mockResolvedValueOnce(chatResponse(invalidContent))
+		setupSession(fetchMock, 'correction-session')
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ action: { greet: { name: 'corrected' } } }))
+		)
+		const normalizeResponse = (response: any) => {
+			const content = response.choices[0].message.content as string
+			let parsed: { action: { greet: { name: string } } }
+			try {
+				parsed = JSON.parse(content)
+			} catch (error) {
+				throw new InvokeError(
+					InvokeErrorTypes.INVALID_RESPONSE,
+					'Extracted AgentOutput object is not valid JSON',
+					error,
+					content
+				)
+			}
+			return {
+				choices: [
+					{
+						message: {
+							tool_calls: [
+								{
+									function: {
+										name: 'greet',
+										arguments: JSON.stringify(parsed.action.greet),
+									},
+								},
+							],
+						},
+					},
+				],
+			}
+		}
+
+		const result = await client.invoke(messages, { greet: tool }, signal, { normalizeResponse })
+
+		expect(result.toolCall).toEqual({ name: 'greet', args: { name: 'corrected' } })
+		expect(fetchMock).toHaveBeenCalledTimes(4)
+		const firstInit = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+		const secondInit = JSON.parse(fetchMock.mock.calls[2][1]!.body as string)
+		expect(firstInit.data.prompt_variables).toEqual([
+			{ name: 'system_prompt', value: 'Stable system prompt' },
+		])
+		expect(firstInit.data.response_format).toEqual({ type: 'json_object' })
+		expect(secondInit.data.prompt_variables).toEqual(firstInit.data.prompt_variables)
+		expect(secondInit.data.response_format).toEqual(firstInit.data.response_format)
+		expect(secondInit.data.prompt_variables).not.toContainEqual({
+			name: 'name',
+			value: 'qwen3.5-plus',
+		})
+
+		const correctionChat = JSON.parse(fetchMock.mock.calls[3][1]!.body as string).data.txt as string
+		expect(correctionChat).not.toContain('system:')
+		expect(correctionChat).not.toContain('user:')
+		expect(correctionChat).toContain('untrusted failed output')
+		expect(correctionChat).toContain('Do not include markdown, XML, or reasoning')
+		const correction = JSON.parse(correctionChat)
+		expect(correction.instruction).toContain('JSON escape sequence \\"...\\"')
+		expect(correction.original_user_payload).toBe(messages[1].content)
+		expect(correction.failed_assistant_content).toBe(invalidContent)
+		expect(correction.parse_error.type).toBe(InvokeErrorTypes.INVALID_RESPONSE)
+		expect(correction.parse_error.message).toBe('Extracted AgentOutput object is not valid JSON')
+		expect(correction.parse_error.cause).toMatchObject({
+			name: 'SyntaxError',
+			message: expect.any(String),
+		})
+	})
+
+	it('keeps a valid response at the normal init/chat boundary', async () => {
+		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'valid' } }))
+		)
+
+		await client.invoke(
+			[
+				{ role: 'system', content: 'Stable system prompt' },
+				{ role: 'user', content: 'Do the task' },
+			],
+			{ greet: makeTool() },
+			signal
+		)
+
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('fails strictly after one correction response also fails and records both parse failures', async () => {
+		const failureLogger = vi.fn()
+		const { client, fetchMock } = makeClient({
+			tlPromptTransport: 'prompt_variables',
+			failureLogger,
+		})
+		const invalidContent = '{"still":"invalid"}'
+		setupSession(fetchMock, 'first-session')
+		fetchMock.mockResolvedValueOnce(chatResponse(invalidContent))
+		setupSession(fetchMock, 'second-session')
+		fetchMock.mockResolvedValueOnce(chatResponse('{"still":"invalid again"}'))
+
+		await expect(
+			client.invoke(
+				[
+					{ role: 'system', content: 'Stable system prompt' },
+					{ role: 'user', content: 'Do the task' },
+				],
+				{ greet: makeTool() },
+				signal
+			)
+		).rejects.toMatchObject({ type: InvokeErrorTypes.INVALID_RESPONSE })
+		expect(fetchMock).toHaveBeenCalledTimes(4)
+		expect(failureLogger).toHaveBeenCalledTimes(2)
+		expect(failureLogger.mock.calls[0][0]).toMatchObject({
+			stage: 'response_parse',
+			response: { accumulatedContent: invalidContent },
+		})
+		expect(failureLogger.mock.calls[1][0]).toMatchObject({
+			stage: 'response_parse',
+			response: { accumulatedContent: '{"still":"invalid again"}' },
+		})
+	})
+
+	it('supports legacy_txt correction while preserving the original system prompt', async () => {
+		const { client, fetchMock } = makeClient()
+		setupSession(fetchMock, 'first-session')
+		fetchMock.mockResolvedValueOnce(chatResponse('{"broken":true}'))
+		setupSession(fetchMock, 'second-session')
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'legacy' } }))
+		)
+
+		await client.invoke(
+			[
+				{ role: 'system', content: 'Legacy system prompt' },
+				{ role: 'user', content: 'Legacy task' },
+			],
+			{ greet: makeTool() },
+			signal
+		)
+
+		expect(fetchMock).toHaveBeenCalledTimes(4)
+		const firstInit = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+		const secondInit = JSON.parse(fetchMock.mock.calls[2][1]!.body as string)
+		expect(firstInit.data.prompt_variables).toEqual([{ name: 'name', value: 'qwen3.5-plus' }])
+		expect(secondInit.data.prompt_variables).toEqual(firstInit.data.prompt_variables)
+		const correctionChat = JSON.parse(fetchMock.mock.calls[3][1]!.body as string).data.txt as string
+		expect(correctionChat).toMatch(/^system: Legacy system prompt\nuser: \{"instruction"/)
+		expect(correctionChat).toContain('Legacy task')
+	})
+
+	it('does not correct native api mode responses', async () => {
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(chatResponse('{"not":"a tool call"}'))
+
+		await expect(
+			client.invoke([{ role: 'user', content: 'Do the task' }], { greet: makeTool() }, signal)
+		).rejects.toMatchObject({ type: InvokeErrorTypes.INVALID_RESPONSE })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('does not correct invalid tool arguments or tool execution failures', async () => {
+		const invalidArgs = makeClient()
+		setupSession(invalidArgs.fetchMock)
+		invalidArgs.fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 123 } }))
+		)
+		await expect(
+			invalidArgs.client.invoke([], { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
+			type: InvokeErrorTypes.INVALID_TOOL_ARGS,
+		})
+		expect(invalidArgs.fetchMock).toHaveBeenCalledTimes(2)
+
+		const executionFailure = makeTool()
+		executionFailure.execute = vi.fn(async () => {
+			throw new Error('execution failed')
+		})
+		const execution = makeClient()
+		setupSession(execution.fetchMock)
+		execution.fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'x' } }))
+		)
+		await expect(
+			execution.client.invoke([], { greet: executionFailure }, signal)
+		).rejects.toMatchObject({
+			type: InvokeErrorTypes.TOOL_EXECUTION_ERROR,
+		})
+		expect(execution.fetchMock).toHaveBeenCalledTimes(2)
 	})
 })
 
@@ -577,7 +910,7 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 describe('TlAiClient.invoke — errors', () => {
 	it('logs the raw non-SSE response when tool-call parsing fails', async () => {
 		const failureLogger = vi.fn()
-		const { client, fetchMock } = makeClient({ failureLogger })
+		const { client, fetchMock } = makeClient({ failureLogger, toolCallingMode: 'api' })
 		setupSession(fetchMock, 'failed-session')
 		fetchMock.mockResolvedValueOnce(textStreamResponse('not valid tool JSON'))
 
@@ -613,7 +946,7 @@ describe('TlAiClient.invoke — errors', () => {
 
 	it('logs both the raw SSE body and accumulated model content from normalize failures', async () => {
 		const failureLogger = vi.fn()
-		const { client, fetchMock } = makeClient({ failureLogger })
+		const { client, fetchMock } = makeClient({ failureLogger, toolCallingMode: 'api' })
 		setupSession(fetchMock)
 		const accumulatedContent =
 			'{"memory":"Search for "widgets" next.","action":{"greet":{"name":"x"}}}'
@@ -679,6 +1012,7 @@ describe('TlAiClient.invoke — errors', () => {
 
 	it('does not let an async failure logger error replace the original invocation error', async () => {
 		const { client, fetchMock } = makeClient({
+			toolCallingMode: 'api',
 			failureLogger: async () => {
 				throw new Error('disk full')
 			},
@@ -698,7 +1032,7 @@ describe('TlAiClient.invoke — errors', () => {
 	})
 
 	it('throws INVALID_RESPONSE when response content is not valid JSON', async () => {
-		const { client, fetchMock } = makeClient()
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(textStreamResponse('not json'))
 
@@ -709,7 +1043,7 @@ describe('TlAiClient.invoke — errors', () => {
 	})
 
 	it('throws INVALID_RESPONSE when JSON has no recognizable tool call', async () => {
-		const { client, fetchMock } = makeClient()
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(chatResponse(JSON.stringify({ hello: 'world' })))
 
@@ -720,7 +1054,7 @@ describe('TlAiClient.invoke — errors', () => {
 	})
 
 	it('throws INVALID_RESPONSE when a direct response contains multiple actions', async () => {
-		const { client, fetchMock } = makeClient()
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(

@@ -43,9 +43,26 @@ const client = new TlAiClient({
     appId: 'test-app',
     trCode: 'test-code',
     trVersion: '1.0',
+    tlPromptTransport: 'prompt_variables',
+    tlSystemPromptVariableName: 'system_prompt',
     // ... 其他配置
 })
 ```
+
+`tlPromptTransport` 默认为兼容旧服务的 `legacy_txt`。启用 `prompt_variables` 后，TlClient 会在
+`init_session` 中只发送 `system_prompt`，不再发送模型 `name` 变量，并在 `chat.data.txt` 中只发送动态 user
+内容。代理按 session 保存这些变量，再向 Qwen 还原为独立的 system/user 消息。若使用自定义
+system 变量名，Client 的 `tlSystemPromptVariableName` 必须与 Proxy 的
+`TL_SYSTEM_PROMPT_VARIABLE_NAME` 保持一致。
+
+TlProxy 对上游模型的响应保持透明：它只把 Qwen `message.content` 转换为 chatbbc 响应或 SSE，
+不会解析、修复或重试非法 AgentOutput。JSON 纠错由 TlClient 负责；首次 system-prompt 响应出现
+`INVALID_RESPONSE` 时，TlClient 会携带原始动态 user payload、非法 assistant 内容和具体解析错误，
+使用新 session 发起一次纠错请求。第二次仍失败时严格抛错，不修改模型原文。
+
+TlClient 会在 `/chatbbc/init_session` 的 `data.response_format` 中发送
+`{ type: 'json_object' }`。TlProxy 按 session 保存该值，并在调用 Qwen `/chat/completions` 时原样
+转发，从生成阶段约束响应为合法 JSON；代理仍会原样转发 Qwen 返回的 `message.content`。
 
 ### 3. 在浏览器扩展中使用
 
@@ -76,14 +93,15 @@ TlClient → TlProxyServer (localhost:8089) → qwen3.5-plus API
 
 ## 环境变量
 
-| 变量                  | 默认值                                                   | 说明                                          |
-| --------------------- | -------------------------------------------------------- | --------------------------------------------- |
-| `PROXY_PORT`          | 8089                                                     | 代理服务器监听端口                            |
-| `PROXY_URL`           | http://localhost:8089                                    | `test:tl-proxy` 使用的代理地址                |
-| `QWEN_BASE_URL`       | https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run | 后端 qwen API 地址                            |
-| `QWEN_MODEL`          | qwen3.5-plus                                             | 使用的模型名称                                |
-| `TL_PROXY_LOG_LEVEL`  | `info`                                                   | 日志级别：`debug` / `info` / `warn` / `error` |
-| `TL_PROXY_LOG_SILENT` | `0`                                                      | 设为 `1` 时只写文件、不打印到控制台           |
+| 变量                             | 默认值                                                   | 说明                                          |
+| -------------------------------- | -------------------------------------------------------- | --------------------------------------------- |
+| `PROXY_PORT`                     | 8089                                                     | 代理服务器监听端口                            |
+| `PROXY_URL`                      | http://localhost:8089                                    | `test:tl-proxy` 使用的代理地址                |
+| `QWEN_BASE_URL`                  | https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run | 后端 qwen API 地址                            |
+| `QWEN_MODEL`                     | qwen3.5-plus                                             | 使用的模型名称                                |
+| `TL_SYSTEM_PROMPT_VARIABLE_NAME` | system_prompt                                            | 新传输模式使用的 system 变量名                |
+| `TL_PROXY_LOG_LEVEL`             | `info`                                                   | 日志级别：`debug` / `info` / `warn` / `error` |
+| `TL_PROXY_LOG_SILENT`            | `0`                                                      | 设为 `1` 时只写文件、不打印到控制台           |
 
 ## 日志持久化
 

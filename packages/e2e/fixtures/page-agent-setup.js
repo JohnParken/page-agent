@@ -17,35 +17,115 @@ async function fetchEnvConfig() {
 }
 
 /**
+ * Parse a maxRetries value without accepting partial numeric strings.
+ *
+ * @param {unknown} value - Candidate value from a query parameter or config source
+ * @param {string} source - Human-readable source name for validation errors
+ * @returns {number|undefined} A validated non-negative integer, or undefined when absent
+ */
+function parseMaxRetries(value, source) {
+	if (value === undefined || value === null) return undefined
+
+	if (typeof value !== 'string' && typeof value !== 'number') {
+		throw new Error(
+			`[PageAgent] maxRetries from ${source} must be a non-negative integer (for example, 0 or 1); received ${JSON.stringify(
+				value
+			)}.`
+		)
+	}
+
+	if (typeof value === 'string') {
+		if (value.length === 0 || !/^\d+$/.test(value)) {
+			throw new Error(
+				`[PageAgent] maxRetries from ${source} must be a non-negative integer (for example, 0 or 1); received ${JSON.stringify(
+					value
+				)}.`
+			)
+		}
+	}
+
+	const parsed = typeof value === 'number' ? value : Number(value)
+	if (!Number.isSafeInteger(parsed) || parsed < 0) {
+		throw new Error(
+			`[PageAgent] maxRetries from ${source} must be a non-negative integer (for example, 0 or 1); received ${JSON.stringify(
+				value
+			)}.`
+		)
+	}
+	return parsed
+}
+
+/**
+ * Resolve maxRetries in descending priority order.
+ *
+ * @param {URLSearchParams} params - Current page query parameters
+ * @param {object} envConfig - Values fetched from /api/env-config
+ * @param {object} buildConfig - Values embedded in the demo bundle
+ * @returns {number} A validated maxRetries value
+ */
+function resolveMaxRetries(params, envConfig, buildConfig) {
+	const queryValue = params.get('maxRetries')
+	if (queryValue !== null) return parseMaxRetries(queryValue, 'query parameter maxRetries') ?? 0
+
+	const envValue = envConfig.LLM_MAX_RETRIES
+	if (envValue !== undefined && envValue !== null && envValue !== '') {
+		return parseMaxRetries(envValue, 'LLM_MAX_RETRIES') ?? 0
+	}
+
+	const buildValue = buildConfig.maxRetries
+	if (buildValue !== undefined && buildValue !== null && buildValue !== '') {
+		return parseMaxRetries(buildValue, 'build config maxRetries') ?? 0
+	}
+
+	return 0
+}
+
+/**
  * Build LLM configuration from .env config and URL query parameters.
  *
  * Priority (highest to lowest):
  *   1. URL query parameters (provider, model, baseURL, apiKey, endpointAgent, etc.)
  *   2. .env file values (fetched from /api/env-config)
- *   3. Built-in defaults
+ *   3. Build-time values from `window.pageAgentDemoConfig`
+ *   4. Built-in defaults
+ *
+ * `maxRetries` follows the same order and defaults to 0. It is always passed
+ * to PageAgent as a validated number.
  *
  * Supported providers:
  *   - tlclient      → provider: 'tl' (Tl AI / chatbbc client)
- *   - openaiclient  → provider: 'openai' (OpenAI-compatible client, default)
+ *   - openaiclient/openai → provider: 'openai' (OpenAI-compatible client)
+ *
+ * Tl prompt transport is resolved independently from the provider connection:
+ * URL query parameters (`tlPromptTransport` / `tlSystemPromptVariableName`) take
+ * precedence over values exposed by `/api/env-config`, then the build-time
+ * `pageAgentDemoConfig`, and finally the backwards-compatible defaults.
  *
  * @param {object} envConfig - The env config object from /api/env-config
  * @returns {object} PageAgent configuration object
  */
-function queryConfig(envConfig = {}) {
+export function queryConfig(envConfig = {}) {
 	const params = new URLSearchParams(window.location.search)
 	const buildConfig = window.pageAgentDemoConfig || {}
+	const {
+		tlPromptTransport: buildTlPromptTransport,
+		tlSystemPromptVariableName: buildTlSystemPromptVariableName,
+		...buildConfigWithoutTlPromptTransport
+	} = buildConfig
 
-	// Determine provider: URL param > .env > built-in default
-	const provider = params.get('provider') || envConfig.LLM_PROVIDER || 'tlclient'
+	// Determine provider: URL param > .env > build-time config > built-in default.
+	const provider =
+		params.get('provider') || envConfig.LLM_PROVIDER || buildConfig.provider || 'tlclient'
 
 	const config = {
-		...buildConfig,
+		...buildConfigWithoutTlPromptTransport,
 		model: params.get('model') || envConfig.LLM_MODEL_NAME || buildConfig.model || 'qwen3.5-plus',
+		maxRetries: resolveMaxRetries(params, envConfig, buildConfig),
 		language: 'zh-CN',
 		experimentalScriptExecutionTool: true,
 	}
 
-	if (provider === 'openaiclient') {
+	if (provider === 'openaiclient' || provider === 'openai') {
 		config.provider = 'openai'
 		config.baseURL =
 			params.get('baseURL') ||
@@ -63,6 +143,16 @@ function queryConfig(envConfig = {}) {
 		config.trCode = params.get('trCode') || envConfig.TL_TR_CODE || undefined
 		config.trVersion = params.get('trVersion') || envConfig.TL_TR_VERSION || undefined
 		config.toolCallingMode = envConfig.TL_TOOL_CALLING_MODE || 'system_prompt'
+		config.tlPromptTransport =
+			params.get('tlPromptTransport') ||
+			envConfig.TL_PROMPT_TRANSPORT ||
+			buildTlPromptTransport ||
+			'legacy_txt'
+		config.tlSystemPromptVariableName =
+			params.get('tlSystemPromptVariableName') ||
+			envConfig.TL_SYSTEM_PROMPT_VARIABLE_NAME ||
+			buildTlSystemPromptVariableName ||
+			'system_prompt'
 	}
 
 	return config

@@ -35,8 +35,18 @@ interface ControllerHandle {
 
 type DemoWindow = Window & {
 	pageController?: ControllerHandle
+	pageAgentDemoConfig?: {
+		maxRetries?: unknown
+	}
 	pageAgent?: {
-		config: { provider?: string; toolCallingMode?: string; language?: string }
+		config: {
+			provider?: string
+			maxRetries?: number
+			toolCallingMode?: string
+			language?: string
+			tlPromptTransport?: string
+			tlSystemPromptVariableName?: string
+		}
 		status: string
 	}
 	frameBridgeHost?: unknown
@@ -120,8 +130,15 @@ async function cooperativeFrame(page: Page): Promise<Frame> {
 
 test.describe('cross-origin iframe bridge demo', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/host.html')
-		await expect(page).toHaveURL(`${hostOrigin}/host.html`)
+		// Keep this test independent from any developer-local .env values. The
+		// prompt transport is explicitly selected through the supported URL query
+		// parameters, while the manual demo can still resolve it from .env.
+		await page.goto(
+			'/host.html?maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt'
+		)
+		await expect(page).toHaveURL(
+			`${hostOrigin}/host.html?maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt`
+		)
 		await expect
 			.poll(() => page.evaluate(() => Boolean((window as DemoWindow).pageAgent)))
 			.toBe(true)
@@ -141,8 +158,11 @@ test.describe('cross-origin iframe bridge demo', () => {
 
 		expect(parentAgent).toMatchObject({
 			provider: 'tl',
+			maxRetries: 1,
 			toolCallingMode: 'system_prompt',
 			language: 'zh-CN',
+			tlPromptTransport: 'prompt_variables',
+			tlSystemPromptVariableName: 'system_prompt',
 		})
 		expect(await frame.evaluate(() => Boolean((window as DemoWindow).pageAgent))).toBe(false)
 		await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
@@ -155,10 +175,41 @@ test.describe('cross-origin iframe bridge demo', () => {
 		await expect(frame.getByText('子 iframe · 仅安装 iframe bridge')).toBeVisible()
 	})
 
+	test('rejects malformed maxRetries values instead of coercing them', async ({ page }) => {
+		const messages = await page.evaluate(async () => {
+			history.replaceState(null, '', '/host.html')
+			// The fixture server exposes this module at runtime; it is not part of the TypeScript project.
+			// @ts-expect-error The absolute fixture URL is resolved by the browser.
+			const { queryConfig } = await import('/page-agent-setup.js')
+			const originalBuildConfig = (window as DemoWindow).pageAgentDemoConfig
+			const invalidValues: unknown[] = ['1x', true, {}]
+			const result = invalidValues.map((maxRetries) => {
+				;(window as DemoWindow).pageAgentDemoConfig = { maxRetries }
+				try {
+					queryConfig({})
+					return 'no error'
+				} catch (error) {
+					return error instanceof Error ? error.message : String(error)
+				}
+			})
+			;(window as DemoWindow).pageAgentDemoConfig = originalBuildConfig
+			return result
+		})
+
+		expect(messages).toHaveLength(3)
+		expect(
+			messages.every(
+				(message) => message.includes('maxRetries') && message.includes('non-negative integer')
+			)
+		).toBe(true)
+	})
+
 	test('aggregates parent and child iframe controls into one browser state', async ({ page }) => {
 		const state = await controller(page)
 
-		expect(state.url).toBe(`${hostOrigin}/host.html`)
+		expect(state.url).toBe(
+			`${hostOrigin}/host.html?maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt`
+		)
 		expect(state.content).toContain('id=parent-button')
 		expect(state.content).toContain('id=child-button')
 		expect(state.content).toContain('子页面备注')
@@ -301,6 +352,22 @@ test.describe('standalone iframe bridge IIFE bundles', () => {
 		await expect
 			.poll(() => frame.evaluate(() => Boolean((window as DemoWindow).frameBridgeHost)))
 			.toBe(true)
+	})
+
+	test('reads script maxRetries as a number in the demo bundle', async ({ page }) => {
+		const result = await page.evaluate(async () => {
+			await new Promise<void>((resolve, reject) => {
+				const script = document.createElement('script')
+				script.src = '/page-agent/page-agent.demo.js?autoInit=false&maxRetries=2'
+				script.onload = () => resolve()
+				script.onerror = () => reject(new Error('Failed to load page-agent demo bundle'))
+				document.head.appendChild(script)
+			})
+			const maxRetries = (window as DemoWindow).pageAgentDemoConfig?.maxRetries
+			return { maxRetries, type: typeof maxRetries }
+		})
+
+		expect(result).toEqual({ maxRetries: 2, type: 'number' })
 	})
 
 	test('loads both globals through classic scripts', async ({ page }) => {

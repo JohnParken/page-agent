@@ -147,12 +147,18 @@ repository-root [`.env`](.env), not from `test-page.html`:
 LLM_PROVIDER=tl
 LLM_ENDPOINT_AGENT=localhost:8089
 LLM_MODEL_NAME=qwen3.5-plus
+LLM_MAX_RETRIES=1
 LLM_TOOL_CALLING_MODE=system_prompt
+TL_PROMPT_TRANSPORT=prompt_variables
+TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt
 ```
 
 Only `LLM_PROVIDER`, `LLM_ENDPOINT_AGENT`, and `LLM_MODEL_NAME` are required by PageAgent. Whether
 `LLM_APP_ID`, `LLM_TR_CODE`, and `LLM_TR_VERSION` must contain values depends on the target Tl service.
 `LLM_BASE_URL` and `LLM_API_KEY` are OpenAI-provider settings and are not used by the built-in `TlAiClient`.
+The optional `TL_PROMPT_TRANSPORT` and `TL_SYSTEM_PROMPT_VARIABLE_NAME` values select how the demo
+separates its fixed system prompt from the dynamic user payload. `LLM_MAX_RETRIES` is a non-negative
+integer and defaults to `0`; setting it to `1` retries one transient or malformed model response.
 
 `packages/page-agent/vite.iife.config.js` loads this file and injects these values into the demo bundle at
 **build time**. Restart `npm run dev:demo` after changing `.env`. These values are bundled into browser
@@ -167,25 +173,28 @@ npm run start:tl-proxy -w @page-agent/llms
 The demo resolves Tl configuration in this order, from highest to lowest priority:
 
 1. Query parameters on `page-agent.demo.js`
-2. Build-time `LLM_*` environment variables loaded from the root `.env`
+2. Build-time `LLM_*` / `TL_*` environment variables loaded from the root `.env`
 3. Demo defaults (`provider=tl`, `toolCallingMode=system_prompt`, `model=qwen3.5-plus`, `endpointAgent=http://127.0.0.1:8089`); override the endpoint with `LLM_ENDPOINT_AGENT` at build time or `endpointAgent` in the script query
 
 All supported demo configuration values are:
 
-| PageAgent option  | Build variable          | Script query parameter | Required for Tl | Notes                                     |
-| ----------------- | ----------------------- | ---------------------- | --------------- | ----------------------------------------- |
-| `provider`        | `LLM_PROVIDER`          | `provider`             | Yes             | Set to `tl`                               |
-| `endpointAgent`   | `LLM_ENDPOINT_AGENT`    | `endpointAgent`        | Yes             | Host or full HTTP(S) URL                  |
-| `model`           | `LLM_MODEL_NAME`        | `model`                | Yes             | Tl prompt/model name                      |
-| `appId`           | `LLM_APP_ID`            | `appId`                | No              | Defaults to an empty string               |
-| `trCode`          | `LLM_TR_CODE`           | `trCode`               | No              | Defaults to an empty string               |
-| `trVersion`       | `LLM_TR_VERSION`        | `trVersion`            | No              | Defaults to an empty string               |
-| `toolCallingMode` | `LLM_TOOL_CALLING_MODE` | `toolCallingMode`      | No              | `system_prompt` (default for Tl) or `api` |
+| PageAgent option             | Build variable                   | Script query parameter       | Required for Tl | Notes                                                       |
+| ---------------------------- | -------------------------------- | ---------------------------- | --------------- | ----------------------------------------------------------- |
+| `provider`                   | `LLM_PROVIDER`                   | `provider`                   | Yes             | Set to `tl`                                                 |
+| `endpointAgent`              | `LLM_ENDPOINT_AGENT`             | `endpointAgent`              | Yes             | Host or full HTTP(S) URL                                    |
+| `model`                      | `LLM_MODEL_NAME`                 | `model`                      | Yes             | Tl prompt/model name                                        |
+| `maxRetries`                 | `LLM_MAX_RETRIES`                | `maxRetries`                 | No              | Non-negative integer; defaults to `0`                       |
+| `appId`                      | `LLM_APP_ID`                     | `appId`                      | No              | Defaults to an empty string                                 |
+| `trCode`                     | `LLM_TR_CODE`                    | `trCode`                     | No              | Defaults to an empty string                                 |
+| `trVersion`                  | `LLM_TR_VERSION`                 | `trVersion`                  | No              | Defaults to an empty string                                 |
+| `toolCallingMode`            | `LLM_TOOL_CALLING_MODE`          | `toolCallingMode`            | No              | `system_prompt` (default for Tl) or `api`                   |
+| `tlPromptTransport`          | `TL_PROMPT_TRANSPORT`            | `tlPromptTransport`          | No              | `legacy_txt` (default) or `prompt_variables`                |
+| `tlSystemPromptVariableName` | `TL_SYSTEM_PROMPT_VARIABLE_NAME` | `tlSystemPromptVariableName` | No              | Defaults to `system_prompt`; must match the Tl template key |
 
 For example, a demo script can override the build-time settings without editing `.env`:
 
 ```html
-<script src="/page-agent.demo.js?provider=tl&endpointAgent=https%3A%2F%2Ftl.example.com&model=my-model&toolCallingMode=system_prompt"></script>
+<script src="/page-agent.demo.js?provider=tl&endpointAgent=https%3A%2F%2Ftl.example.com&model=my-model&maxRetries=1&toolCallingMode=system_prompt&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt"></script>
 ```
 
 For an npm production deployment, configure `PageAgent` at runtime. This is preferred because it does not
@@ -198,12 +207,25 @@ const agent = new PageAgent({
     provider: 'tl',
     endpointAgent: 'https://tl.example.com',
     model: 'my-production-model',
+    maxRetries: 1,
     appId: 'my-app',
     trCode: 'my-transaction',
     trVersion: '1.0',
     toolCallingMode: 'system_prompt',
+    tlPromptTransport: 'prompt_variables',
+    tlSystemPromptVariableName: 'system_prompt',
 })
 ```
+
+`tlPromptTransport` defaults to `legacy_txt`, which keeps the historical `system:` / `user:`
+payload in `chat.data.txt`. Set it to `prompt_variables` only after the Tl prompt template or gateway
+has been updated: the client then sends the complete system message through
+`init_session.data.prompt_variables` and reserves `chat.data.txt` for the single dynamic user payload.
+The system variable name defaults to `system_prompt` and must match the Tl template exactly.
+In this mode the client sends only the configured system variable; it does not add a `name` model
+variable. If a system-prompt response is invalid JSON, TlClient makes one fresh-session correction request
+with the original user payload, failed assistant content, and parser error. The proxy remains a transparent
+transport and never mutates the model response.
 
 If production uses a prebuilt IIFE bundle, provide `LLM_*` variables while building it:
 
@@ -211,10 +233,13 @@ If production uses a prebuilt IIFE bundle, provide `LLM_*` variables while build
 LLM_PROVIDER=tl \
 LLM_ENDPOINT_AGENT=https://tl.example.com \
 LLM_MODEL_NAME=my-production-model \
+LLM_MAX_RETRIES=1 \
 LLM_APP_ID=my-app \
 LLM_TR_CODE=my-transaction \
 LLM_TR_VERSION=1.0 \
 LLM_TOOL_CALLING_MODE=system_prompt \
+TL_PROMPT_TRANSPORT=prompt_variables \
+TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt \
 npm run build:demo -w page-agent
 ```
 

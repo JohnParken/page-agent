@@ -1,7 +1,7 @@
 /**
  * IIFE demo entry - auto-initializes with built-in demo API for testing
  */
-import { PageAgent, type PageAgentConfig } from './PageAgent'
+import { PageAgent, type PageAgentConfig, type TlPromptTransport } from './PageAgent'
 
 declare global {
 	interface Window {
@@ -27,10 +27,68 @@ const DEMO_MODEL = 'qwen3.5-plus'
 const DEMO_BASE_URL = 'https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run'
 const DEMO_API_KEY = 'NA'
 const DEMO_TL_ENDPOINT_AGENT = 'http://127.0.0.1:8089'
+const DEMO_TL_PROMPT_TRANSPORT: TlPromptTransport = 'legacy_txt'
+const DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME = 'system_prompt'
+
+/**
+ * Parse a maxRetries value without accepting partial numeric strings.
+ */
+function parseMaxRetries(value: unknown, source: string): number | undefined {
+	if (value === undefined || value === null) return undefined
+
+	if (typeof value !== 'string' && typeof value !== 'number') {
+		throw new Error(
+			`[PageAgent] maxRetries from ${source} must be a non-negative integer (for example, 0 or 1); received ${JSON.stringify(
+				value
+			)}.`
+		)
+	}
+
+	if (typeof value === 'string' && (value.length === 0 || !/^\d+$/.test(value))) {
+		throw new Error(
+			`[PageAgent] maxRetries from ${source} must be a non-negative integer (for example, 0 or 1); received ${JSON.stringify(
+				value
+			)}.`
+		)
+	}
+
+	const parsed = typeof value === 'number' ? value : Number(value)
+	if (!Number.isSafeInteger(parsed) || parsed < 0) {
+		throw new Error(
+			`[PageAgent] maxRetries from ${source} must be a non-negative integer (for example, 0 or 1); received ${JSON.stringify(
+				value
+			)}.`
+		)
+	}
+	return parsed
+}
+
+/**
+ * Resolve maxRetries in descending priority order.
+ */
+function resolveMaxRetries(
+	queryValue: string | null,
+	envValue: unknown,
+	buildValue?: unknown
+): number {
+	if (queryValue !== null) return parseMaxRetries(queryValue, 'query parameter maxRetries') ?? 0
+
+	const parsedEnv = parseMaxRetries(envValue, 'LLM_MAX_RETRIES')
+	if (parsedEnv !== undefined) return parsedEnv
+
+	const parsedBuild = parseMaxRetries(buildValue, 'build config maxRetries')
+	return parsedBuild ?? 0
+}
+
+const initialMaxRetries = resolveMaxRetries(
+	currentScriptURL?.searchParams.get('maxRetries') ?? null,
+	import.meta.env.LLM_MAX_RETRIES
+)
 
 window.pageAgentDemoConfig = {
 	provider: (import.meta.env.LLM_PROVIDER as 'openai' | 'tl' | 'ds') || 'tl',
 	model: import.meta.env.LLM_MODEL_NAME || DEMO_MODEL,
+	maxRetries: initialMaxRetries,
 	baseURL: import.meta.env.LLM_BASE_URL || DEMO_BASE_URL,
 	apiKey: import.meta.env.LLM_API_KEY || DEMO_API_KEY,
 	endpointAgent: import.meta.env.LLM_ENDPOINT_AGENT || DEMO_TL_ENDPOINT_AGENT,
@@ -38,6 +96,11 @@ window.pageAgentDemoConfig = {
 	trCode: import.meta.env.LLM_TR_CODE || undefined,
 	trVersion: import.meta.env.LLM_TR_VERSION || undefined,
 	toolCallingMode: 'system_prompt',
+	tlPromptTransport:
+		(import.meta.env.TL_PROMPT_TRANSPORT as TlPromptTransport | undefined) ||
+		DEMO_TL_PROMPT_TRANSPORT,
+	tlSystemPromptVariableName:
+		import.meta.env.TL_SYSTEM_PROMPT_VARIABLE_NAME || DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME,
 }
 
 // in case document.x is not ready yet
@@ -53,6 +116,11 @@ if (autoInit) {
 				(import.meta.env.LLM_PROVIDER as 'openai' | 'tl' | 'ds') ||
 				'tl'
 			const model = url.searchParams.get('model') || import.meta.env.LLM_MODEL_NAME || DEMO_MODEL
+			const maxRetries = resolveMaxRetries(
+				url.searchParams.get('maxRetries'),
+				import.meta.env.LLM_MAX_RETRIES,
+				window.pageAgentDemoConfig?.maxRetries
+			)
 			const baseURL =
 				url.searchParams.get('baseURL') || import.meta.env.LLM_BASE_URL || DEMO_BASE_URL
 			const apiKey = url.searchParams.get('apiKey') || import.meta.env.LLM_API_KEY || DEMO_API_KEY
@@ -68,6 +136,14 @@ if (autoInit) {
 				(url.searchParams.get('toolCallingMode') as 'api' | 'system_prompt') ||
 				(import.meta.env.LLM_TOOL_CALLING_MODE as 'api' | 'system_prompt') ||
 				'system_prompt'
+			const tlPromptTransport =
+				(url.searchParams.get('tlPromptTransport') as TlPromptTransport | null) ??
+				(import.meta.env.TL_PROMPT_TRANSPORT as TlPromptTransport | undefined) ??
+				DEMO_TL_PROMPT_TRANSPORT
+			const tlSystemPromptVariableName =
+				url.searchParams.get('tlSystemPromptVariableName') ??
+				import.meta.env.TL_SYSTEM_PROMPT_VARIABLE_NAME ??
+				DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME
 			const language = (url.searchParams.get('lang') as 'zh-CN' | 'en-US') || 'zh-CN'
 			showPanel = ((url.searchParams.get('showPanel') as 'true' | 'false') || 'true') === 'true'
 			const experimentalScriptExecutionTool =
@@ -77,6 +153,7 @@ if (autoInit) {
 			config = {
 				provider,
 				model,
+				maxRetries,
 				baseURL,
 				apiKey,
 				endpointAgent,
@@ -84,6 +161,8 @@ if (autoInit) {
 				trCode,
 				trVersion,
 				toolCallingMode,
+				tlPromptTransport,
+				tlSystemPromptVariableName,
 				language,
 				experimentalScriptExecutionTool: experimentalScriptExecutionTool === 'true',
 			}
@@ -92,6 +171,7 @@ if (autoInit) {
 			config = {
 				provider: (import.meta.env.LLM_PROVIDER as 'openai' | 'tl' | 'ds') || 'tl',
 				model: import.meta.env.LLM_MODEL_NAME ? import.meta.env.LLM_MODEL_NAME : DEMO_MODEL,
+				maxRetries: initialMaxRetries,
 				baseURL: import.meta.env.LLM_BASE_URL ? import.meta.env.LLM_BASE_URL : DEMO_BASE_URL,
 				apiKey: import.meta.env.LLM_API_KEY ? import.meta.env.LLM_API_KEY : DEMO_API_KEY,
 				endpointAgent: import.meta.env.LLM_ENDPOINT_AGENT || DEMO_TL_ENDPOINT_AGENT,
@@ -99,6 +179,11 @@ if (autoInit) {
 				trCode: import.meta.env.LLM_TR_CODE || undefined,
 				trVersion: import.meta.env.LLM_TR_VERSION || undefined,
 				toolCallingMode: 'system_prompt',
+				tlPromptTransport:
+					(import.meta.env.TL_PROMPT_TRANSPORT as TlPromptTransport | undefined) ||
+					DEMO_TL_PROMPT_TRANSPORT,
+				tlSystemPromptVariableName:
+					import.meta.env.TL_SYSTEM_PROMPT_VARIABLE_NAME || DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME,
 				experimentalScriptExecutionTool:
 					((import.meta.env.EXPERIMENTAL_SCRIPT_EXECUTION_TOOL as 'true' | 'false' | undefined) ??
 						'true') === 'true',

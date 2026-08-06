@@ -317,7 +317,21 @@ npm run demo:iframe-bridge
 
 页面用蓝色标记父页面区域、橙色粗边框标记子 iframe。父页面和子页面均提供点击、文本输入、下拉选择及纵横向滚动目标，便于通过父页面 PageAgent 测试本地与桥接操作。可在 DevTools 的 Console/Network 中查看 iframe 的实际 origin、CSP 和加载错误；不要把 Demo 的本地 allow-list 直接复制到生产环境。
 
-该中文 Demo 只在父页面安装 PageAgent，子页面仅安装 `PageController + FrameBridgeHost`，不会创建 Agent 或调用 LLM。父页面 PageAgent 默认使用内置 `TlAiClient` 的 `system_prompt` 模式，默认 endpoint 为 `http://127.0.0.1:8089`；使用本地 Tl 代理时，需另开终端运行 `npm run start:tl-proxy -w @page-agent/llms`。也可在仓库根目录 `.env` 中用 `LLM_ENDPOINT_AGENT` 和 `LLM_MODEL_NAME` 覆盖默认配置。`execute_javascript` 只在父页面本地执行，父页面不能通过 bridge 在子页面执行脚本。
+该中文 Demo 只在父页面安装 PageAgent，子页面仅安装 `PageController + FrameBridgeHost`，不会创建 Agent 或调用 LLM。父页面 PageAgent 默认使用内置 `TlAiClient` 的 `system_prompt` 模式，默认 endpoint 为 `http://127.0.0.1:8089`；使用本地 Tl 代理时，需另开终端运行 `npm run start:tl-proxy -w @page-agent/llms`。`execute_javascript` 只在父页面本地执行，父页面不能通过 bridge 在子页面执行脚本。
+
+`npm run demo:iframe-bridge` 会在启动时读取仓库根目录 `.env`。可用以下配置覆盖 Tl 连接并启用新的 system prompt 变量传输：
+
+```dotenv
+LLM_PROVIDER=tlclient
+LLM_MODEL_NAME=qwen3.5-plus
+LLM_MAX_RETRIES=1
+TL_ENDPOINT_AGENT=http://127.0.0.1:8089
+TL_TOOL_CALLING_MODE=system_prompt
+TL_PROMPT_TRANSPORT=prompt_variables
+TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt
+```
+
+其中 `TL_PROMPT_TRANSPORT` 未配置时仍默认为 `legacy_txt`；设为 `prompt_variables` 后，`TL_SYSTEM_PROMPT_VARIABLE_NAME` 必须与 Tl 模板和 TlProxy 配置的变量名完全一致。`LLM_MAX_RETRIES` 必须是非负整数，设为 `1` 时会对偶发的网络错误或模型格式错误重试一次。页面 URL 上的 `maxRetries`、`tlPromptTransport` 和 `tlSystemPromptVariableName` 查询参数可临时覆盖 `.env`，方便联调。
 
 ## 10. 常见错误排查
 

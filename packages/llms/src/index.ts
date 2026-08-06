@@ -15,6 +15,7 @@ import type {
 	TlFailureLogEntry,
 	TlFailureLogger,
 	TlFailureStage,
+	TlPromptTransport,
 	Tool,
 } from './types'
 
@@ -29,6 +30,7 @@ export type {
 	TlFailureLogEntry,
 	TlFailureLogger,
 	TlFailureStage,
+	TlPromptTransport,
 	Tool,
 	TlAiConfig,
 }
@@ -54,6 +56,8 @@ export class LLM extends EventTarget {
 				trCode: config.trCode,
 				trVersion: config.trVersion,
 				toolCallingMode: config.toolCallingMode,
+				tlPromptTransport: config.tlPromptTransport,
+				tlSystemPromptVariableName: config.tlSystemPromptVariableName,
 				failureLogger: config.tlFailureLogger,
 				customFetch: config.customFetch,
 			})

@@ -16,13 +16,13 @@ const pageAgentDistDirectory = resolve(currentDirectory, '../page-agent/dist/iif
 dotenvConfig({ path: resolve(projectRoot, '.env') })
 
 /**
- * LLM configuration env vars, exposed to the browser via /api/env-config.
- * Prefix with PUBLIC_LLM_ to keep them separate from other env vars.
+ * Explicitly allow-listed demo configuration exposed through /api/env-config.
  */
 function getEnvConfig() {
 	return {
 		LLM_PROVIDER: process.env.LLM_PROVIDER || 'tlclient',
 		LLM_MODEL_NAME: process.env.LLM_MODEL_NAME || 'qwen3.5-plus',
+		LLM_MAX_RETRIES: process.env.LLM_MAX_RETRIES || '',
 		OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || '',
 		OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
 		TL_ENDPOINT_AGENT: process.env.TL_ENDPOINT_AGENT || 'localhost:8089',
@@ -30,6 +30,8 @@ function getEnvConfig() {
 		TL_TR_CODE: process.env.TL_TR_CODE || '',
 		TL_TR_VERSION: process.env.TL_TR_VERSION || '',
 		TL_TOOL_CALLING_MODE: process.env.TL_TOOL_CALLING_MODE || 'system_prompt',
+		TL_PROMPT_TRANSPORT: process.env.TL_PROMPT_TRANSPORT || 'legacy_txt',
+		TL_SYSTEM_PROMPT_VARIABLE_NAME: process.env.TL_SYSTEM_PROMPT_VARIABLE_NAME || 'system_prompt',
 	}
 }
 

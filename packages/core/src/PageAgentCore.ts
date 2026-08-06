@@ -492,12 +492,15 @@ export class PageAgentCore<
 		const outputContract = usesSystemPromptTools
 			? this.#buildSystemPromptOutputContract()
 			: this.#buildNativeToolOutputContract()
+		const quotationExample = usesSystemPromptTools ? this.#buildQuotationExample() : ''
 
 		if (this.config.customSystemPrompt) {
 			// Native API mode already carries the AgentOutput schema in the tools request.
-			// System-prompt mode must append the canonical schema even for custom prompts.
+			// System-prompt mode must append the quotation example and canonical schema
+			// even for custom prompts. Keep the output contract last so no later prose
+			// weakens the JSON format requirements.
 			return usesSystemPromptTools
-				? `${this.config.customSystemPrompt}\n\n${outputContract}`
+				? `${this.config.customSystemPrompt}\n\n${quotationExample}\n\n${outputContract}`
 				: this.config.customSystemPrompt
 		}
 
@@ -506,10 +509,22 @@ export class PageAgentCore<
 			/Default working language: \*\*.*?\*\*/,
 			`Default working language: **${targetLanguage}**`
 		)
-		return `${systemPrompt}\n\n${SYSTEM_PROMPT_TOOLS.replace(
-			'<!-- output-contract -->',
-			outputContract
-		)}`
+		const macroToolPrompt = SYSTEM_PROMPT_TOOLS.replace(
+			'<!-- quotation-example -->',
+			quotationExample
+		)
+		return `${systemPrompt}\n\n${macroToolPrompt}\n\n${outputContract}`
+	}
+
+	/** Build a parseable example that distinguishes JSON delimiters from quotations in reflection text. */
+	#buildQuotationExample(): string {
+		return `<quotation_example>
+The following object is a valid JSON example for quotation handling only. For real steps, always select an
+action and parameters from the current AgentOutput schema.
+{"evaluation_previous_goal":"页面显示\\"父页面异步内容已加载\\"，判定：成功","memory":"已确认姓名为\\"张三\\"","next_goal":"等待\\"提交\\"按钮变为可用","action":{"wait":{"seconds":1}}}
+JSON keys and string boundaries use ASCII double quotes. ASCII double quotes around page text, labels,
+names, and other human-readable content inside reflection strings use the JSON escape sequence \\"...\\".
+</quotation_example>`
 	}
 
 	/**
@@ -534,6 +549,13 @@ This example demonstrates the JSON envelope only; the current schema remains aut
 Return exactly one raw JSON object matching the schema below. The object itself is the complete AgentOutput
 input. Do not wrap it in AgentOutput, tool_call, function, name/arguments, XML, markdown, or explanatory
 text. Do not call an inner action as a top-level tool.
+Use valid JSON double quotes for every key and string boundary, and escape quotes and newlines inside
+strings. Do not emit trailing commas, comments, single-quoted strings, NaN, markdown fences, XML, or
+reasoning outside the canonical output.
+In evaluation_previous_goal, memory, and next_goal, use JSON-escaped ASCII double quotes \\"...\\" when
+quoting page text, labels, names, or other human-readable content. Never place an unescaped ASCII double
+quote inside a JSON string. After JSON parsing, these escaped sequences become ordinary ASCII quotes in
+the field value.
 ${deepSeekJsonGuidance}
 
 <agent_output_schema>

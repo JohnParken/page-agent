@@ -35,6 +35,10 @@ function agentResponse(args: unknown): Response {
 
 function tlSseAgentResponse(args: unknown): Response {
 	const content = JSON.stringify(args)
+	return tlSseContentResponse(content)
+}
+
+function tlSseContentResponse(content: string): Response {
 	const splitAt = Math.ceil(content.length / 2)
 	const events = [content.slice(0, splitAt), content.slice(splitAt)]
 		.map(
@@ -52,6 +56,13 @@ function extractAgentOutputSchema(prompt: string): unknown {
 	const match = /<agent_output_schema>\s*([\s\S]*?)\s*<\/agent_output_schema>/.exec(prompt)
 	if (!match?.[1]) throw new Error('AgentOutput schema was not found in prompt')
 	return JSON.parse(match[1])
+}
+
+function extractQuotationExample(prompt: string): Record<string, unknown> {
+	const section = /<quotation_example>\s*([\s\S]*?)\s*<\/quotation_example>/.exec(prompt)?.[1]
+	const example = section?.split('\n').find((line) => line.trim().startsWith('{'))
+	if (!example) throw new Error('Quotation example was not found in prompt')
+	return JSON.parse(example)
 }
 
 /** OpenAI-compatible SSE stream whose delta.content carries the AgentOutput JSON. */
@@ -414,6 +425,7 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			expect(tlSchema).toEqual(nativeSchema)
 			expect(tlSchema).toMatchObject({ required: ['action'] })
 			expect(tlBody.data.txt.match(/<output_contract\b/g)).toHaveLength(1)
+			expect(tlBody.data.txt).toContain('use JSON-escaped ASCII double quotes \\"...\\"')
 			expect(tlBody.data.txt).not.toContain('"tool_name"')
 		})
 
@@ -507,10 +519,143 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 
 			expect(chatUrl).toContain('/chatbbc/chat')
 			expect(chatText).toContain('custom system prompt')
+			expect(chatText).toContain('<quotation_example>')
 			expect(chatText).toContain('<output_contract mode="system_prompt">')
 			expect(chatText).toContain('<agent_output_schema>')
+			expect(chatText).toContain('use JSON-escaped ASCII double quotes \\"...\\"')
 			expect(chatText).toContain('"done"')
 			expect(chatText).not.toContain('<tools>')
+		})
+
+		it('keeps system prompt variables separate from dynamic user state across Tl steps', async () => {
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'first-session' } }))
+				)
+				.mockResolvedValueOnce(
+					tlSseAgentResponse({
+						action: { record_observation: { value: 'first observation' } },
+					})
+				)
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'second-session' } }))
+				)
+				.mockResolvedValueOnce(
+					tlSseAgentResponse({ action: { done: { text: 'all done', success: true } } })
+				)
+
+			const agent = createAgent(fetchMock, {
+				provider: 'tl',
+				endpointAgent: 'localhost:8089',
+				customSystemPrompt: undefined,
+				tlPromptTransport: 'prompt_variables',
+				customTools: {
+					record_observation: tool({
+						description: 'Record an observation before completing the task.',
+						inputSchema: z.object({ value: z.string() }),
+						execute: async (input) => `Recorded observation: ${input.value}`,
+					}),
+				},
+			})
+
+			const result = await agent.execute('two step task')
+
+			expect(result).toMatchObject({ success: true, data: 'all done' })
+			expect(fetchMock).toHaveBeenCalledTimes(4)
+
+			const initBodies = [0, 2].map(
+				(callIndex) =>
+					JSON.parse(fetchMock.mock.calls[callIndex][1]!.body as string) as {
+						data: { prompt_variables: { name: string; value: string }[] }
+					}
+			)
+			const firstPromptVariables = initBodies[0].data.prompt_variables
+			const secondPromptVariables = initBodies[1].data.prompt_variables
+
+			expect(firstPromptVariables.map(({ name }) => name)).toEqual(['system_prompt'])
+			const firstSystemPrompt = firstPromptVariables[0].value
+			expect(firstSystemPrompt).toContain('<agent_output_schema>')
+			expect(firstSystemPrompt).toContain('record_observation')
+			expect(firstSystemPrompt).toContain('use JSON-escaped ASCII double quotes \\"...\\"')
+			expect(firstSystemPrompt).toContain('页面显示\\"父页面异步内容已加载\\"')
+			expect(extractQuotationExample(firstSystemPrompt)).toMatchObject({
+				evaluation_previous_goal: '页面显示"父页面异步内容已加载"，判定：成功',
+				memory: '已确认姓名为"张三"',
+				next_goal: '等待"提交"按钮变为可用',
+				action: { wait: { seconds: 1 } },
+			})
+			expect(firstSystemPrompt.indexOf('<quotation_example>')).toBeLessThan(
+				firstSystemPrompt.indexOf('<output_contract mode="system_prompt">')
+			)
+			expect(firstSystemPrompt.trim().endsWith('</output_contract>')).toBe(true)
+			expect(secondPromptVariables).toEqual(firstPromptVariables)
+
+			const chatTexts = [1, 3].map((callIndex) => {
+				const body = JSON.parse(fetchMock.mock.calls[callIndex][1]!.body as string) as {
+					data: { txt: string }
+				}
+				return body.data.txt
+			})
+
+			for (const chatText of chatTexts) {
+				expect(chatText).not.toMatch(/(?:^|\n)(?:system|user):/)
+				expect(chatText).not.toContain('<agent_output_schema>')
+				expect(chatText).toContain('<user_request>')
+				expect(chatText).toContain('<browser_state>')
+			}
+			expect(chatTexts[0]).toContain('two step task')
+			expect(chatTexts[1]).toContain('<step_1>')
+			expect(chatTexts[1]).toContain('Recorded observation: first observation')
+		})
+
+		it('corrects malformed reflection quotes through a fresh Tl session', async () => {
+			const malformedContent =
+				'{"evaluation_previous_goal":"异步内容已加载（显示"父页面异步内容已加载"）。Verdict: 成功","memory":"继续操作","next_goal":"点击按钮","action":{"done":{"text":"finished","success":true}}}'
+			const failureLogger = vi.fn()
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'first-session' } }))
+				)
+				.mockResolvedValueOnce(tlSseContentResponse(malformedContent))
+				.mockResolvedValueOnce(
+					new Response(JSON.stringify({ code: 0, data: { session_id: 'correction-session' } }))
+				)
+				.mockResolvedValueOnce(
+					tlSseAgentResponse({
+						evaluation_previous_goal: '异步内容已加载（显示"父页面异步内容已加载"）。Verdict: 成功',
+						memory: '继续操作',
+						next_goal: '点击按钮',
+						action: { done: { text: 'finished', success: true } },
+					})
+				)
+
+			const agent = createAgent(fetchMock, {
+				provider: 'tl',
+				endpointAgent: 'localhost:8089',
+				customSystemPrompt: undefined,
+				tlPromptTransport: 'prompt_variables',
+				tlFailureLogger: failureLogger,
+			})
+
+			await expect(agent.execute('test malformed reflection quotes')).resolves.toMatchObject({
+				success: true,
+				data: 'finished',
+			})
+			expect(fetchMock).toHaveBeenCalledTimes(4)
+			expect(failureLogger).toHaveBeenCalledTimes(1)
+
+			const firstInit = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+			const correctionInit = JSON.parse(fetchMock.mock.calls[2][1]!.body as string)
+			expect(correctionInit.data.prompt_variables).toEqual(firstInit.data.prompt_variables)
+
+			const correctionChat = JSON.parse(fetchMock.mock.calls[3][1]!.body as string).data.txt
+			const correctionPayload = JSON.parse(correctionChat)
+			expect(correctionPayload.failed_assistant_content).toBe(malformedContent)
+			expect(correctionPayload.parse_error).toMatchObject({
+				type: 'invalid_response',
+				message: 'Extracted AgentOutput object is not valid JSON',
+				cause: { name: 'SyntaxError' },
+			})
 		})
 
 		it('does not inject a textual schema for native tool mode with a customSystemPrompt', async () => {
