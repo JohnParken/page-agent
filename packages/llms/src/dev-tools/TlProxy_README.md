@@ -60,9 +60,9 @@ TlProxy 对上游模型的响应保持透明：它只把 Qwen `message.content` 
 `INVALID_RESPONSE` 时，TlClient 会携带原始动态 user payload、非法 assistant 内容和具体解析错误，
 使用新 session 发起一次纠错请求。第二次仍失败时严格抛错，不修改模型原文。
 
-TlClient 会在 `/chatbbc/init_session` 的 `data.response_format` 中发送
-`{ type: 'json_object' }`。TlProxy 按 session 保存该值，并在调用 Qwen `/chat/completions` 时原样
-转发，从生成阶段约束响应为合法 JSON；代理仍会原样转发 Qwen 返回的 `message.content`。
+TlClient 的 `/chatbbc/init_session` 不发送 `response_format`。TlProxy 调用 Qwen
+`/chat/completions` 时直接发送 `response_format: { type: 'json_object' }`，从生成阶段约束响应为
+合法 JSON；代理仍会原样转发 Qwen 返回的 `message.content`。
 
 ### 3. 在浏览器扩展中使用
 

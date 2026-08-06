@@ -22,10 +22,6 @@ interface PromptVariable {
 	value: string
 }
 
-interface ResponseFormat {
-	type: 'json_object'
-}
-
 interface InitSessionRequest {
 	appId?: string
 	trCode?: string
@@ -34,7 +30,6 @@ interface InitSessionRequest {
 	requestId?: string
 	data?: {
 		prompt_variables?: unknown
-		response_format?: unknown
 	}
 }
 
@@ -54,17 +49,15 @@ interface ChatRequest {
 
 interface Session {
 	promptVariables: ReadonlyMap<string, string>
-	responseFormat?: ResponseFormat
 }
 
 class SessionStore {
 	private readonly sessions = new Map<string, Session>()
 
-	createSession(promptVariables: PromptVariable[], responseFormat?: ResponseFormat): string {
+	createSession(promptVariables: PromptVariable[]): string {
 		const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`
 		this.sessions.set(sessionId, {
 			promptVariables: new Map(promptVariables.map(({ name, value }) => [name, value])),
-			responseFormat,
 		})
 		return sessionId
 	}
@@ -75,10 +68,6 @@ class SessionStore {
 
 	getPromptVariables(sessionId: string): ReadonlyMap<string, string> | undefined {
 		return this.sessions.get(sessionId)?.promptVariables
-	}
-
-	getResponseFormat(sessionId: string): ResponseFormat | undefined {
-		return this.sessions.get(sessionId)?.responseFormat
 	}
 }
 
@@ -195,7 +184,6 @@ export class TlProxyServer {
 	): Promise<void> {
 		const body = await this.getRequestBody<InitSessionRequest>(req)
 		const promptVariables = this.validatePromptVariables(body)
-		const responseFormat = this.validateResponseFormat(body)
 
 		this.logger.info('📥 INIT_SESSION Request', {
 			requestId: body.requestId,
@@ -203,7 +191,7 @@ export class TlProxyServer {
 		})
 		this.logger.debug('INIT_SESSION request body', body)
 
-		const sessionId = this.sessionStore.createSession(promptVariables, responseFormat)
+		const sessionId = this.sessionStore.createSession(promptVariables)
 		const responseData = {
 			code: 0,
 			message: 'success',
@@ -294,7 +282,7 @@ export class TlProxyServer {
 			const requestBody = {
 				model: this.config.qwenModel,
 				messages,
-				response_format: this.sessionStore.getResponseFormat(sessionId),
+				response_format: { type: 'json_object' as const },
 				// The development Qwen endpoint does not support streaming. The proxy
 				// converts this complete response into Tl-compatible SSE when requested.
 				stream: false,
@@ -478,24 +466,6 @@ export class TlProxyServer {
 		}
 
 		return promptVariables
-	}
-
-	private validateResponseFormat(body: InitSessionRequest): ResponseFormat | undefined {
-		const rawResponseFormat = body.data?.response_format
-		if (rawResponseFormat === undefined) return undefined
-		if (
-			!rawResponseFormat ||
-			typeof rawResponseFormat !== 'object' ||
-			Array.isArray(rawResponseFormat) ||
-			(rawResponseFormat as { type?: unknown }).type !== 'json_object'
-		) {
-			throw new ProxyRequestError(
-				'data.response_format must be an object with type "json_object"',
-				400
-			)
-		}
-
-		return { type: 'json_object' }
 	}
 
 	private parseBoolean(value: unknown, fieldName: string): boolean {

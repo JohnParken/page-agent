@@ -11,17 +11,14 @@ function jsonResponse(body: unknown, status = 200): Response {
 	})
 }
 
-function initBody(
-	promptVariables: readonly { name: string; value: string }[],
-	responseFormat: unknown = { type: 'json_object' }
-) {
+function initBody(promptVariables: readonly { name: string; value: string }[]) {
 	return {
 		appId: 'test-app',
 		trCode: 'test-code',
 		trVersion: '1.0',
 		timestamp: Date.now(),
 		requestId: `request-${Date.now()}`,
-		data: { prompt_variables: promptVariables, response_format: responseFormat },
+		data: { prompt_variables: promptVariables },
 	}
 }
 
@@ -294,24 +291,6 @@ describe('TlProxyServer prompt transport', () => {
 		const response = await dispatch(proxy, '/chatbbc/init_session', initBody(promptVariables))
 		expect(response.statusCode).toBe(400)
 		expect(JSON.parse(response.bodyText()).error).toMatch(/prompt_variables|name/i)
-	})
-
-	it('rejects an unsupported init response format', async () => {
-		const proxy = new TlProxyServer({
-			port: 0,
-			qwenBaseUrl: 'https://qwen.example',
-			qwenModel: 'qwen-default',
-			customFetch: vi.fn(),
-		})
-		proxies.push(proxy)
-
-		const response = await dispatch(
-			proxy,
-			'/chatbbc/init_session',
-			initBody([{ name: 'system_prompt', value: 'fixed system' }], { type: 'text' })
-		)
-		expect(response.statusCode).toBe(400)
-		expect(JSON.parse(response.bodyText()).error).toContain('data.response_format')
 	})
 
 	it('rejects unknown chat sessions before calling the upstream API', async () => {

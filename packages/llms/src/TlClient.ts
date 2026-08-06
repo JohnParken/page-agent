@@ -84,7 +84,6 @@ interface InitSessionRequest {
 	requestId: string
 	data: {
 		prompt_variables: { name: string; value: string }[]
-		response_format: { type: 'json_object' }
 	}
 }
 
@@ -261,7 +260,6 @@ export class TlAiClient implements LLMClient {
 			requestId: this.generateRequestId(),
 			data: {
 				prompt_variables: promptVariables,
-				response_format: { type: 'json_object' },
 			},
 		}
 		this.logRequest('INIT_SESSION', url, requestBody)

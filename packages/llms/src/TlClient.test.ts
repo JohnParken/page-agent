@@ -152,7 +152,7 @@ describe('TlAiClient.invoke — request construction', () => {
 		)
 
 		const initBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
-		expect(initBody.data.response_format).toEqual({ type: 'json_object' })
+		expect(initBody.data).not.toHaveProperty('response_format')
 		expect(initBody.data.prompt_variables).toEqual([
 			{ name: 'system_prompt', value: 'Fixed system instructions' },
 		])
@@ -327,7 +327,7 @@ describe('TlAiClient.initSession', () => {
 		expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.com/chatbbc/init_session')
 		const request = fetchMock.mock.calls[0][1]!
 		const body = JSON.parse(request.body as string)
-		expect(body.data.response_format).toEqual({ type: 'json_object' })
+		expect(body.data).not.toHaveProperty('response_format')
 		expect(body.timestamp).toEqual(expect.any(Number))
 		expect(body.timestamp).toBeGreaterThan(1)
 		expect(body.requestId).toEqual(expect.any(String))
@@ -342,7 +342,6 @@ describe('TlAiClient.initSession', () => {
 		await expect(client.initSession(signal)).resolves.toBe('prompt-session')
 
 		const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
-		expect(body.data.response_format).toEqual({ type: 'json_object' })
 		expect(body.data.prompt_variables).toEqual([])
 		expect(body.data.prompt_variables).not.toContainEqual({
 			name: 'name',
@@ -754,12 +753,12 @@ describe('TlAiClient.invoke — JSON correction', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(4)
 		const firstInit = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
 		const secondInit = JSON.parse(fetchMock.mock.calls[2][1]!.body as string)
+		expect(firstInit.data).not.toHaveProperty('response_format')
+		expect(secondInit.data).not.toHaveProperty('response_format')
 		expect(firstInit.data.prompt_variables).toEqual([
 			{ name: 'system_prompt', value: 'Stable system prompt' },
 		])
-		expect(firstInit.data.response_format).toEqual({ type: 'json_object' })
 		expect(secondInit.data.prompt_variables).toEqual(firstInit.data.prompt_variables)
-		expect(secondInit.data.response_format).toEqual(firstInit.data.response_format)
 		expect(secondInit.data.prompt_variables).not.toContainEqual({
 			name: 'name',
 			value: 'qwen3.5-plus',
