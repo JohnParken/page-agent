@@ -10,6 +10,7 @@ import type {
 	InvokeResult,
 	LLMClient,
 	LLMConfig,
+	LLMProvider,
 	Message,
 	ResolvedLLMConfig,
 	TlFailureLogEntry,
@@ -26,6 +27,7 @@ export type {
 	InvokeResult,
 	LLMClient,
 	LLMConfig,
+	LLMProvider,
 	Message,
 	TlFailureLogEntry,
 	TlFailureLogger,
@@ -151,6 +153,18 @@ async function withRetry<T>(
 
 export function parseLLMConfig(config: LLMConfig): ResolvedLLMConfig {
 	// Runtime validation as defensive programming (types already guarantee these)
+	if (
+		config.provider !== undefined &&
+		config.provider !== 'openai' &&
+		config.provider !== 'tl' &&
+		config.provider !== 'ds'
+	) {
+		throw new Error(
+			`[PageAgent] Unsupported LLM provider ${JSON.stringify(
+				config.provider
+			)}. Use "openai", "tl", or "ds".`
+		)
+	}
 	const usesCustomClient = config.client || config.provider === 'tl' || config.provider === 'ds'
 	if (!config.model) {
 		throw new Error(

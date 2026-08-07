@@ -1,7 +1,12 @@
 /**
  * IIFE demo entry - auto-initializes with built-in demo API for testing
  */
-import { PageAgent, type PageAgentConfig, type TlPromptTransport } from './PageAgent'
+import {
+	type LLMProvider,
+	PageAgent,
+	type PageAgentConfig,
+	type TlPromptTransport,
+} from './PageAgent'
 
 declare global {
 	interface Window {
@@ -29,6 +34,32 @@ const DEMO_API_KEY = 'NA'
 const DEMO_TL_ENDPOINT_AGENT = 'http://127.0.0.1:8089'
 const DEMO_TL_PROMPT_TRANSPORT: TlPromptTransport = 'legacy_txt'
 const DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME = 'system_prompt'
+
+/** Parse one public provider identifier without accepting legacy client class names. */
+function parseProvider(value: unknown, source: string): LLMProvider | undefined {
+	if (value === undefined || value === null || value === '') return undefined
+	if (value === 'openai' || value === 'tl' || value === 'ds') return value
+
+	throw new Error(
+		`[PageAgent] provider from ${source} must be "openai", "tl", or "ds"; received ${JSON.stringify(
+			value
+		)}.`
+	)
+}
+
+/** Resolve provider in descending priority order. */
+function resolveProvider(
+	queryValue: string | null,
+	envValue: unknown,
+	buildValue?: unknown
+): LLMProvider {
+	return (
+		parseProvider(queryValue, 'query parameter provider') ??
+		parseProvider(envValue, 'LLM_PROVIDER') ??
+		parseProvider(buildValue, 'build config provider') ??
+		'tl'
+	)
+}
 
 /**
  * Parse a maxRetries value without accepting partial numeric strings.
@@ -84,9 +115,13 @@ const initialMaxRetries = resolveMaxRetries(
 	currentScriptURL?.searchParams.get('maxRetries') ?? null,
 	import.meta.env.LLM_MAX_RETRIES
 )
+const initialProvider = resolveProvider(
+	currentScriptURL?.searchParams.get('provider') ?? null,
+	import.meta.env.LLM_PROVIDER
+)
 
 window.pageAgentDemoConfig = {
-	provider: (import.meta.env.LLM_PROVIDER as 'openai' | 'tl' | 'ds') || 'tl',
+	provider: initialProvider,
 	model: import.meta.env.LLM_MODEL_NAME || DEMO_MODEL,
 	maxRetries: initialMaxRetries,
 	baseURL: import.meta.env.LLM_BASE_URL || DEMO_BASE_URL,
@@ -111,10 +146,11 @@ if (autoInit) {
 
 		if (currentScriptURL) {
 			const url = currentScriptURL
-			const provider =
-				(url.searchParams.get('provider') as 'openai' | 'tl' | 'ds') ||
-				(import.meta.env.LLM_PROVIDER as 'openai' | 'tl' | 'ds') ||
-				'tl'
+			const provider = resolveProvider(
+				url.searchParams.get('provider'),
+				import.meta.env.LLM_PROVIDER,
+				window.pageAgentDemoConfig?.provider
+			)
 			const model = url.searchParams.get('model') || import.meta.env.LLM_MODEL_NAME || DEMO_MODEL
 			const maxRetries = resolveMaxRetries(
 				url.searchParams.get('maxRetries'),
@@ -169,7 +205,7 @@ if (autoInit) {
 		} else {
 			console.log('🚀 page-agent.js no current script detected, using default demo config')
 			config = {
-				provider: (import.meta.env.LLM_PROVIDER as 'openai' | 'tl' | 'ds') || 'tl',
+				provider: initialProvider,
 				model: import.meta.env.LLM_MODEL_NAME ? import.meta.env.LLM_MODEL_NAME : DEMO_MODEL,
 				maxRetries: initialMaxRetries,
 				baseURL: import.meta.env.LLM_BASE_URL ? import.meta.env.LLM_BASE_URL : DEMO_BASE_URL,

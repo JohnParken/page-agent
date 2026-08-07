@@ -3,6 +3,9 @@
  */
 import type * as z from 'zod/v4'
 
+/** Built-in LLM provider identifiers used by every public configuration surface. */
+export type LLMProvider = 'openai' | 'tl' | 'ds'
+
 /**
  * Message format - OpenAI standard (industry standard)
  */
@@ -195,7 +198,7 @@ export interface LLMConfig {
 	 * Built-in provider selection.
 	 * @default 'openai'
 	 */
-	provider?: 'openai' | 'tl' | 'ds'
+	provider?: LLMProvider
 
 	/**
 	 * Gateway provider specific: agent host, e.g. "api.example.com".

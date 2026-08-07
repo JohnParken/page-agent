@@ -81,6 +81,41 @@ function resolveMaxRetries(params, envConfig, buildConfig) {
 }
 
 /**
+ * Parse one public provider identifier without accepting legacy client class names.
+ *
+ * @param {unknown} value - Candidate provider value
+ * @param {string} source - Human-readable configuration source
+ * @returns {'openai'|'tl'|'ds'|undefined} A validated provider, or undefined when absent
+ */
+function parseProvider(value, source) {
+	if (value === undefined || value === null || value === '') return undefined
+	if (value === 'openai' || value === 'tl' || value === 'ds') return value
+
+	throw new Error(
+		`[PageAgent] provider from ${source} must be "openai", "tl", or "ds"; received ${JSON.stringify(
+			value
+		)}.`
+	)
+}
+
+/**
+ * Resolve provider in descending priority order.
+ *
+ * @param {URLSearchParams} params - Current page query parameters
+ * @param {object} envConfig - Values fetched from /api/env-config
+ * @param {object} buildConfig - Values embedded in the demo bundle
+ * @returns {'openai'|'tl'|'ds'} The selected provider
+ */
+function resolveProvider(params, envConfig, buildConfig) {
+	return (
+		parseProvider(params.get('provider'), 'query parameter provider') ||
+		parseProvider(envConfig.LLM_PROVIDER, 'LLM_PROVIDER') ||
+		parseProvider(buildConfig.provider, 'build config provider') ||
+		'tl'
+	)
+}
+
+/**
  * Build LLM configuration from .env config and URL query parameters.
  *
  * Priority (highest to lowest):
@@ -92,9 +127,7 @@ function resolveMaxRetries(params, envConfig, buildConfig) {
  * `maxRetries` follows the same order and defaults to 0. It is always passed
  * to PageAgent as a validated number.
  *
- * Supported providers:
- *   - tlclient      → provider: 'tl' (Tl AI / chatbbc client)
- *   - openaiclient/openai → provider: 'openai' (OpenAI-compatible client)
+ * Supported providers: `tl`, `ds`, and `openai`.
  *
  * Tl prompt transport is resolved independently from the provider connection:
  * URL query parameters (`tlPromptTransport` / `tlSystemPromptVariableName`) take
@@ -114,8 +147,7 @@ export function queryConfig(envConfig = {}) {
 	} = buildConfig
 
 	// Determine provider: URL param > .env > build-time config > built-in default.
-	const provider =
-		params.get('provider') || envConfig.LLM_PROVIDER || buildConfig.provider || 'tlclient'
+	const provider = resolveProvider(params, envConfig, buildConfig)
 
 	const config = {
 		...buildConfigWithoutTlPromptTransport,
@@ -125,24 +157,31 @@ export function queryConfig(envConfig = {}) {
 		experimentalScriptExecutionTool: true,
 	}
 
-	if (provider === 'openaiclient' || provider === 'openai') {
+	if (provider === 'openai') {
 		config.provider = 'openai'
 		config.baseURL =
 			params.get('baseURL') ||
-			envConfig.OPENAI_BASE_URL ||
+			envConfig.LLM_BASE_URL ||
 			buildConfig.baseURL ||
 			'https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run'
-		config.apiKey = params.get('apiKey') || envConfig.OPENAI_API_KEY || 'NA'
+		config.apiKey = params.get('apiKey') || envConfig.LLM_API_KEY || buildConfig.apiKey || 'NA'
 		config.toolCallingMode = undefined // not needed for OpenAI client
-	} else {
-		// Default: tlclient
+	} else if (provider === 'tl') {
 		config.provider = 'tl'
 		config.endpointAgent =
-			params.get('endpointAgent') || envConfig.TL_ENDPOINT_AGENT || 'http://127.0.0.1:8089'
-		config.appId = params.get('appId') || envConfig.TL_APP_ID || undefined
-		config.trCode = params.get('trCode') || envConfig.TL_TR_CODE || undefined
-		config.trVersion = params.get('trVersion') || envConfig.TL_TR_VERSION || undefined
-		config.toolCallingMode = envConfig.TL_TOOL_CALLING_MODE || 'system_prompt'
+			params.get('endpointAgent') ||
+			envConfig.LLM_ENDPOINT_AGENT ||
+			buildConfig.endpointAgent ||
+			'http://127.0.0.1:8089'
+		config.appId = params.get('appId') || envConfig.LLM_APP_ID || buildConfig.appId || undefined
+		config.trCode = params.get('trCode') || envConfig.LLM_TR_CODE || buildConfig.trCode || undefined
+		config.trVersion =
+			params.get('trVersion') || envConfig.LLM_TR_VERSION || buildConfig.trVersion || undefined
+		config.toolCallingMode =
+			params.get('toolCallingMode') ||
+			envConfig.LLM_TOOL_CALLING_MODE ||
+			buildConfig.toolCallingMode ||
+			'system_prompt'
 		config.tlPromptTransport =
 			params.get('tlPromptTransport') ||
 			envConfig.TL_PROMPT_TRANSPORT ||
@@ -153,6 +192,25 @@ export function queryConfig(envConfig = {}) {
 			envConfig.TL_SYSTEM_PROMPT_VARIABLE_NAME ||
 			buildTlSystemPromptVariableName ||
 			'system_prompt'
+	} else {
+		config.provider = 'ds'
+		config.baseURL = params.get('baseURL') || envConfig.LLM_BASE_URL || buildConfig.baseURL || ''
+		config.apiKey = params.get('apiKey') || envConfig.LLM_API_KEY || buildConfig.apiKey || ''
+		config.endpointAgent =
+			params.get('endpointAgent') ||
+			envConfig.LLM_ENDPOINT_AGENT ||
+			buildConfig.endpointAgent ||
+			undefined
+		config.appId = params.get('appId') || envConfig.LLM_APP_ID || buildConfig.appId || undefined
+		config.trCode = params.get('trCode') || envConfig.LLM_TR_CODE || buildConfig.trCode || undefined
+		config.trVersion =
+			params.get('trVersion') || envConfig.LLM_TR_VERSION || buildConfig.trVersion || undefined
+		config.toolCallingMode =
+			params.get('toolCallingMode') ||
+			envConfig.LLM_TOOL_CALLING_MODE ||
+			buildConfig.toolCallingMode ||
+			'system_prompt'
+		config.dsMode = params.get('dsMode') || envConfig.LLM_DS_MODE || buildConfig.dsMode || undefined
 	}
 
 	return config
@@ -181,22 +239,28 @@ export async function installDemoPageAgent({ pageController, pageName, instructi
 	// Validate configuration for the selected provider
 	if (config.provider === 'openai' && !config.baseURL) {
 		throw new Error(
-			'[PageAgent] OpenAI client requires OPENAI_BASE_URL. ' +
+			'[PageAgent] OpenAI provider requires LLM_BASE_URL. ' +
 				'Set it in .env or pass via ?baseURL=... query parameter.'
 		)
 	}
 	if (config.provider === 'tl' && !config.endpointAgent) {
 		throw new Error(
-			'[PageAgent] TL client requires TL_ENDPOINT_AGENT. ' +
+			'[PageAgent] TL provider requires LLM_ENDPOINT_AGENT. ' +
 				'Set it in .env or pass via ?endpointAgent=... query parameter.'
+		)
+	}
+	if (config.provider === 'ds' && !config.endpointAgent && !config.baseURL) {
+		throw new Error(
+			'[PageAgent] DS client requires LLM_ENDPOINT_AGENT or LLM_BASE_URL. ' +
+				'Set one in .env or pass endpointAgent/baseURL via query parameters.'
 		)
 	}
 
 	console.info(
 		`[PageAgent] Initializing with provider: ${config.provider}` +
-			(config.provider === 'openai'
-				? `, model: ${config.model}, baseURL: ${config.baseURL}`
-				: `, model: ${config.model}, endpointAgent: ${config.endpointAgent}`)
+			(config.provider === 'tl'
+				? `, model: ${config.model}, endpointAgent: ${config.endpointAgent}`
+				: `, model: ${config.model}, baseURL: ${config.baseURL}`)
 	)
 
 	const agent = new window.PageAgent({

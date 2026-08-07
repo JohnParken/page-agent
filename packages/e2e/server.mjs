@@ -20,16 +20,19 @@ dotenvConfig({ path: resolve(projectRoot, '.env') })
  */
 function getEnvConfig() {
 	return {
-		LLM_PROVIDER: process.env.LLM_PROVIDER || 'tlclient',
+		LLM_PROVIDER: process.env.LLM_PROVIDER || 'tl',
 		LLM_MODEL_NAME: process.env.LLM_MODEL_NAME || 'qwen3.5-plus',
 		LLM_MAX_RETRIES: process.env.LLM_MAX_RETRIES || '',
-		OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || '',
-		OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
-		TL_ENDPOINT_AGENT: process.env.TL_ENDPOINT_AGENT || 'localhost:8089',
-		TL_APP_ID: process.env.TL_APP_ID || '',
-		TL_TR_CODE: process.env.TL_TR_CODE || '',
-		TL_TR_VERSION: process.env.TL_TR_VERSION || '',
-		TL_TOOL_CALLING_MODE: process.env.TL_TOOL_CALLING_MODE || 'system_prompt',
+		LLM_BASE_URL: process.env.LLM_BASE_URL || process.env.OPENAI_BASE_URL || '',
+		LLM_API_KEY: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || '',
+		LLM_ENDPOINT_AGENT:
+			process.env.LLM_ENDPOINT_AGENT || process.env.TL_ENDPOINT_AGENT || 'localhost:8089',
+		LLM_APP_ID: process.env.LLM_APP_ID || process.env.TL_APP_ID || '',
+		LLM_TR_CODE: process.env.LLM_TR_CODE || process.env.TL_TR_CODE || '',
+		LLM_TR_VERSION: process.env.LLM_TR_VERSION || process.env.TL_TR_VERSION || '',
+		LLM_TOOL_CALLING_MODE:
+			process.env.LLM_TOOL_CALLING_MODE || process.env.TL_TOOL_CALLING_MODE || 'system_prompt',
+		LLM_DS_MODE: process.env.LLM_DS_MODE || '',
 		TL_PROMPT_TRANSPORT: process.env.TL_PROMPT_TRANSPORT || 'legacy_txt',
 		TL_SYSTEM_PROMPT_VARIABLE_NAME: process.env.TL_SYSTEM_PROMPT_VARIABLE_NAME || 'system_prompt',
 	}

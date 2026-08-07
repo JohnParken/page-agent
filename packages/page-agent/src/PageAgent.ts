@@ -12,7 +12,7 @@ import { Panel, type PanelConfig } from '@page-agent/ui'
 
 export * from '@page-agent/core'
 export { DsAiClient, TlAiClient } from '@page-agent/llms'
-export type { DsAiConfig, TlAiConfig, TlPromptTransport } from '@page-agent/llms'
+export type { DsAiConfig, LLMProvider, TlAiConfig, TlPromptTransport } from '@page-agent/llms'
 
 export type PageAgentConfig<TController extends PageControllerAdapter = PageController> =
 	AgentConfig &

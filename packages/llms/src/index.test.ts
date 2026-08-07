@@ -115,6 +115,20 @@ describe('LLM.invoke retry behavior', () => {
 })
 
 describe('LLM client selection', () => {
+	it.each(['openaiclient', 'tlclient', 'dsclient'])(
+		'rejects legacy provider name %s',
+		(provider) => {
+			expect(
+				() =>
+					new LLM({
+						provider: provider as never,
+						baseURL: 'http://test.local/v1',
+						model: 'test-model',
+					})
+			).toThrow('Use "openai", "tl", or "ds"')
+		}
+	)
+
 	it('uses OpenAIClient by default', () => {
 		const llm = new LLM({
 			baseURL: 'http://test.local/v1',

@@ -37,6 +37,7 @@ type DemoWindow = Window & {
 	pageController?: ControllerHandle
 	pageAgentDemoConfig?: {
 		maxRetries?: unknown
+		provider?: unknown
 	}
 	pageAgent?: {
 		config: {
@@ -73,6 +74,8 @@ type DemoWindow = Window & {
 
 const hostOrigin = 'http://127.0.0.1:4173'
 const childOrigin = 'http://127.0.0.1:4174'
+const demoPath =
+	'/host.html?provider=tl&maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt'
 
 function markerIndex(content: string, pattern: RegExp): number {
 	for (const line of content.split('\n')) {
@@ -133,12 +136,8 @@ test.describe('cross-origin iframe bridge demo', () => {
 		// Keep this test independent from any developer-local .env values. The
 		// prompt transport is explicitly selected through the supported URL query
 		// parameters, while the manual demo can still resolve it from .env.
-		await page.goto(
-			'/host.html?maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt'
-		)
-		await expect(page).toHaveURL(
-			`${hostOrigin}/host.html?maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt`
-		)
+		await page.goto(demoPath)
+		await expect(page).toHaveURL(`${hostOrigin}${demoPath}`)
 		await expect
 			.poll(() => page.evaluate(() => Boolean((window as DemoWindow).pageAgent)))
 			.toBe(true)
@@ -204,12 +203,63 @@ test.describe('cross-origin iframe bridge demo', () => {
 		).toBe(true)
 	})
 
+	test('uses the same short provider identifiers across demo configuration sources', async ({
+		page,
+	}) => {
+		const result = await page.evaluate(async () => {
+			// The fixture server exposes this module at runtime; it is not part of the TypeScript project.
+			// @ts-expect-error The absolute fixture URL is resolved by the browser.
+			const { queryConfig } = await import('/page-agent-setup.js')
+			const originalBuildConfig = (window as DemoWindow).pageAgentDemoConfig
+			;(window as DemoWindow).pageAgentDemoConfig = {}
+
+			const queryProviders = ['openai', 'tl', 'ds'].map((provider) => {
+				history.replaceState(
+					null,
+					'',
+					`/host.html?provider=${provider}&baseURL=https%3A%2F%2Fapi.example%2Fv1&endpointAgent=http%3A%2F%2F127.0.0.1%3A8089&dsMode=api`
+				)
+				return queryConfig({}).provider
+			})
+			const envProviders = ['openai', 'tl', 'ds'].map((provider) => {
+				history.replaceState(null, '', '/host.html')
+				;(window as DemoWindow).pageAgentDemoConfig = {}
+				return queryConfig({ LLM_PROVIDER: provider }).provider
+			})
+			const buildProviders = ['openai', 'tl', 'ds'].map((provider) => {
+				history.replaceState(null, '', '/host.html')
+				;(window as DemoWindow).pageAgentDemoConfig = { provider }
+				return queryConfig({}).provider
+			})
+
+			const legacyErrors = ['openaiclient', 'tlclient', 'dsclient'].map((provider) => {
+				history.replaceState(null, '', `/host.html?provider=${provider}`)
+				try {
+					queryConfig({})
+					return 'no error'
+				} catch (error) {
+					return error instanceof Error ? error.message : String(error)
+				}
+			})
+
+			;(window as DemoWindow).pageAgentDemoConfig = originalBuildConfig
+			return { queryProviders, envProviders, buildProviders, legacyErrors }
+		})
+
+		expect(result.queryProviders).toEqual(['openai', 'tl', 'ds'])
+		expect(result.envProviders).toEqual(['openai', 'tl', 'ds'])
+		expect(result.buildProviders).toEqual(['openai', 'tl', 'ds'])
+		expect(
+			result.legacyErrors.every(
+				(message) => message.includes('provider') && message.includes('"openai", "tl", or "ds"')
+			)
+		).toBe(true)
+	})
+
 	test('aggregates parent and child iframe controls into one browser state', async ({ page }) => {
 		const state = await controller(page)
 
-		expect(state.url).toBe(
-			`${hostOrigin}/host.html?maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt`
-		)
+		expect(state.url).toBe(`${hostOrigin}${demoPath}`)
 		expect(state.content).toContain('id=parent-button')
 		expect(state.content).toContain('id=child-button')
 		expect(state.content).toContain('子页面备注')

@@ -156,6 +156,8 @@ TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt
 Only `LLM_PROVIDER`, `LLM_ENDPOINT_AGENT`, and `LLM_MODEL_NAME` are required by PageAgent. Whether
 `LLM_APP_ID`, `LLM_TR_CODE`, and `LLM_TR_VERSION` must contain values depends on the target Tl service.
 `LLM_BASE_URL` and `LLM_API_KEY` are OpenAI-provider settings and are not used by the built-in `TlAiClient`.
+`LLM_PROVIDER` accepts only the public identifiers `tl`, `ds`, and `openai`; client class names such as
+`tlclient`, `dsclient`, and `openaiclient` are not configuration values.
 The optional `TL_PROMPT_TRANSPORT` and `TL_SYSTEM_PROMPT_VARIABLE_NAME` values select how the demo
 separates its fixed system prompt from the dynamic user payload. `LLM_MAX_RETRIES` is a non-negative
 integer and defaults to `0`; setting it to `1` retries one transient or malformed model response.
