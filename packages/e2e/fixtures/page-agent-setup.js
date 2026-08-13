@@ -129,10 +129,10 @@ function resolveProvider(params, envConfig, buildConfig) {
  *
  * Supported providers: `tl`, `ds`, and `openai`.
  *
- * Tl prompt transport is resolved independently from the provider connection:
- * URL query parameters (`tlPromptTransport` / `tlSystemPromptVariableName`) take
+ * The Tl system prompt variable name is resolved independently from the provider
+ * connection. URL query parameters (`tlSystemPromptVariableName`) take
  * precedence over values exposed by `/api/env-config`, then the build-time
- * `pageAgentDemoConfig`, and finally the backwards-compatible defaults.
+ * `pageAgentDemoConfig`, and finally the default `system_prompt` name.
  *
  * @param {object} envConfig - The env config object from /api/env-config
  * @returns {object} PageAgent configuration object
@@ -141,16 +141,15 @@ export function queryConfig(envConfig = {}) {
 	const params = new URLSearchParams(window.location.search)
 	const buildConfig = window.pageAgentDemoConfig || {}
 	const {
-		tlPromptTransport: buildTlPromptTransport,
 		tlSystemPromptVariableName: buildTlSystemPromptVariableName,
-		...buildConfigWithoutTlPromptTransport
+		...buildConfigWithoutSystemPromptVariable
 	} = buildConfig
 
 	// Determine provider: URL param > .env > build-time config > built-in default.
 	const provider = resolveProvider(params, envConfig, buildConfig)
 
 	const config = {
-		...buildConfigWithoutTlPromptTransport,
+		...buildConfigWithoutSystemPromptVariable,
 		model: params.get('model') || envConfig.LLM_MODEL_NAME || buildConfig.model || 'qwen3.5-plus',
 		maxRetries: resolveMaxRetries(params, envConfig, buildConfig),
 		language: 'zh-CN',
@@ -182,11 +181,6 @@ export function queryConfig(envConfig = {}) {
 			envConfig.LLM_TOOL_CALLING_MODE ||
 			buildConfig.toolCallingMode ||
 			'system_prompt'
-		config.tlPromptTransport =
-			params.get('tlPromptTransport') ||
-			envConfig.TL_PROMPT_TRANSPORT ||
-			buildTlPromptTransport ||
-			'legacy_txt'
 		config.tlSystemPromptVariableName =
 			params.get('tlSystemPromptVariableName') ||
 			envConfig.TL_SYSTEM_PROMPT_VARIABLE_NAME ||

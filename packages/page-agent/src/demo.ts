@@ -1,12 +1,7 @@
 /**
  * IIFE demo entry - auto-initializes with built-in demo API for testing
  */
-import {
-	type LLMProvider,
-	PageAgent,
-	type PageAgentConfig,
-	type TlPromptTransport,
-} from './PageAgent'
+import { type LLMProvider, PageAgent, type PageAgentConfig } from './PageAgent'
 
 declare global {
 	interface Window {
@@ -32,7 +27,6 @@ const DEMO_MODEL = 'qwen3.5-plus'
 const DEMO_BASE_URL = 'https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run'
 const DEMO_API_KEY = 'NA'
 const DEMO_TL_ENDPOINT_AGENT = 'http://127.0.0.1:8089'
-const DEMO_TL_PROMPT_TRANSPORT: TlPromptTransport = 'legacy_txt'
 const DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME = 'system_prompt'
 
 /** Parse one public provider identifier without accepting legacy client class names. */
@@ -131,9 +125,6 @@ window.pageAgentDemoConfig = {
 	trCode: import.meta.env.LLM_TR_CODE || undefined,
 	trVersion: import.meta.env.LLM_TR_VERSION || undefined,
 	toolCallingMode: 'system_prompt',
-	tlPromptTransport:
-		(import.meta.env.TL_PROMPT_TRANSPORT as TlPromptTransport | undefined) ||
-		DEMO_TL_PROMPT_TRANSPORT,
 	tlSystemPromptVariableName:
 		import.meta.env.TL_SYSTEM_PROMPT_VARIABLE_NAME || DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME,
 }
@@ -172,10 +163,6 @@ if (autoInit) {
 				(url.searchParams.get('toolCallingMode') as 'api' | 'system_prompt') ||
 				(import.meta.env.LLM_TOOL_CALLING_MODE as 'api' | 'system_prompt') ||
 				'system_prompt'
-			const tlPromptTransport =
-				(url.searchParams.get('tlPromptTransport') as TlPromptTransport | null) ??
-				(import.meta.env.TL_PROMPT_TRANSPORT as TlPromptTransport | undefined) ??
-				DEMO_TL_PROMPT_TRANSPORT
 			const tlSystemPromptVariableName =
 				url.searchParams.get('tlSystemPromptVariableName') ??
 				import.meta.env.TL_SYSTEM_PROMPT_VARIABLE_NAME ??
@@ -197,7 +184,6 @@ if (autoInit) {
 				trCode,
 				trVersion,
 				toolCallingMode,
-				tlPromptTransport,
 				tlSystemPromptVariableName,
 				language,
 				experimentalScriptExecutionTool: experimentalScriptExecutionTool === 'true',
@@ -215,9 +201,6 @@ if (autoInit) {
 				trCode: import.meta.env.LLM_TR_CODE || undefined,
 				trVersion: import.meta.env.LLM_TR_VERSION || undefined,
 				toolCallingMode: 'system_prompt',
-				tlPromptTransport:
-					(import.meta.env.TL_PROMPT_TRANSPORT as TlPromptTransport | undefined) ||
-					DEMO_TL_PROMPT_TRANSPORT,
 				tlSystemPromptVariableName:
 					import.meta.env.TL_SYSTEM_PROMPT_VARIABLE_NAME || DEMO_TL_SYSTEM_PROMPT_VARIABLE_NAME,
 				experimentalScriptExecutionTool:

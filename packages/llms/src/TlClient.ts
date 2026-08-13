@@ -19,11 +19,8 @@ import type {
 	TlFailureLogEntry,
 	TlFailureLogger,
 	TlFailureStage,
-	TlPromptTransport,
 	Tool,
 } from './types'
-
-export type { TlPromptTransport } from './types'
 
 /**
  * Tool calling mode for Tl AI.
@@ -36,18 +33,13 @@ export type ToolCallingMode = 'api' | 'system_prompt'
 export interface TlAiConfig {
 	/** Agent host or HTTP(S) base URL, e.g. "localhost:8089" or "https://api.example.com". */
 	endpointAgent: string
-	/** Model / prompt name sent by legacy init; prompt_variables mode does not transmit it. */
+	/** Shared model identifier required by PageAgent; the Tl prompt-variable protocol does not send it. */
 	model: string
 	appId?: string
 	trCode?: string
 	trVersion?: string
 	/** Tool calling mode, default 'system_prompt'. */
 	toolCallingMode?: ToolCallingMode
-	/**
-	 * Prompt transport, defaulting to the backwards-compatible legacy text
-	 * format. `prompt_variables` is only valid with `system_prompt` tool calling.
-	 */
-	tlPromptTransport?: TlPromptTransport
 	/**
 	 * Name of the init_session prompt variable that carries the system message.
 	 * Defaults to `system_prompt`.
@@ -106,7 +98,6 @@ type TlOperation = 'INIT_SESSION' | 'CHAT'
 interface TlInvocationPrompt {
 	chatText: string
 	promptVariables: { name: string; value: string }[]
-	systemPrompt: string
 	dynamicUserPayload: string
 }
 
@@ -165,16 +156,6 @@ export class TlAiClient implements LLMClient {
 				'TlAiClient requires endpointAgent and model'
 			)
 		}
-		if (
-			config.tlPromptTransport !== undefined &&
-			config.tlPromptTransport !== 'legacy_txt' &&
-			config.tlPromptTransport !== 'prompt_variables'
-		) {
-			throw new InvokeError(
-				InvokeErrorTypes.CONFIG_ERROR,
-				'TlAiClient tlPromptTransport must be "legacy_txt" or "prompt_variables"'
-			)
-		}
 		const systemPromptVariableName =
 			config.tlSystemPromptVariableName === undefined
 				? 'system_prompt'
@@ -205,21 +186,11 @@ export class TlAiClient implements LLMClient {
 			trCode: config.trCode ?? '',
 			trVersion: config.trVersion ?? '',
 			toolCallingMode: config.toolCallingMode ?? 'system_prompt',
-			tlPromptTransport: config.tlPromptTransport ?? 'legacy_txt',
 			tlSystemPromptVariableName: systemPromptVariableName,
 			customFetch: config.customFetch,
 			failureLogger: config.failureLogger,
 		}
 
-		if (
-			this.config.tlPromptTransport === 'prompt_variables' &&
-			this.config.toolCallingMode !== 'system_prompt'
-		) {
-			throw new InvokeError(
-				InvokeErrorTypes.CONFIG_ERROR,
-				'TlAiClient tlPromptTransport="prompt_variables" requires toolCallingMode="system_prompt"'
-			)
-		}
 		this.fetch = config.customFetch ?? fetch.bind(globalThis)
 		this.failureLogger =
 			config.failureLogger ??
@@ -232,19 +203,16 @@ export class TlAiClient implements LLMClient {
 	 * Initialize a session via the init_session endpoint.
 	 */
 	async initSession(abortSignal?: AbortSignal): Promise<string> {
-		// prompt_variables invocations derive their system variable from the
-		// request messages. The backwards-compatible public helper has no such
-		// message, so it must not smuggle the legacy model variable into the
-		// prompt_variables transport.
-		const promptVariables =
-			this.config.tlPromptTransport === 'prompt_variables' ? [] : this.getModelPromptVariables()
-		return await this.initSessionWithPromptVariables(promptVariables, abortSignal)
+		// Invocations derive their system variable from request messages. The
+		// public helper has no such message, so it sends an empty prompt-variable
+		// list rather than smuggling a model name into the session.
+		return await this.initSessionWithPromptVariables([], abortSignal)
 	}
 
 	/**
 	 * Initialize a session with the prompt variables derived for one invocation.
 	 * The public initSession signature remains backwards compatible; invoke uses
-	 * this helper to attach the per-request system prompt in prompt_variables mode.
+	 * this helper to attach the per-request system prompt through the prompt-variable protocol.
 	 */
 	private async initSessionWithPromptVariables(
 		promptVariables: { name: string; value: string }[],
@@ -358,14 +326,9 @@ export class TlAiClient implements LLMClient {
 		return sessionId
 	}
 
-	private getModelPromptVariables(): { name: string; value: string }[] {
-		return [{ name: 'name', value: this.config.model }]
-	}
-
-	private buildPromptVariablesModePayload(messages: Message[]): {
+	private buildPromptPayload(messages: Message[]): {
 		promptVariables: { name: string; value: string }[]
 		chatText: string
-		systemPrompt: string
 	} {
 		const systemMessages = messages.filter((message) => message.role === 'system')
 		const userMessages = messages.filter((message) => message.role === 'user')
@@ -401,48 +364,16 @@ export class TlAiClient implements LLMClient {
 				},
 			],
 			chatText: userMessages[0].content ?? '',
-			systemPrompt,
 		}
 	}
 
 	private buildInvocationPrompt(messages: Message[]): TlInvocationPrompt {
-		let chatText: string
-		let promptVariables: { name: string; value: string }[] = this.getModelPromptVariables()
-		let systemPrompt = ''
-		let dynamicUserPayload = ''
-
-		if (this.config.tlPromptTransport === 'prompt_variables') {
-			const payload = this.buildPromptVariablesModePayload(messages)
-			chatText = payload.chatText
-			promptVariables = payload.promptVariables
-			systemPrompt = payload.systemPrompt
-			dynamicUserPayload = payload.chatText
-		} else if (this.config.toolCallingMode === 'system_prompt') {
-			// For system_prompt mode, include ALL messages (including system)
-			// The system message already contains system_prompt.md which has all instructions.
-			const messageTexts = messages.map((message) => `${message.role}: ${message.content ?? ''}`)
-			chatText = messageTexts.join('\n')
-			systemPrompt = messages
-				.filter((message) => message.role === 'system')
-				.map((message) => message.content ?? '')
-				.join('\n\n')
-			const userMessages = messages
-				.filter((message) => message.role === 'user')
-				.map((message) => message.content ?? '')
-			dynamicUserPayload = userMessages.length > 0 ? userMessages.join('\n') : chatText
-		} else {
-			// For api mode, proceed with the native API request format.
-			chatText = messages
-				.filter((message) => message.role !== 'system')
-				.map((message) => `${message.role}: ${message.content ?? ''}`)
-				.join('\n')
-			dynamicUserPayload = messages
-				.filter((message) => message.role === 'user')
-				.map((message) => message.content ?? '')
-				.join('\n')
+		const payload = this.buildPromptPayload(messages)
+		return {
+			chatText: payload.chatText,
+			promptVariables: payload.promptVariables,
+			dynamicUserPayload: payload.chatText,
 		}
-
-		return { chatText, promptVariables, systemPrompt, dynamicUserPayload }
 	}
 
 	private buildCorrectionPayload(
@@ -470,12 +401,6 @@ export class TlAiClient implements LLMClient {
 		// JSON.stringify keeps untrusted model output data inside a single
 		// structured payload, so it cannot forge textual context boundaries.
 		return JSON.stringify(correctionContext)
-	}
-
-	private buildCorrectionChatText(correctionPayload: string, systemPrompt: string): string {
-		if (this.config.tlPromptTransport === 'prompt_variables') return correctionPayload
-		if (systemPrompt) return `system: ${systemPrompt}\nuser: ${correctionPayload}`
-		return `user: ${correctionPayload}`
 	}
 
 	private canAttemptJsonCorrection(
@@ -603,10 +528,10 @@ export class TlAiClient implements LLMClient {
 				failedAssistantContent,
 				originalError as InvokeError
 			)
-			const correctionChatText = this.buildCorrectionChatText(
-				correctionPayload,
-				prompt.systemPrompt
-			)
+			// The system prompt is already bound to the correction session via
+			// init_session.prompt_variables. Keep chat.data.txt limited to the
+			// structured correction payload so it cannot be mistaken for role text.
+			const correctionChatText = correctionPayload
 
 			// This is intentionally one local correction attempt. Any generic retry
 			// configured on LLM.invoke remains outside this method.

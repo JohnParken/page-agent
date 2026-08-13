@@ -9,32 +9,26 @@ const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(currentDirectory, '../..')
 const fixturesDirectory = resolve(currentDirectory, 'fixtures')
 const controllerDistDirectory = resolve(currentDirectory, '../page-controller/dist/lib')
-const controllerIifeDistDirectory = resolve(currentDirectory, '../page-controller/dist/iife')
 const pageAgentDistDirectory = resolve(currentDirectory, '../page-agent/dist/iife')
 
 // Load .env from project root
 dotenvConfig({ path: resolve(projectRoot, '.env') })
 
 /**
- * Explicitly allow-listed demo configuration exposed through /api/env-config.
+ * LLM configuration env vars, exposed to the browser via /api/env-config.
+ * Prefix with PUBLIC_LLM_ to keep them separate from other env vars.
  */
 function getEnvConfig() {
 	return {
-		LLM_PROVIDER: process.env.LLM_PROVIDER || 'tl',
+		LLM_PROVIDER: process.env.LLM_PROVIDER || 'tlclient',
 		LLM_MODEL_NAME: process.env.LLM_MODEL_NAME || 'qwen3.5-plus',
-		LLM_MAX_RETRIES: process.env.LLM_MAX_RETRIES || '',
-		LLM_BASE_URL: process.env.LLM_BASE_URL || process.env.OPENAI_BASE_URL || '',
-		LLM_API_KEY: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || '',
-		LLM_ENDPOINT_AGENT:
-			process.env.LLM_ENDPOINT_AGENT || process.env.TL_ENDPOINT_AGENT || 'localhost:8089',
-		LLM_APP_ID: process.env.LLM_APP_ID || process.env.TL_APP_ID || '',
-		LLM_TR_CODE: process.env.LLM_TR_CODE || process.env.TL_TR_CODE || '',
-		LLM_TR_VERSION: process.env.LLM_TR_VERSION || process.env.TL_TR_VERSION || '',
-		LLM_TOOL_CALLING_MODE:
-			process.env.LLM_TOOL_CALLING_MODE || process.env.TL_TOOL_CALLING_MODE || 'system_prompt',
-		LLM_DS_MODE: process.env.LLM_DS_MODE || '',
-		TL_PROMPT_TRANSPORT: process.env.TL_PROMPT_TRANSPORT || 'legacy_txt',
-		TL_SYSTEM_PROMPT_VARIABLE_NAME: process.env.TL_SYSTEM_PROMPT_VARIABLE_NAME || 'system_prompt',
+		OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || '',
+		OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+		TL_ENDPOINT_AGENT: process.env.TL_ENDPOINT_AGENT || 'localhost:8089',
+		TL_APP_ID: process.env.TL_APP_ID || '',
+		TL_TR_CODE: process.env.TL_TR_CODE || '',
+		TL_TR_VERSION: process.env.TL_TR_VERSION || '',
+		TL_TOOL_CALLING_MODE: process.env.TL_TOOL_CALLING_MODE || 'system_prompt',
 	}
 }
 
@@ -73,27 +67,15 @@ function createFixtureServer(port) {
 			}
 
 			const isLibraryAsset = requestURL.pathname.startsWith('/lib/')
-			const isControllerIifeAsset = requestURL.pathname.startsWith('/controller-iife/')
 			const isPageAgentAsset = requestURL.pathname.startsWith('/page-agent/')
 			const relativePath = decodeURIComponent(requestURL.pathname)
-				.replace(
-					isLibraryAsset
-						? /^\/lib\//
-						: isControllerIifeAsset
-							? /^\/controller-iife\//
-							: isPageAgentAsset
-								? /^\/page-agent\//
-								: /^\/+/,
-					''
-				)
+				.replace(isLibraryAsset ? /^\/lib\// : isPageAgentAsset ? /^\/page-agent\// : /^\/+/, '')
 				.replace(/^\/+/, '')
 			const root = isLibraryAsset
 				? controllerDistDirectory
-				: isControllerIifeAsset
-					? controllerIifeDistDirectory
-					: isPageAgentAsset
-						? pageAgentDistDirectory
-						: fixturesDirectory
+				: isPageAgentAsset
+					? pageAgentDistDirectory
+					: fixturesDirectory
 			const filePath = resolveInside(root, relativePath || 'host.html')
 			if (!filePath) {
 				response.writeHead(403).end('Forbidden')

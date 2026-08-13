@@ -64,7 +64,6 @@ export default defineConfig(() => ({
 		'import.meta.env.LLM_TR_CODE': JSON.stringify(process.env.LLM_TR_CODE),
 		'import.meta.env.LLM_TR_VERSION': JSON.stringify(process.env.LLM_TR_VERSION),
 		'import.meta.env.LLM_TOOL_CALLING_MODE': JSON.stringify(process.env.LLM_TOOL_CALLING_MODE),
-		'import.meta.env.TL_PROMPT_TRANSPORT': JSON.stringify(process.env.TL_PROMPT_TRANSPORT),
 		'import.meta.env.TL_SYSTEM_PROMPT_VARIABLE_NAME': JSON.stringify(
 			process.env.TL_SYSTEM_PROMPT_VARIABLE_NAME
 		),

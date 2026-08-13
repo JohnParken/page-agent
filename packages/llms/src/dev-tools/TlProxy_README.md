@@ -43,17 +43,17 @@ const client = new TlAiClient({
     appId: 'test-app',
     trCode: 'test-code',
     trVersion: '1.0',
-    tlPromptTransport: 'prompt_variables',
     tlSystemPromptVariableName: 'system_prompt',
     // ... 其他配置
 })
 ```
 
-`tlPromptTransport` 默认为兼容旧服务的 `legacy_txt`。启用 `prompt_variables` 后，TlClient 会在
-`init_session` 中只发送 `system_prompt`，不再发送模型 `name` 变量，并在 `chat.data.txt` 中只发送动态 user
+TlClient 固定使用 `prompt_variables` 传输：每次调用在 `init_session` 中发送
+`tlSystemPromptVariableName` 对应的 system prompt，并在 `chat.data.txt` 中只发送动态 user
 内容。代理按 session 保存这些变量，再向 Qwen 还原为独立的 system/user 消息。若使用自定义
 system 变量名，Client 的 `tlSystemPromptVariableName` 必须与 Proxy 的
-`TL_SYSTEM_PROMPT_VARIABLE_NAME` 保持一致。
+`TL_SYSTEM_PROMPT_VARIABLE_NAME` 保持一致。代理仍兼容未发送 system 变量的旧外部客户端，
+此时会按 `system:` / `user:` 标记解析 `chat.data.txt`。
 
 TlProxy 对上游模型的响应保持透明：它只把 Qwen `message.content` 转换为 chatbbc 响应或 SSE，
 不会解析、修复或重试非法 AgentOutput。JSON 纠错由 TlClient 负责；首次 system-prompt 响应出现

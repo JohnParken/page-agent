@@ -149,7 +149,6 @@ LLM_ENDPOINT_AGENT=localhost:8089
 LLM_MODEL_NAME=qwen3.5-plus
 LLM_MAX_RETRIES=1
 LLM_TOOL_CALLING_MODE=system_prompt
-TL_PROMPT_TRANSPORT=prompt_variables
 TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt
 ```
 
@@ -158,9 +157,11 @@ Only `LLM_PROVIDER`, `LLM_ENDPOINT_AGENT`, and `LLM_MODEL_NAME` are required by 
 `LLM_BASE_URL` and `LLM_API_KEY` are OpenAI-provider settings and are not used by the built-in `TlAiClient`.
 `LLM_PROVIDER` accepts only the public identifiers `tl`, `ds`, and `openai`; client class names such as
 `tlclient`, `dsclient`, and `openaiclient` are not configuration values.
-The optional `TL_PROMPT_TRANSPORT` and `TL_SYSTEM_PROMPT_VARIABLE_NAME` values select how the demo
-separates its fixed system prompt from the dynamic user payload. `LLM_MAX_RETRIES` is a non-negative
-integer and defaults to `0`; setting it to `1` retries one transient or malformed model response.
+TlClient always uses the `prompt_variables` protocol: it sends the fixed system prompt through
+`init_session.data.prompt_variables` and reserves `chat.data.txt` for the single dynamic user payload.
+`TL_SYSTEM_PROMPT_VARIABLE_NAME` optionally sets the system-prompt variable name (default:
+`system_prompt`) and must match the Tl template. `LLM_MAX_RETRIES` is a non-negative integer and
+defaults to `0`; setting it to `1` retries one transient or malformed model response.
 
 `packages/page-agent/vite.iife.config.js` loads this file and injects these values into the demo bundle at
 **build time**. Restart `npm run dev:demo` after changing `.env`. These values are bundled into browser
@@ -190,13 +191,12 @@ All supported demo configuration values are:
 | `trCode`                     | `LLM_TR_CODE`                    | `trCode`                     | No              | Defaults to an empty string                                 |
 | `trVersion`                  | `LLM_TR_VERSION`                 | `trVersion`                  | No              | Defaults to an empty string                                 |
 | `toolCallingMode`            | `LLM_TOOL_CALLING_MODE`          | `toolCallingMode`            | No              | `system_prompt` (default for Tl) or `api`                   |
-| `tlPromptTransport`          | `TL_PROMPT_TRANSPORT`            | `tlPromptTransport`          | No              | `legacy_txt` (default) or `prompt_variables`                |
 | `tlSystemPromptVariableName` | `TL_SYSTEM_PROMPT_VARIABLE_NAME` | `tlSystemPromptVariableName` | No              | Defaults to `system_prompt`; must match the Tl template key |
 
 For example, a demo script can override the build-time settings without editing `.env`:
 
 ```html
-<script src="/page-agent.demo.js?provider=tl&endpointAgent=https%3A%2F%2Ftl.example.com&model=my-model&maxRetries=1&toolCallingMode=system_prompt&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt"></script>
+<script src="/page-agent.demo.js?provider=tl&endpointAgent=https%3A%2F%2Ftl.example.com&model=my-model&maxRetries=1&toolCallingMode=system_prompt&tlSystemPromptVariableName=system_prompt"></script>
 ```
 
 For an npm production deployment, configure `PageAgent` at runtime. This is preferred because it does not
@@ -214,20 +214,16 @@ const agent = new PageAgent({
     trCode: 'my-transaction',
     trVersion: '1.0',
     toolCallingMode: 'system_prompt',
-    tlPromptTransport: 'prompt_variables',
     tlSystemPromptVariableName: 'system_prompt',
 })
 ```
 
-`tlPromptTransport` defaults to `legacy_txt`, which keeps the historical `system:` / `user:`
-payload in `chat.data.txt`. Set it to `prompt_variables` only after the Tl prompt template or gateway
-has been updated: the client then sends the complete system message through
-`init_session.data.prompt_variables` and reserves `chat.data.txt` for the single dynamic user payload.
-The system variable name defaults to `system_prompt` and must match the Tl template exactly.
-In this mode the client sends only the configured system variable; it does not add a `name` model
-variable. If a system-prompt response is invalid JSON, TlClient makes one fresh-session correction request
-with the original user payload, failed assistant content, and parser error. The proxy remains a transparent
-transport and never mutates the model response.
+TlClient sends the complete system message through `init_session.data.prompt_variables` and sends only
+the dynamic user payload in `chat.data.txt`. The system variable name defaults to `system_prompt` and must
+match the Tl template exactly. The client does not add a `name` model variable. If a system-prompt response
+is invalid JSON, TlClient makes one fresh-session correction request with the original user payload, failed
+assistant content, and parser error. The proxy remains a transparent transport and never mutates the model
+response.
 
 If production uses a prebuilt IIFE bundle, provide `LLM_*` variables while building it:
 
@@ -240,7 +236,6 @@ LLM_APP_ID=my-app \
 LLM_TR_CODE=my-transaction \
 LLM_TR_VERSION=1.0 \
 LLM_TOOL_CALLING_MODE=system_prompt \
-TL_PROMPT_TRANSPORT=prompt_variables \
 TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt \
 npm run build:demo -w page-agent
 ```

@@ -237,7 +237,7 @@ describe('TlProxyServer prompt transport', () => {
 		])
 	})
 
-	it('keeps legacy role parsing when no system prompt variable is supplied', async () => {
+	it('keeps compatibility role parsing when no system prompt variable is supplied', async () => {
 		const upstreamFetch = vi
 			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
 			.mockResolvedValue(jsonResponse({ choices: [{ message: { content: 'legacy ok' } }] }))
@@ -277,7 +277,7 @@ describe('TlProxyServer prompt transport', () => {
 			],
 		],
 		['empty variable name', [{ name: '', value: 'a' }]],
-		['missing system variable for a non-legacy prompt set', [{ name: 'other', value: 'a' }]],
+		['missing system variable for a non-model prompt set', [{ name: 'other', value: 'a' }]],
 		['empty system variable', [{ name: 'system_prompt', value: '   ' }]],
 	] as const)('rejects %s with a clear 4xx response', async (_label, promptVariables) => {
 		const proxy = new TlProxyServer({

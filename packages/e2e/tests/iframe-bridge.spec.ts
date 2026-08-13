@@ -45,7 +45,6 @@ type DemoWindow = Window & {
 			maxRetries?: number
 			toolCallingMode?: string
 			language?: string
-			tlPromptTransport?: string
 			tlSystemPromptVariableName?: string
 		}
 		status: string
@@ -74,8 +73,7 @@ type DemoWindow = Window & {
 
 const hostOrigin = 'http://127.0.0.1:4173'
 const childOrigin = 'http://127.0.0.1:4174'
-const demoPath =
-	'/host.html?provider=tl&maxRetries=1&tlPromptTransport=prompt_variables&tlSystemPromptVariableName=system_prompt'
+const demoPath = '/host.html?provider=tl&maxRetries=1&tlSystemPromptVariableName=system_prompt'
 
 function markerIndex(content: string, pattern: RegExp): number {
 	for (const line of content.split('\n')) {
@@ -134,8 +132,8 @@ async function cooperativeFrame(page: Page): Promise<Frame> {
 test.describe('cross-origin iframe bridge demo', () => {
 	test.beforeEach(async ({ page }) => {
 		// Keep this test independent from any developer-local .env values. The
-		// prompt transport is explicitly selected through the supported URL query
-		// parameters, while the manual demo can still resolve it from .env.
+		// The system prompt variable is explicitly selected through the supported URL
+		// parameter, while the manual demo can still resolve it from .env.
 		await page.goto(demoPath)
 		await expect(page).toHaveURL(`${hostOrigin}${demoPath}`)
 		await expect
@@ -160,7 +158,6 @@ test.describe('cross-origin iframe bridge demo', () => {
 			maxRetries: 1,
 			toolCallingMode: 'system_prompt',
 			language: 'zh-CN',
-			tlPromptTransport: 'prompt_variables',
 			tlSystemPromptVariableName: 'system_prompt',
 		})
 		expect(await frame.evaluate(() => Boolean((window as DemoWindow).pageAgent))).toBe(false)

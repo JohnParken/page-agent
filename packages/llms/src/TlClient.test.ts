@@ -83,6 +83,11 @@ function getLastSentBody(fetchMock: ReturnType<typeof vi.fn>): {
 
 const signal = new AbortController().signal
 
+const defaultMessages = [
+	{ role: 'system' as const, content: 'Stable system prompt' },
+	{ role: 'user' as const, content: 'Do the task' },
+]
+
 // ---------- Request construction ----------
 
 describe('TlAiClient.invoke — request construction', () => {
@@ -101,7 +106,7 @@ describe('TlAiClient.invoke — request construction', () => {
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'world' } }))
 		)
 
-		await client.invoke([], tools, signal)
+		await client.invoke(defaultMessages, tools, signal)
 
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 		expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8089/chatbbc/init_session')
@@ -115,13 +120,13 @@ describe('TlAiClient.invoke — request construction', () => {
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'world' } }))
 		)
-		await client.invoke([], tools, signal)
+		await client.invoke(defaultMessages, tools, signal)
 
 		setupSession(fetchMock, 'session_2')
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'again' } }))
 		)
-		await client.invoke([], tools, signal)
+		await client.invoke(defaultMessages, tools, signal)
 
 		expect(fetchMock).toHaveBeenCalledTimes(4)
 		expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8089/chatbbc/init_session')
@@ -133,7 +138,7 @@ describe('TlAiClient.invoke — request construction', () => {
 	})
 
 	it('uses prompt_variables transport for the fixed system prompt and raw user payload', async () => {
-		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		const { client, fetchMock } = makeClient()
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'world' } }))
@@ -163,10 +168,7 @@ describe('TlAiClient.invoke — request construction', () => {
 	})
 
 	it('joins multiple system messages with a blank line and accepts a custom variable name', async () => {
-		const { client, fetchMock } = makeClient({
-			tlPromptTransport: 'prompt_variables',
-			tlSystemPromptVariableName: 'fixed_instructions',
-		})
+		const { client, fetchMock } = makeClient({ tlSystemPromptVariableName: 'fixed_instructions' })
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'world' } }))
@@ -189,27 +191,41 @@ describe('TlAiClient.invoke — request construction', () => {
 		expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string).data.txt).toBe('dynamic request')
 	})
 
-	it('rejects invalid prompt_variables configuration and dynamic message shapes', async () => {
-		expect(() =>
-			makeClient({ tlPromptTransport: 'prompt_variables', toolCallingMode: 'api' })
-		).toThrow('requires toolCallingMode="system_prompt"')
-		expect(() => makeClient({ tlPromptTransport: 'unsupported' as never })).toThrow(
-			'must be "legacy_txt" or "prompt_variables"'
+	it('keeps system and user messages separated in native api mode', async () => {
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
+		setupSession(fetchMock)
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'api' } }))
 		)
-		expect(() =>
-			makeClient({ tlPromptTransport: 'prompt_variables', tlSystemPromptVariableName: '  ' })
-		).toThrow('must not be empty')
+
+		await client.invoke(
+			[
+				{ role: 'system', content: 'Native system instructions' },
+				{ role: 'user', content: 'Native API request' },
+			],
+			{ greet: makeTool() },
+			signal
+		)
+
+		const initBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+		expect(initBody.data.prompt_variables).toEqual([
+			{ name: 'system_prompt', value: 'Native system instructions' },
+		])
+		expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string).data.txt).toBe(
+			'Native API request'
+		)
+	})
+
+	it('rejects invalid prompt variable names and dynamic message shapes', async () => {
+		expect(() => makeClient({ tlSystemPromptVariableName: '  ' })).toThrow('must not be empty')
 		expect(() =>
 			makeClient({
-				tlPromptTransport: 'prompt_variables',
 				tlSystemPromptVariableName: ' system_prompt ',
 			})
 		).toThrow('leading or trailing whitespace')
-		expect(() =>
-			makeClient({ tlPromptTransport: 'prompt_variables', tlSystemPromptVariableName: 'name' })
-		).toThrow('reserved')
+		expect(() => makeClient({ tlSystemPromptVariableName: 'name' })).toThrow('reserved')
 
-		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		const { client, fetchMock } = makeClient()
 		await expect(
 			client.invoke(
 				[
@@ -258,7 +274,10 @@ describe('TlAiClient — wire logging', () => {
 
 		try {
 			await client.invoke(
-				[{ role: 'user', content: 'show the wire packets' }],
+				[
+					{ role: 'system', content: 'Wire logging system prompt' },
+					{ role: 'user', content: 'show the wire packets' },
+				],
 				{ greet: makeTool() },
 				signal
 			)
@@ -289,7 +308,7 @@ describe('TlAiClient — wire logging', () => {
 					body: expect.objectContaining({
 						data: expect.objectContaining({
 							session_id: 'logged-session',
-							txt: 'user: show the wire packets',
+							txt: 'show the wire packets',
 							stream: true,
 						}),
 					}),
@@ -335,8 +354,8 @@ describe('TlAiClient.initSession', () => {
 		expect(request.signal).toBe(signal)
 	})
 
-	it('does not send the legacy model variable through prompt_variables initSession', async () => {
-		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+	it('does not send the model variable through prompt_variables initSession', async () => {
+		const { client, fetchMock } = makeClient()
 		fetchMock.mockResolvedValueOnce(jsonResponse(initSessionBody('prompt-session')))
 
 		await expect(client.initSession(signal)).resolves.toBe('prompt-session')
@@ -409,7 +428,7 @@ describe('TlAiClient.invoke — success', () => {
 			])
 		)
 
-		const result = await client.invoke([], { greet: tool }, signal)
+		const result = await client.invoke(defaultMessages, { greet: tool }, signal)
 
 		expect(fetchMock.mock.calls[1][1]?.headers).toEqual({
 			'Content-Type': 'application/json',
@@ -447,7 +466,7 @@ describe('TlAiClient.invoke — success', () => {
 			)
 		)
 
-		const result = await client.invoke([], { greet: tool }, signal)
+		const result = await client.invoke(defaultMessages, { greet: tool }, signal)
 		expect(result.toolCall.args).toEqual({ name: '你好' })
 	})
 
@@ -459,7 +478,7 @@ describe('TlAiClient.invoke — success', () => {
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'Alice' } }))
 		)
 
-		const result = await client.invoke([], { greet: tool }, signal)
+		const result = await client.invoke(defaultMessages, { greet: tool }, signal)
 
 		expect(result.toolCall).toEqual({ name: 'greet', args: { name: 'Alice' } })
 		expect(result.toolResult).toBe('hello Alice')
@@ -474,7 +493,7 @@ describe('TlAiClient.invoke — success', () => {
 			chatResponse(JSON.stringify({ name: 'greet', arguments: { name: 'Bob' } }))
 		)
 
-		const result = await client.invoke([], { greet: tool }, signal)
+		const result = await client.invoke(defaultMessages, { greet: tool }, signal)
 
 		expect(result.toolCall).toEqual({ name: 'greet', args: { name: 'Bob' } })
 		expect(result.toolResult).toBe('hello Bob')
@@ -493,7 +512,7 @@ describe('TlAiClient.invoke — success', () => {
 			)
 		)
 
-		const result = await client.invoke([], { greet: tool }, signal)
+		const result = await client.invoke(defaultMessages, { greet: tool }, signal)
 
 		expect(result.toolCall).toEqual({ name: 'greet', args: { name: 'Carol' } })
 		expect(result.toolResult).toBe('hello Carol')
@@ -539,7 +558,9 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 			})
 		)
 
-		const result = await client.invoke([], { greet: tool }, signal, { normalizeResponse })
+		const result = await client.invoke(defaultMessages, { greet: tool }, signal, {
+			normalizeResponse,
+		})
 
 		expect(normalizeResponse).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -582,7 +603,9 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 			})
 		)
 
-		const result = await client.invoke([], { greet: tool }, signal, { normalizeResponse })
+		const result = await client.invoke(defaultMessages, { greet: tool }, signal, {
+			normalizeResponse,
+		})
 
 		expect(normalizeResponse).toHaveBeenCalledTimes(1)
 		expect(normalizeResponse).toHaveBeenCalledWith(
@@ -632,9 +655,14 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 			})
 		)
 
-		const result = await client.invoke([], { greet: greetTool, other: otherTool }, signal, {
-			normalizeResponse,
-		})
+		const result = await client.invoke(
+			defaultMessages,
+			{ greet: greetTool, other: otherTool },
+			signal,
+			{
+				normalizeResponse,
+			}
+		)
 
 		expect(result.toolCall).toEqual({ name: 'other', args: { name: 'switched' } })
 		expect(otherTool.execute).toHaveBeenCalledWith({ name: 'switched' })
@@ -649,7 +677,7 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 		)
 
 		await expect(
-			client.invoke([], { greet: makeTool() }, signal, {
+			client.invoke(defaultMessages, { greet: makeTool() }, signal, {
 				normalizeResponse: () => ({ choices: [{ message: {} }] }),
 			})
 		).rejects.toMatchObject({
@@ -666,7 +694,7 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 		)
 
 		await expect(
-			client.invoke([], { greet: makeTool() }, signal, {
+			client.invoke(defaultMessages, { greet: makeTool() }, signal, {
 				normalizeResponse: () => {
 					throw new Error('boom')
 				},
@@ -688,7 +716,7 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 		abortErr.name = 'AbortError'
 
 		await expect(
-			client.invoke([], { greet: makeTool() }, signal, {
+			client.invoke(defaultMessages, { greet: makeTool() }, signal, {
 				normalizeResponse: () => {
 					throw abortErr
 				},
@@ -701,8 +729,8 @@ describe('TlAiClient.invoke — normalizeResponse', () => {
 // ---------- JSON correction ----------
 
 describe('TlAiClient.invoke — JSON correction', () => {
-	it('retries one invalid response with a structured correction payload in prompt_variables mode', async () => {
-		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+	it('retries one invalid response with a structured correction payload', async () => {
+		const { client, fetchMock } = makeClient()
 		const tool = makeTool()
 		const messages = [
 			{ role: 'system' as const, content: 'Stable system prompt' },
@@ -782,7 +810,7 @@ describe('TlAiClient.invoke — JSON correction', () => {
 	})
 
 	it('keeps a valid response at the normal init/chat boundary', async () => {
-		const { client, fetchMock } = makeClient({ tlPromptTransport: 'prompt_variables' })
+		const { client, fetchMock } = makeClient()
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'valid' } }))
@@ -802,10 +830,7 @@ describe('TlAiClient.invoke — JSON correction', () => {
 
 	it('fails strictly after one correction response also fails and records both parse failures', async () => {
 		const failureLogger = vi.fn()
-		const { client, fetchMock } = makeClient({
-			tlPromptTransport: 'prompt_variables',
-			failureLogger,
-		})
+		const { client, fetchMock } = makeClient({ failureLogger })
 		const invalidContent = '{"still":"invalid"}'
 		setupSession(fetchMock, 'first-session')
 		fetchMock.mockResolvedValueOnce(chatResponse(invalidContent))
@@ -834,41 +859,13 @@ describe('TlAiClient.invoke — JSON correction', () => {
 		})
 	})
 
-	it('supports legacy_txt correction while preserving the original system prompt', async () => {
-		const { client, fetchMock } = makeClient()
-		setupSession(fetchMock, 'first-session')
-		fetchMock.mockResolvedValueOnce(chatResponse('{"broken":true}'))
-		setupSession(fetchMock, 'second-session')
-		fetchMock.mockResolvedValueOnce(
-			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'legacy' } }))
-		)
-
-		await client.invoke(
-			[
-				{ role: 'system', content: 'Legacy system prompt' },
-				{ role: 'user', content: 'Legacy task' },
-			],
-			{ greet: makeTool() },
-			signal
-		)
-
-		expect(fetchMock).toHaveBeenCalledTimes(4)
-		const firstInit = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
-		const secondInit = JSON.parse(fetchMock.mock.calls[2][1]!.body as string)
-		expect(firstInit.data.prompt_variables).toEqual([{ name: 'name', value: 'qwen3.5-plus' }])
-		expect(secondInit.data.prompt_variables).toEqual(firstInit.data.prompt_variables)
-		const correctionChat = JSON.parse(fetchMock.mock.calls[3][1]!.body as string).data.txt as string
-		expect(correctionChat).toMatch(/^system: Legacy system prompt\nuser: \{"instruction"/)
-		expect(correctionChat).toContain('Legacy task')
-	})
-
 	it('does not correct native api mode responses', async () => {
 		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(chatResponse('{"not":"a tool call"}'))
 
 		await expect(
-			client.invoke([{ role: 'user', content: 'Do the task' }], { greet: makeTool() }, signal)
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
 		).rejects.toMatchObject({ type: InvokeErrorTypes.INVALID_RESPONSE })
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 	})
@@ -880,7 +877,7 @@ describe('TlAiClient.invoke — JSON correction', () => {
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 123 } }))
 		)
 		await expect(
-			invalidArgs.client.invoke([], { greet: makeTool() }, signal)
+			invalidArgs.client.invoke(defaultMessages, { greet: makeTool() }, signal)
 		).rejects.toMatchObject({
 			type: InvokeErrorTypes.INVALID_TOOL_ARGS,
 		})
@@ -896,7 +893,7 @@ describe('TlAiClient.invoke — JSON correction', () => {
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'x' } }))
 		)
 		await expect(
-			execution.client.invoke([], { greet: executionFailure }, signal)
+			execution.client.invoke(defaultMessages, { greet: executionFailure }, signal)
 		).rejects.toMatchObject({
 			type: InvokeErrorTypes.TOOL_EXECUTION_ERROR,
 		})
@@ -915,7 +912,10 @@ describe('TlAiClient.invoke — errors', () => {
 
 		await expect(
 			client.invoke(
-				[{ role: 'user', content: 'request text must not be copied into the failure log' }],
+				[
+					{ role: 'system', content: 'Failure logger system prompt' },
+					{ role: 'user', content: 'request text must not be copied into the failure log' },
+				],
 				{ greet: makeTool() },
 				signal
 			)
@@ -956,7 +956,7 @@ describe('TlAiClient.invoke — errors', () => {
 		const syntaxError = new SyntaxError('Unexpected token at position 22')
 
 		await expect(
-			client.invoke([], { greet: makeTool() }, signal, {
+			client.invoke(defaultMessages, { greet: makeTool() }, signal, {
 				normalizeResponse: () => {
 					throw new InvokeError(
 						InvokeErrorTypes.INVALID_RESPONSE,
@@ -993,7 +993,9 @@ describe('TlAiClient.invoke — errors', () => {
 		const rawContent = JSON.stringify({ tool_name: 'greet', parameters: { name: 123 } })
 		fetchMock.mockResolvedValueOnce(chatResponse(rawContent))
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			type: InvokeErrorTypes.INVALID_TOOL_ARGS,
 		})
 
@@ -1020,7 +1022,9 @@ describe('TlAiClient.invoke — errors', () => {
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(textStreamResponse('not json'))
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			type: InvokeErrorTypes.INVALID_RESPONSE,
 		})
 		expect(consoleSpy).toHaveBeenCalledWith(
@@ -1035,7 +1039,9 @@ describe('TlAiClient.invoke — errors', () => {
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(textStreamResponse('not json'))
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			name: 'InvokeError',
 			type: InvokeErrorTypes.INVALID_RESPONSE,
 		})
@@ -1046,7 +1052,9 @@ describe('TlAiClient.invoke — errors', () => {
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(chatResponse(JSON.stringify({ hello: 'world' })))
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			name: 'InvokeError',
 			type: InvokeErrorTypes.INVALID_RESPONSE,
 		})
@@ -1066,7 +1074,9 @@ describe('TlAiClient.invoke — errors', () => {
 			)
 		)
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			name: 'InvokeError',
 			type: InvokeErrorTypes.INVALID_RESPONSE,
 		})
@@ -1080,7 +1090,7 @@ describe('TlAiClient.invoke — errors', () => {
 		)
 
 		await expect(
-			client.invoke([], { greet: makeTool() }, signal, {
+			client.invoke(defaultMessages, { greet: makeTool() }, signal, {
 				normalizeResponse: () => ({
 					choices: [
 						{
@@ -1111,7 +1121,9 @@ describe('TlAiClient.invoke — errors', () => {
 			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 123 } }))
 		)
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			name: 'InvokeError',
 			type: InvokeErrorTypes.INVALID_TOOL_ARGS,
 		})
@@ -1124,7 +1136,9 @@ describe('TlAiClient.invoke — errors', () => {
 			chatResponse(JSON.stringify({ tool_name: 'mystery', parameters: {} }))
 		)
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			name: 'InvokeError',
 			type: InvokeErrorTypes.UNKNOWN,
 		})
@@ -1135,7 +1149,9 @@ describe('TlAiClient.invoke — errors', () => {
 		setupSession(fetchMock)
 		fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'unauthorized' }, 401))
 
-		await expect(client.invoke([], { greet: makeTool() }, signal)).rejects.toMatchObject({
+		await expect(
+			client.invoke(defaultMessages, { greet: makeTool() }, signal)
+		).rejects.toMatchObject({
 			name: 'InvokeError',
 			type: InvokeErrorTypes.AUTH_ERROR,
 		})

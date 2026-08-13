@@ -319,7 +319,9 @@ npm run demo:iframe-bridge
 
 该中文 Demo 只在父页面安装 PageAgent，子页面仅安装 `PageController + FrameBridgeHost`，不会创建 Agent 或调用 LLM。父页面 PageAgent 默认使用内置 `TlAiClient` 的 `system_prompt` 模式，默认 endpoint 为 `http://127.0.0.1:8089`；使用本地 Tl 代理时，需另开终端运行 `npm run start:tl-proxy -w @page-agent/llms`。`execute_javascript` 只在父页面本地执行，父页面不能通过 bridge 在子页面执行脚本。
 
-`npm run demo:iframe-bridge` 会在启动时读取仓库根目录 `.env`。可用以下配置覆盖 Tl 连接并启用新的 system prompt 变量传输：
+`npm run demo:iframe-bridge` 会在启动时读取仓库根目录 `.env`。内置 `TlAiClient` 始终使用
+`prompt_variables`：system prompt 通过 `init_session.data.prompt_variables` 发送，动态 user payload
+单独放在 `chat.data.txt`。可用以下配置覆盖 Tl 连接并设置 system prompt 变量名：
 
 ```dotenv
 LLM_PROVIDER=tl
@@ -327,11 +329,13 @@ LLM_MODEL_NAME=qwen3.5-plus
 LLM_MAX_RETRIES=1
 LLM_ENDPOINT_AGENT=http://127.0.0.1:8089
 LLM_TOOL_CALLING_MODE=system_prompt
-TL_PROMPT_TRANSPORT=prompt_variables
 TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt
 ```
 
-`LLM_PROVIDER` 只接受 `tl`、`ds` 或 `openai`，不再接受 `tlclient`、`dsclient`、`openaiclient` 等实现类名称。其中 `TL_PROMPT_TRANSPORT` 未配置时仍默认为 `legacy_txt`；设为 `prompt_variables` 后，`TL_SYSTEM_PROMPT_VARIABLE_NAME` 必须与 Tl 模板和 TlProxy 配置的变量名完全一致。`LLM_MAX_RETRIES` 必须是非负整数，设为 `1` 时会对偶发的网络错误或模型格式错误重试一次。页面 URL 上的 `provider`、`maxRetries`、`tlPromptTransport` 和 `tlSystemPromptVariableName` 查询参数可临时覆盖 `.env`，方便联调。
+`LLM_PROVIDER` 只接受 `tl`、`ds` 或 `openai`，不再接受 `tlclient`、`dsclient`、`openaiclient` 等实现类名称。
+`TL_SYSTEM_PROMPT_VARIABLE_NAME` 默认值为 `system_prompt`，必须与 Tl 模板和 TlProxy 配置的变量名完全一致。
+`LLM_MAX_RETRIES` 必须是非负整数，设为 `1` 时会对偶发的网络错误或模型格式错误重试一次。页面 URL
+上的 `provider`、`maxRetries` 和 `tlSystemPromptVariableName` 查询参数可临时覆盖 `.env`，方便联调。
 
 ## 10. 常见错误排查
 

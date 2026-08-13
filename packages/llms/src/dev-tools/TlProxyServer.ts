@@ -447,8 +447,10 @@ export class TlProxyServer {
 		}
 
 		const hasSystemPrompt = seenNames.has(this.config.systemPromptVariableName)
-		const hasNonLegacyVariable = promptVariables.some(({ name }) => name !== 'name')
-		if (hasNonLegacyVariable && !hasSystemPrompt) {
+		// Keep accepting the historical model-only variable for external clients;
+		// any other prompt variable must identify the configured system prompt.
+		const hasNonModelVariable = promptVariables.some(({ name }) => name !== 'name')
+		if (hasNonModelVariable && !hasSystemPrompt) {
 			throw new ProxyRequestError(
 				`data.prompt_variables must include the system prompt variable "${this.config.systemPromptVariableName}"`,
 				400
