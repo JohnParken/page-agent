@@ -86,6 +86,11 @@ bridgeHost.start()
 The host uses a dedicated `MessageChannel` after the origin-checked handshake. A new
 host instance should be created for a new document/navigation.
 
+While an authorized click or input request is running, the host also relays visual pointer
+movement and click feedback over that authenticated port. Each pointer message is bound to
+the active request ID. The parent translates child-viewport coordinates through the iframe's
+top-level viewport rectangle before updating its `SimulatorMask`.
+
 ## Browser and embedding requirements
 
 -   The parent must allow the child in CSP `frame-src` (or `child-src`), and the child
@@ -108,10 +113,11 @@ are not an extension mechanism.
 
 Observation sends the child controller's browser state (URL, title, scroll hints,
 simplified indexed content, and tree revision/index metadata) to the parent. Actions send
-only an indexed element and the requested text, option, or scroll values. This is not a
-data-filtering boundary: any text or attributes that the child controller includes in its
-browser state are visible to the parent, so do not expose sensitive content to an
-untrusted parent origin.
+only an indexed element and the requested text, option, or scroll values. Click and input
+actions may additionally send request-bound child-viewport pointer coordinates and click
+feedback for the parent visual mask. This is not a data-filtering boundary: any text or
+attributes that the child controller includes in its browser state are visible to the
+parent, so do not expose sensitive content to an untrusted parent origin.
 
 The bridge handles direct, cooperative child frames only. Same-origin frames remain with
 the local DOM controller, nested frames are not recursively discovered, and a child that

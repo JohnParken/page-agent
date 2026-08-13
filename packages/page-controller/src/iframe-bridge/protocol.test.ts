@@ -82,5 +82,32 @@ describe('iframe bridge protocol validators', () => {
 		expect(isBridgePortMessage({ ...response, error: { code: 'NOPE', message: 'bad' } })).toBe(
 			false
 		)
+
+		const pointerMove = {
+			...base,
+			type: 'pointer',
+			sessionId: 'session',
+			frameInstanceId: 'frame',
+			treeRevision: 1,
+			requestId: 'request',
+			action: 'move',
+			x: 12.5,
+			y: -3,
+		}
+		expect(isBridgePortMessage(pointerMove)).toBe(true)
+		expect(isBridgePortMessage({ ...pointerMove, x: Number.NaN })).toBe(false)
+		expect(isBridgePortMessage({ ...pointerMove, extra: true })).toBe(false)
+		expect(isBridgePortMessage({ ...pointerMove, action: 'click', x: undefined })).toBe(false)
+		expect(
+			isBridgePortMessage({
+				...base,
+				type: 'pointer',
+				sessionId: 'session',
+				frameInstanceId: 'frame',
+				treeRevision: 1,
+				requestId: 'request',
+				action: 'click',
+			})
+		).toBe(true)
 	})
 })

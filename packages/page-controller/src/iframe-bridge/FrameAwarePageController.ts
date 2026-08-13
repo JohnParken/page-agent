@@ -2,6 +2,7 @@ import {
 	FrameBridgeClient,
 	type FrameBridgeClientOptions,
 	FrameBridgeError,
+	type FrameBridgePointerDetail,
 	isDirectCrossOriginFrame,
 	normalizeAllowedChildOrigins,
 } from './FrameBridgeClient'
@@ -45,6 +46,7 @@ type IndexTarget =
 interface FrameRecord {
 	client: FrameBridgeClient
 	loadHandler: () => void
+	pointerHandler: EventListener
 }
 
 interface RemoteObservation {
@@ -419,6 +421,7 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 		this.disposed = true
 		for (const [iframe, record] of this.records) {
 			iframe.removeEventListener('load', record.loadHandler)
+			record.client.removeEventListener('pointer', record.pointerHandler)
 			record.client.dispose()
 		}
 		this.records.clear()
@@ -437,6 +440,7 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 		for (const [iframe, record] of this.records) {
 			if (current.has(iframe)) continue
 			iframe.removeEventListener('load', record.loadHandler)
+			record.client.removeEventListener('pointer', record.pointerHandler)
 			record.client.invalidate('Iframe removed')
 			record.client.dispose()
 			this.records.delete(iframe)
@@ -458,13 +462,17 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 			client.invalidate('Iframe loaded or navigated')
 			this.indexTargets.clear()
 		}
+		const pointerHandler: EventListener = (event) => {
+			this.forwardRemotePointer(client, (event as CustomEvent<FrameBridgePointerDetail>).detail)
+		}
 		iframe.addEventListener('load', loadHandler)
+		client.addEventListener('pointer', pointerHandler)
 		client.addEventListener('invalidate', (event) => {
 			this.indexTargets.clear()
 			const detail = event instanceof CustomEvent ? event.detail : undefined
 			this.dispatchEvent(new CustomEvent('invalidate', { detail }))
 		})
-		this.records.set(iframe, { client, loadHandler })
+		this.records.set(iframe, { client, loadHandler, pointerHandler })
 		return client
 	}
 
@@ -476,6 +484,7 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 			const existing = this.records.get(iframe)
 			if (existing) {
 				iframe.removeEventListener('load', existing.loadHandler)
+				existing.client.removeEventListener('pointer', existing.pointerHandler)
 				existing.client.invalidate('Iframe navigated to a same-origin document')
 				existing.client.dispose()
 				this.records.delete(iframe)
@@ -537,6 +546,34 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 		}
 	}
 
+	/** Translate child viewport coordinates into the top-level viewport used by SimulatorMask. */
+	private forwardRemotePointer(client: FrameBridgeClient, detail: FrameBridgePointerDetail): void {
+		if (this.disposed) return
+		const iframe = client.iframe
+		const record = this.records.get(iframe)
+		if (record?.client !== client || !iframe.isConnected || !this.ownerDocument.contains(iframe)) {
+			return
+		}
+
+		const CustomEventConstructor =
+			(this.ownerWindow as Window & typeof globalThis).CustomEvent ?? CustomEvent
+		if (detail.action === 'click') {
+			this.ownerWindow.dispatchEvent(new CustomEventConstructor('PageAgent::ClickPointer'))
+			return
+		}
+
+		const rect = iframe.getBoundingClientRect()
+		const scaleX = iframe.offsetWidth > 0 ? rect.width / iframe.offsetWidth : 1
+		const scaleY = iframe.offsetHeight > 0 ? rect.height / iframe.offsetHeight : 1
+		const x = rect.left + (iframe.clientLeft + detail.x) * scaleX
+		const y = rect.top + (iframe.clientTop + detail.y) * scaleY
+		if (!Number.isFinite(x) || !Number.isFinite(y)) return
+
+		this.ownerWindow.dispatchEvent(
+			new CustomEventConstructor('PageAgent::MovePointerTo', { detail: { x, y } })
+		)
+	}
+
 	private async runRemoteAction(
 		client: FrameBridgeClient,
 		expectedRevision: number,
@@ -572,6 +609,7 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 
 		if (record?.client === client) {
 			iframe.removeEventListener('load', record.loadHandler)
+			client.removeEventListener('pointer', record.pointerHandler)
 			client.invalidate('Iframe was removed or no longer matches frameSelector')
 			client.dispose()
 			this.records.delete(iframe)

@@ -35,6 +35,11 @@ export interface FrameBridgeConnection {
 	capabilities: FrameBridgeCapability[]
 }
 
+/** Parent-facing visual pointer feedback emitted by an authenticated child host. */
+export type FrameBridgePointerDetail =
+	| { action: 'move'; x: number; y: number }
+	| { action: 'click' }
+
 interface PendingRequest {
 	method: FrameBridgeMethod
 	resolve: (value: unknown) => void
@@ -634,6 +639,22 @@ export class FrameBridgeClient extends EventTarget {
 					capabilities: [...message.capabilities],
 				})
 			}
+			return
+		}
+		if (message.type === 'pointer') {
+			if (!this.established) return
+			const pending = this.pending.get(message.requestId)
+			if (
+				!pending?.started ||
+				(pending.method !== 'clickElement' && pending.method !== 'inputText')
+			) {
+				return
+			}
+			const detail: FrameBridgePointerDetail =
+				message.action === 'move'
+					? { action: 'move', x: message.x, y: message.y }
+					: { action: 'click' }
+			this.dispatchEvent(new CustomEvent<FrameBridgePointerDetail>('pointer', { detail }))
 			return
 		}
 		if (message.type === 'started') {

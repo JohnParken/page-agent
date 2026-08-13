@@ -100,15 +100,6 @@ export interface TlFailureLogEntry {
 export type TlFailureLogger = (entry: TlFailureLogEntry) => void | Promise<void>
 
 /**
- * Transport used by the Tl client to deliver prompt roles.
- *
- * `legacy_txt` keeps the historical role-prefixed chat payload. `prompt_variables`
- * sends the system message through init_session.prompt_variables and reserves the
- * chat payload for the single dynamic user message.
- */
-export type TlPromptTransport = 'legacy_txt' | 'prompt_variables'
-
-/**
  * LLM Client interface
  * Note: Does not use generics because each tool in the tools array has different types
  */
@@ -237,14 +228,8 @@ export interface LLMConfig {
 	toolCallingMode?: 'api' | 'system_prompt'
 
 	/**
-	 * Tl-specific prompt transport. Defaults to the backwards-compatible
-	 * role-prefixed text payload.
-	 */
-	tlPromptTransport?: TlPromptTransport
-
-	/**
-	 * Tl-specific prompt variable name used for the system message when
-	 * `tlPromptTransport` is `prompt_variables`. Defaults to `system_prompt`.
+	 * Tl-specific prompt variable name used for the system message in
+	 * `prompt_variables` transport. Defaults to `system_prompt`.
 	 */
 	tlSystemPromptVariableName?: string
 

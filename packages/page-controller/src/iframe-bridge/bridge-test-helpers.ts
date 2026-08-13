@@ -24,6 +24,13 @@ export interface BridgeHarness {
 	setResponseTreeRevision(revision: number): void
 	setDropStarted(drop: boolean): void
 	setDropResponses(drop: boolean): void
+	setActionPointerFeedback(
+		pointers: ({ action: 'move'; x: number; y: number } | { action: 'click' })[]
+	): void
+	sendPointer(
+		pointer: { action: 'move'; x: number; y: number } | { action: 'click' },
+		requestId: string
+	): void
 	dispose(): void
 }
 
@@ -56,6 +63,9 @@ export function createBridgeHarness(): BridgeHarness {
 	let responseTreeRevision = 1
 	let disposed = false
 	let childPort: MessagePort | null = null
+	let activeSessionId = 'session-1'
+	let activeFrameInstanceId = 'frame-1'
+	let actionPointerFeedback: ({ action: 'move'; x: number; y: number } | { action: 'click' })[] = []
 
 	const dispatchAvailable = (sessionId: string) => {
 		ownerWindow.dispatchEvent(
@@ -91,6 +101,20 @@ export function createBridgeHarness(): BridgeHarness {
 				requestId: request.requestId,
 				method,
 			})
+		}
+		if (method === 'clickElement' || method === 'inputText') {
+			for (const pointer of actionPointerFeedback) {
+				childPort.postMessage({
+					protocol: IFRAME_BRIDGE_PROTOCOL,
+					version: BRIDGE_PROTOCOL_VERSION,
+					type: 'pointer',
+					sessionId: request.sessionId,
+					frameInstanceId: request.frameInstanceId,
+					treeRevision,
+					requestId: request.requestId,
+					...pointer,
+				})
+			}
 		}
 		if (dropResponses) return
 		if (method === 'getBrowserState') treeRevision = responseTreeRevision
@@ -132,6 +156,8 @@ export function createBridgeHarness(): BridgeHarness {
 				return
 			}
 			if (message.type === 'connect') {
+				activeSessionId = message.sessionId as string
+				activeFrameInstanceId = message.frameInstanceId as string
 				childPort = (transfer?.[0] as MessagePort | undefined) ?? null
 				if (!childPort) return
 				childPort.addEventListener('message', (event) =>
@@ -166,6 +192,21 @@ export function createBridgeHarness(): BridgeHarness {
 		},
 		setDropResponses(drop) {
 			dropResponses = drop
+		},
+		setActionPointerFeedback(pointers) {
+			actionPointerFeedback = pointers
+		},
+		sendPointer(pointer, requestId) {
+			childPort?.postMessage({
+				protocol: IFRAME_BRIDGE_PROTOCOL,
+				version: BRIDGE_PROTOCOL_VERSION,
+				type: 'pointer',
+				sessionId: activeSessionId,
+				frameInstanceId: activeFrameInstanceId,
+				treeRevision,
+				requestId,
+				...pointer,
+			})
 		},
 		dispose() {
 			disposed = true

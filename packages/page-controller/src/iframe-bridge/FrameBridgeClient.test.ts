@@ -29,6 +29,31 @@ describe('FrameBridgeClient', () => {
 		expect(client.connected).toBe(false)
 	})
 
+	it('emits authenticated child pointer feedback from the active port', async () => {
+		const harness = createBridgeHarness()
+		harnesses.push(harness)
+		const client = new FrameBridgeClient({
+			iframe: harness.iframe,
+			allowedChildOrigins: [CHILD_ORIGIN],
+			window: harness.ownerWindow,
+		})
+		const received: unknown[] = []
+		client.addEventListener('pointer', (event) => {
+			received.push((event as CustomEvent<unknown>).detail)
+		})
+
+		await client.connect('session-1')
+		harness.sendPointer({ action: 'move', x: 1, y: 2 }, 'not-pending')
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(received).toEqual([])
+
+		await client.getBrowserState()
+		harness.setActionPointerFeedback([{ action: 'move', x: 12, y: 34 }, { action: 'click' }])
+		await client.clickElement(1)
+
+		expect(received).toEqual([{ action: 'move', x: 12, y: 34 }, { action: 'click' }])
+	})
+
 	it('keeps the current tree revision monotonic when a stale response arrives', async () => {
 		const harness = createBridgeHarness()
 		harnesses.push(harness)

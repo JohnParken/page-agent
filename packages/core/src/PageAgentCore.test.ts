@@ -65,6 +65,17 @@ function extractQuotationExample(prompt: string): Record<string, unknown> {
 	return JSON.parse(example)
 }
 
+function extractTlSystemPrompt(requestBody: unknown): string {
+	const promptVariables = (
+		requestBody as {
+			data?: { prompt_variables?: { name: string; value: string }[] }
+		}
+	)?.data?.prompt_variables
+	const systemPrompt = promptVariables?.find(({ name }) => name === 'system_prompt')?.value
+	if (!systemPrompt) throw new Error('Tl system prompt variable was not found in init request')
+	return systemPrompt
+}
+
 /** OpenAI-compatible SSE stream whose delta.content carries the AgentOutput JSON. */
 function openaiSseAgentResponse(args: unknown): Response {
 	const content = JSON.stringify(args)
@@ -382,15 +393,14 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			const result = await agent.execute('do something')
 			expect(result).toMatchObject({ success: true, data: 'all done' })
 
-			const chatBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
-				data: { txt: string }
-			}
-			expect(chatBody.data.txt).toContain('<output_contract mode="system_prompt">')
-			expect(chatBody.data.txt).toContain('<agent_output_schema>')
-			expect(chatBody.data.txt).toContain('"action"')
-			expect(chatBody.data.txt).toContain('"done"')
-			expect(chatBody.data.txt).not.toContain('<tools>')
-			expect(chatBody.data.txt).not.toContain('"type": "function"')
+			const initBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+			const systemPrompt = extractTlSystemPrompt(initBody)
+			expect(systemPrompt).toContain('<output_contract mode="system_prompt">')
+			expect(systemPrompt).toContain('<agent_output_schema>')
+			expect(systemPrompt).toContain('"action"')
+			expect(systemPrompt).toContain('"done"')
+			expect(systemPrompt).not.toContain('<tools>')
+			expect(systemPrompt).not.toContain('"type": "function"')
 		})
 
 		it('uses the same AgentOutput schema for system-prompt and native tool modes', async () => {
@@ -417,16 +427,15 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			})
 			await tlAgent.execute('do something')
 
-			const tlBody = JSON.parse(tlFetch.mock.calls[1][1]!.body as string) as {
-				data: { txt: string }
-			}
-			const tlSchema = extractAgentOutputSchema(tlBody.data.txt)
+			const tlInitBody = JSON.parse(tlFetch.mock.calls[0][1]!.body as string)
+			const tlSystemPrompt = extractTlSystemPrompt(tlInitBody)
+			const tlSchema = extractAgentOutputSchema(tlSystemPrompt)
 
 			expect(tlSchema).toEqual(nativeSchema)
 			expect(tlSchema).toMatchObject({ required: ['action'] })
-			expect(tlBody.data.txt.match(/<output_contract\b/g)).toHaveLength(1)
-			expect(tlBody.data.txt).toContain('use JSON-escaped ASCII double quotes \\"...\\"')
-			expect(tlBody.data.txt).not.toContain('"tool_name"')
+			expect(tlSystemPrompt.match(/<output_contract\b/g)).toHaveLength(1)
+			expect(tlSystemPrompt).toContain('use JSON-escaped ASCII double quotes \\"...\\"')
+			expect(tlSystemPrompt).not.toContain('"tool_name"')
 		})
 
 		it('generates the canonical schema from every enabled action', async () => {
@@ -443,10 +452,8 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 
 			await agent.execute('do something')
 
-			const requestBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
-				data: { txt: string }
-			}
-			const systemContent = requestBody.data.txt
+			const requestBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+			const systemContent = extractTlSystemPrompt(requestBody)
 
 			// Enabled by default: always documented
 			for (const actionName of [
@@ -485,10 +492,8 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 
 			await agent.execute('do something')
 
-			const requestBody = JSON.parse(fetchMock.mock.calls[1][1]!.body as string) as {
-				data: { txt: string }
-			}
-			const systemContent = requestBody.data.txt
+			const requestBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+			const systemContent = extractTlSystemPrompt(requestBody)
 
 			expect(systemContent).toContain('"ask_user"')
 			expect(systemContent).toContain('"execute_javascript"')
@@ -512,19 +517,23 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 
 			expect(fetchMock).toHaveBeenCalledTimes(2)
 
+			const initBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string)
+			const systemPrompt = extractTlSystemPrompt(initBody)
 			const chatCall = fetchMock.mock.calls[1]
 			const chatUrl = chatCall[0] as string
 			const chatBody = JSON.parse(chatCall[1]!.body as string) as { data: { txt: string } }
 			const chatText = chatBody.data.txt
 
 			expect(chatUrl).toContain('/chatbbc/chat')
-			expect(chatText).toContain('custom system prompt')
-			expect(chatText).toContain('<quotation_example>')
-			expect(chatText).toContain('<output_contract mode="system_prompt">')
-			expect(chatText).toContain('<agent_output_schema>')
-			expect(chatText).toContain('use JSON-escaped ASCII double quotes \\"...\\"')
-			expect(chatText).toContain('"done"')
-			expect(chatText).not.toContain('<tools>')
+			expect(systemPrompt).toContain('custom system prompt')
+			expect(systemPrompt).toContain('<quotation_example>')
+			expect(systemPrompt).toContain('<output_contract mode="system_prompt">')
+			expect(systemPrompt).toContain('<agent_output_schema>')
+			expect(systemPrompt).toContain('use JSON-escaped ASCII double quotes \\"...\\"')
+			expect(systemPrompt).toContain('"done"')
+			expect(systemPrompt).not.toContain('<tools>')
+			expect(chatText).not.toContain('custom system prompt')
+			expect(chatText).not.toContain('<agent_output_schema>')
 		})
 
 		it('keeps system prompt variables separate from dynamic user state across Tl steps', async () => {
@@ -548,7 +557,6 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 				provider: 'tl',
 				endpointAgent: 'localhost:8089',
 				customSystemPrompt: undefined,
-				tlPromptTransport: 'prompt_variables',
 				customTools: {
 					record_observation: tool({
 						description: 'Record an observation before completing the task.',
@@ -633,7 +641,6 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 				provider: 'tl',
 				endpointAgent: 'localhost:8089',
 				customSystemPrompt: undefined,
-				tlPromptTransport: 'prompt_variables',
 				tlFailureLogger: failureLogger,
 			})
 

@@ -21,6 +21,7 @@ import type {
 	BridgeConnectedMessage,
 	BridgeConnectMessage,
 	BridgeErrorCode as BridgeErrorCodeType,
+	BridgePointerMessage,
 	BridgePortMessage,
 	BridgeRequestMessage,
 	BridgeResponseMessage,
@@ -79,6 +80,8 @@ export interface FrameBridgeHostOptions {
 	frameInstanceId?: string
 	/** Window-like object, primarily useful for unit tests. */
 	window?: FrameBridgeHostWindow
+	/** Event target that emits PageController visual pointer events. Defaults to window. */
+	pointerEventTarget?: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 	/** Whether dispose() also disposes the supplied controller (default: true). */
 	disposeController?: boolean
 }
@@ -256,6 +259,7 @@ export class FrameBridgeHost {
 	readonly capabilities: readonly FrameBridgeCapability[]
 
 	private readonly bridgeWindow: FrameBridgeHostWindow
+	private readonly pointerEventTarget: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 	private readonly disposeController: boolean
 	private readonly discoveredSessions = new Map<string, string>()
 	/**
@@ -270,6 +274,24 @@ export class FrameBridgeHost {
 
 	private readonly windowMessageListener = (event: MessageEvent<unknown>) => {
 		this.handleWindowMessage(asWindowMessageEvent(event))
+	}
+
+	private readonly movePointerListener: EventListener = (event) => {
+		const detail = (event as CustomEvent<unknown>).detail
+		if (
+			!isRecord(detail) ||
+			typeof detail.x !== 'number' ||
+			!Number.isFinite(detail.x) ||
+			typeof detail.y !== 'number' ||
+			!Number.isFinite(detail.y)
+		) {
+			return
+		}
+		this.forwardPointer({ action: 'move', x: detail.x, y: detail.y })
+	}
+
+	private readonly clickPointerListener: EventListener = () => {
+		this.forwardPointer({ action: 'click' })
 	}
 
 	constructor(options: FrameBridgeHostOptions) {
@@ -302,6 +324,12 @@ export class FrameBridgeHost {
 		const defaultWindow = typeof window === 'undefined' ? undefined : window
 		this.bridgeWindow = (options.window ?? defaultWindow) as FrameBridgeHostWindow
 		if (!this.bridgeWindow) throw new Error('FrameBridgeHost requires a browser window')
+		this.pointerEventTarget =
+			options.pointerEventTarget ??
+			(this.bridgeWindow as unknown as Pick<
+				EventTarget,
+				'addEventListener' | 'removeEventListener'
+			>)
 		this.disposeController = options.disposeController ?? true
 	}
 
@@ -311,6 +339,8 @@ export class FrameBridgeHost {
 			throw new BridgeHostError(BridgeErrorCode.DISPOSED, 'Bridge host is disposed.')
 		if (!this.started) {
 			this.bridgeWindow.addEventListener('message', this.windowMessageListener)
+			this.pointerEventTarget.addEventListener('PageAgent::MovePointerTo', this.movePointerListener)
+			this.pointerEventTarget.addEventListener('PageAgent::ClickPointer', this.clickPointerListener)
 			this.started = true
 		}
 		return this
@@ -322,6 +352,14 @@ export class FrameBridgeHost {
 		this.disposed = true
 		if (this.started) {
 			this.bridgeWindow.removeEventListener('message', this.windowMessageListener)
+			this.pointerEventTarget.removeEventListener(
+				'PageAgent::MovePointerTo',
+				this.movePointerListener
+			)
+			this.pointerEventTarget.removeEventListener(
+				'PageAgent::ClickPointer',
+				this.clickPointerListener
+			)
 			this.started = false
 		}
 		this.discoveredSessions.clear()
@@ -422,6 +460,34 @@ export class FrameBridgeHost {
 		} catch {
 			this.closeActiveConnection()
 		}
+	}
+
+	/** Relay pointer feedback only while the authenticated parent is running a pointer action. */
+	private forwardPointer(
+		pointer: { action: 'move'; x: number; y: number } | { action: 'click' }
+	): void {
+		const connection = this.activeConnection
+		const running = connection?.running
+		if (
+			!connection ||
+			!running ||
+			running.abortController.signal.aborted ||
+			(running.method !== 'clickElement' && running.method !== 'inputText')
+		) {
+			return
+		}
+
+		const message: BridgePointerMessage = {
+			protocol: IFRAME_BRIDGE_PROTOCOL,
+			version: BRIDGE_PROTOCOL_VERSION,
+			type: 'pointer',
+			sessionId: connection.sessionId,
+			frameInstanceId: this.frameInstanceId,
+			treeRevision: connection.treeRevision,
+			requestId: running.message.requestId,
+			...pointer,
+		}
+		this.postToPort(connection, message)
 	}
 
 	private handlePortMessage(connection: ActiveConnection, event: BridgePortMessageEvent): void {

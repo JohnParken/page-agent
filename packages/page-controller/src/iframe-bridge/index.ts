@@ -27,7 +27,11 @@ export {
 	isDirectCrossOriginFrame,
 	normalizeAllowedChildOrigins,
 } from './FrameBridgeClient'
-export type { FrameBridgeClientOptions, FrameBridgeConnection } from './FrameBridgeClient'
+export type {
+	FrameBridgeClientOptions,
+	FrameBridgeConnection,
+	FrameBridgePointerDetail,
+} from './FrameBridgeClient'
 export { FrameBridgeHost } from './FrameBridgeHost'
 export type {
 	FrameBridgeHostOptions,
