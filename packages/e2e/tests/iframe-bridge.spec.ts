@@ -27,6 +27,8 @@ interface ControllerHandle {
 		index?: number
 	}): Promise<ActionResult>
 	executeJavascript(script: string): Promise<ActionResult>
+	showMask(): Promise<void>
+	hideMask(): Promise<void>
 	frameClients: readonly {
 		iframe: HTMLIFrameElement
 		executeJavascript(script?: string): Promise<ActionResult>
@@ -306,6 +308,92 @@ test.describe('cross-origin iframe bridge demo', () => {
 		await expect
 			.poll(() => page.evaluate(() => window.scrollY))
 			.toBeGreaterThan(beforeDocumentScroll)
+	})
+
+	test('moves the parent visual pointer to cross-origin child controls', async ({ page }) => {
+		const state = await controller(page)
+		const childButton = markerIndex(state.content, /<button[^>]*id=child-button/)
+		const frame = await cooperativeFrame(page)
+
+		await page.evaluate(async () => {
+			const pageController = (window as DemoWindow).pageController
+			if (!pageController) throw new Error('FrameAwarePageController has not been installed')
+			const feedback = { clicks: 0, move: null as { x: number; y: number } | null }
+			;(window as Window & { remotePointerFeedback?: typeof feedback }).remotePointerFeedback =
+				feedback
+			window.addEventListener('PageAgent::MovePointerTo', (event) => {
+				feedback.move = (event as CustomEvent<{ x: number; y: number }>).detail
+			})
+			window.addEventListener('PageAgent::ClickPointer', () => {
+				feedback.clicks += 1
+			})
+			await pageController.showMask()
+		})
+		await expect(page.locator('#page-agent-runtime_simulator-mask')).toBeVisible()
+
+		expect((await action(page, 'clickElement', [childButton])).success).toBe(true)
+		await expect(frame.locator('#child-button')).toHaveAttribute('data-clicked', 'true')
+
+		const childCenter = await frame.locator('#child-button').evaluate((element) => {
+			const rect = element.getBoundingClientRect()
+			return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+		})
+		const frameMetrics = await page.locator('#cooperative-frame').evaluate((element) => {
+			const iframe = element as HTMLIFrameElement
+			const rect = iframe.getBoundingClientRect()
+			return {
+				left: rect.left,
+				top: rect.top,
+				scaleX: iframe.offsetWidth > 0 ? rect.width / iframe.offsetWidth : 1,
+				scaleY: iframe.offsetHeight > 0 ? rect.height / iframe.offsetHeight : 1,
+				clientLeft: iframe.clientLeft,
+				clientTop: iframe.clientTop,
+			}
+		})
+		const expected = {
+			x: frameMetrics.left + (frameMetrics.clientLeft + childCenter.x) * frameMetrics.scaleX,
+			y: frameMetrics.top + (frameMetrics.clientTop + childCenter.y) * frameMetrics.scaleY,
+		}
+
+		await expect
+			.poll(() =>
+				page.evaluate(() => {
+					const feedback = (
+						window as Window & {
+							remotePointerFeedback?: {
+								clicks: number
+								move: { x: number; y: number } | null
+							}
+						}
+					).remotePointerFeedback
+					return feedback?.move ?? null
+				})
+			)
+			.toEqual(expected)
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() =>
+						(
+							window as Window & {
+								remotePointerFeedback?: { clicks: number }
+							}
+						).remotePointerFeedback?.clicks ?? 0
+				)
+			)
+			.toBe(1)
+		await expect
+			.poll(async () => {
+				const cursor = await page
+					.locator('#page-agent-runtime_simulator-mask > div')
+					.first()
+					.evaluate((element) => ({
+						x: Number.parseFloat((element as HTMLElement).style.left),
+						y: Number.parseFloat((element as HTMLElement).style.top),
+					}))
+				return Math.hypot(cursor.x - expected.x, cursor.y - expected.y)
+			})
+			.toBeLessThan(2)
 	})
 
 	test('routes every bridge-supported operation type into the child iframe', async ({ page }) => {

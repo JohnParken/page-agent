@@ -65,18 +65,30 @@ class FakeParent {
 
 class FakeWindow implements FrameBridgeHostWindow {
 	readonly parent: FakeParent
-	private listener: ((event: MessageEvent<unknown>) => void) | null = null
+	private listeners = new Map<string, Set<EventListener>>()
 
 	constructor(parent: FakeParent) {
 		this.parent = parent
 	}
 
-	addEventListener(_type: 'message', listener: (event: MessageEvent<unknown>) => void): void {
-		this.listener = listener
+	addEventListener(type: 'message', listener: (event: MessageEvent<unknown>) => void): void
+	addEventListener(type: string, listener: EventListener): void
+	addEventListener(
+		type: string,
+		listener: EventListener | ((event: MessageEvent<unknown>) => void)
+	): void {
+		const listeners = this.listeners.get(type) ?? new Set<EventListener>()
+		listeners.add(listener as EventListener)
+		this.listeners.set(type, listeners)
 	}
 
-	removeEventListener(_type: 'message', listener: (event: MessageEvent<unknown>) => void): void {
-		if (this.listener === listener) this.listener = null
+	removeEventListener(type: 'message', listener: (event: MessageEvent<unknown>) => void): void
+	removeEventListener(type: string, listener: EventListener): void
+	removeEventListener(
+		type: string,
+		listener: EventListener | ((event: MessageEvent<unknown>) => void)
+	): void {
+		this.listeners.get(type)?.delete(listener as EventListener)
 	}
 
 	dispatch(
@@ -85,7 +97,15 @@ class FakeWindow implements FrameBridgeHostWindow {
 		source: unknown = this.parent,
 		ports: FakePort[] = []
 	): void {
-		this.listener?.({ data, origin, source, ports } as unknown as MessageEvent)
+		this.emit('message', { data, origin, source, ports } as unknown as Event)
+	}
+
+	dispatchPointer(type: 'PageAgent::MovePointerTo' | 'PageAgent::ClickPointer', detail?: unknown) {
+		this.emit(type, { type, detail } as CustomEvent<unknown>)
+	}
+
+	private emit(type: string, event: Event): void {
+		for (const listener of this.listeners.get(type) ?? []) listener(event)
 	}
 }
 
@@ -263,6 +283,63 @@ describe('FrameBridgeHost', () => {
 			1,
 			expect.objectContaining({ signal: expect.any(AbortSignal) })
 		)
+	})
+
+	it('relays pointer feedback only while an authorized pointer action is running', async () => {
+		const clickElement = vi.fn(async () => {
+			hostWindow.dispatchPointer('PageAgent::MovePointerTo', { x: 12, y: 34 })
+			hostWindow.dispatchPointer('PageAgent::ClickPointer')
+			return { success: true, message: 'clicked' }
+		})
+		controller = createController({ clickElement })
+		const host = new FrameBridgeHost({
+			controller,
+			allowedParentOrigins: [PARENT_ORIGIN],
+			frameInstanceId: FRAME_INSTANCE_ID,
+			window: hostWindow,
+		})
+		host.start()
+		const port = discoverAndConnect(hostWindow, host)
+
+		hostWindow.dispatchPointer('PageAgent::MovePointerTo', { x: 1, y: 2 })
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(port.messages.some((message) => (message as { type?: string }).type === 'pointer')).toBe(
+			false
+		)
+
+		port.postMessage(
+			messageBase('request', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 0,
+				requestId: 'observe-before-pointer',
+				method: 'getBrowserState',
+				payload: {},
+			})
+		)
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		port.postMessage(
+			messageBase('request', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 1,
+				requestId: 'click-with-pointer',
+				method: 'clickElement',
+				payload: { index: 1 },
+			})
+		)
+		await new Promise((resolve) => setTimeout(resolve, 0))
+
+		const pointerMessages = port.messages.filter(
+			(message): message is Record<string, unknown> =>
+				typeof message === 'object' &&
+				message !== null &&
+				(message as { type?: unknown }).type === 'pointer'
+		)
+		expect(pointerMessages).toEqual([
+			expect.objectContaining({ action: 'move', x: 12, y: 34, treeRevision: 1 }),
+			expect.objectContaining({ action: 'click', treeRevision: 1 }),
+		])
 	})
 
 	it('holds the global controller lock across a replaced connection', async () => {

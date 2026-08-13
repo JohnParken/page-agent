@@ -73,6 +73,45 @@ describe('FrameAwarePageController', () => {
 		harness.dispose()
 	})
 
+	it('translates child pointer feedback into parent viewport coordinates', async () => {
+		const harness = createBridgeHarness()
+		const local = createLocalController()
+		Object.defineProperties(harness.iframe, {
+			offsetWidth: { configurable: true, value: 200 },
+			offsetHeight: { configurable: true, value: 100 },
+			clientLeft: { configurable: true, value: 4 },
+			clientTop: { configurable: true, value: 6 },
+			getBoundingClientRect: {
+				configurable: true,
+				value: () => ({ left: 100, top: 50, width: 400, height: 200 }),
+			},
+		})
+		const controller = new FrameAwarePageController({
+			localController: local,
+			frameSelector: 'iframe',
+			allowedChildOrigins: [CHILD_ORIGIN],
+			window: harness.ownerWindow,
+			document: harness.iframe.ownerDocument,
+		})
+		const moves: unknown[] = []
+		let clicks = 0
+		harness.ownerWindow.addEventListener('PageAgent::MovePointerTo', (event) => {
+			moves.push((event as CustomEvent<unknown>).detail)
+		})
+		harness.ownerWindow.addEventListener('PageAgent::ClickPointer', () => {
+			clicks += 1
+		})
+
+		await controller.getBrowserState()
+		harness.setActionPointerFeedback([{ action: 'move', x: 10, y: 20 }, { action: 'click' }])
+		await controller.clickElement(6)
+
+		expect(moves).toEqual([{ x: 128, y: 102 }])
+		expect(clicks).toBe(1)
+		controller.dispose()
+		harness.dispose()
+	})
+
 	it('degrades unavailable frames, handles removal and aborts before discovery', async () => {
 		const harness = createBridgeHarness()
 		const local = createLocalController()

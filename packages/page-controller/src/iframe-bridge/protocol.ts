@@ -100,6 +100,24 @@ export interface BridgeStartedMessage extends BridgePortMessageBase {
 	method: FrameBridgeMethod
 }
 
+/** Visual pointer movement emitted while an authorized child action is running. */
+export interface BridgePointerMoveMessage extends BridgePortMessageBase {
+	type: 'pointer'
+	requestId: string
+	action: 'move'
+	x: number
+	y: number
+}
+
+/** Visual pointer click emitted while an authorized child action is running. */
+export interface BridgePointerClickMessage extends BridgePortMessageBase {
+	type: 'pointer'
+	requestId: string
+	action: 'click'
+}
+
+export type BridgePointerMessage = BridgePointerMoveMessage | BridgePointerClickMessage
+
 export interface BridgeSuccessResponseMessage extends BridgePortMessageBase {
 	type: 'response'
 	requestId: string
@@ -138,6 +156,7 @@ export type BridgePortMessage =
 	| BridgeConnectedMessage
 	| BridgeRequestMessage
 	| BridgeStartedMessage
+	| BridgePointerMessage
 	| BridgeResponseMessage
 	| BridgeCancelMessage
 
@@ -359,6 +378,48 @@ export function isBridgeStartedMessage(value: unknown): value is BridgeStartedMe
 	)
 }
 
+export function isBridgePointerMessage(value: unknown): value is BridgePointerMessage {
+	if (
+		!isRecord(value) ||
+		!isPortBase(value) ||
+		!isIdentifier(value.requestId) ||
+		value.type !== 'pointer'
+	) {
+		return false
+	}
+	if (value.action === 'click') {
+		return hasOnlyKeys(value, [
+			'protocol',
+			'version',
+			'type',
+			'sessionId',
+			'frameInstanceId',
+			'treeRevision',
+			'requestId',
+			'action',
+		])
+	}
+	return (
+		value.action === 'move' &&
+		hasOnlyKeys(value, [
+			'protocol',
+			'version',
+			'type',
+			'sessionId',
+			'frameInstanceId',
+			'treeRevision',
+			'requestId',
+			'action',
+			'x',
+			'y',
+		]) &&
+		typeof value.x === 'number' &&
+		Number.isFinite(value.x) &&
+		typeof value.y === 'number' &&
+		Number.isFinite(value.y)
+	)
+}
+
 export function isSerializedBridgeError(value: unknown): value is SerializedBridgeError {
 	return (
 		isRecord(value) &&
@@ -441,6 +502,7 @@ export function isBridgePortMessage(value: unknown): value is BridgePortMessage 
 		isBridgeConnectedMessage(value) ||
 		isBridgeRequestMessage(value) ||
 		isBridgeStartedMessage(value) ||
+		isBridgePointerMessage(value) ||
 		isBridgeResponseMessage(value) ||
 		isBridgeCancelMessage(value)
 	)

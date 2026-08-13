@@ -156,7 +156,7 @@ window.PageAgent = PageAgent
 这意味着：
 
 -   子页面不需要加载 PageAgent，也不需要知道模型、任务或 LLM gateway 配置。
--   父子 bridge 消息只承载页面状态、索引、动作请求和结果，不承载模型密钥。
+-   父子 bridge 消息只承载页面状态、索引、动作请求/结果，以及与当前 click/input 请求绑定的模拟光标反馈，不承载模型密钥。
 -   `FrameAwarePageController` 是 PageAgent 与父子页面之间唯一的 controller adapter。若不注入它，Agent 只能看到主页面默认 controller。
 -   PageAgent 的 Panel、任务输入、`ask_user` 交互和执行状态都留在主页面。
 

@@ -21,6 +21,7 @@ Page Agent 的可选 iframe bridge 允许父页面上的 Page Agent 观察并操
 3. 子页面同时检查 `event.source === window.parent` 和 `event.origin`，再回报自己的 bridge 能力。
 4. 父页面再次检查消息来源和 origin，建立一条专用 `MessageChannel`；后续请求只走这个端口。
 5. 父页面先获取带索引的浏览器状态，再用最新索引路由 click、input、select 或 scroll。
+6. 执行 click/input 时，子 host 会把与当前请求绑定的模拟光标位置和点击反馈发回父侧；父侧根据 iframe 在顶层视口中的位置换算坐标，驱动父页面的 `SimulatorMask`。
 
 ## 2. 安装与接入形式
 
@@ -163,7 +164,7 @@ Version 1 的 bridge 能力名称为：
 -   `scroll`、`scrollHorizontally`：滚动文档或可滚动元素；
 -   `cleanup`：清理 controller 的高亮。
 
-父页面看到的观察状态包含 URL、标题、页面信息/滚动提示、简化且带索引的内容，以及 `treeRevision`/索引元数据。动作请求只携带索引和相应的文本、选项或滚动参数；bridge 不提供任意 `postMessage` payload 扩展点。
+父页面看到的观察状态包含 URL、标题、页面信息/滚动提示、简化且带索引的内容，以及 `treeRevision`/索引元数据。动作请求只携带索引和相应的文本、选项或滚动参数；执行 click/input 期间，host 还会通过已认证端口发送绑定当前 `requestId` 的子视口光标坐标和点击反馈。父侧只接受当前正在执行的请求反馈，bridge 不提供任意 `postMessage` payload 扩展点。
 
 ### 数据不是过滤边界
 
