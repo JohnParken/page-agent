@@ -20,7 +20,44 @@ const bundles = [
 		fileName: 'page-agent-frame-host.iife.min.js',
 		globalName: 'PageAgentFrameHost',
 		prefix: 'page-agent-frame-host',
-		allowedOtherJavaScript: [],
+		allowedOtherJavaScript: ['page-agent-parent-host.iife.min.js'],
+	},
+	{
+		label: 'parent-page host',
+		directory: resolve(repositoryRoot, 'packages/page-controller/dist/iife'),
+		fileName: 'page-agent-parent-host.iife.min.js',
+		globalName: 'PageAgentParentHost',
+		prefix: 'page-agent-parent-host',
+		allowedOtherJavaScript: ['page-agent-frame-host.iife.min.js'],
+		forbiddenPatterns: [
+			[/\bPageAgentCore\b/, 'PageAgentCore'],
+			[/\bTlAiClient\b/, 'TlAiClient'],
+			[/\bOpenAIClient\b/, 'OpenAIClient'],
+			[/\bPanel\b/, 'UI Panel code'],
+		],
+		requiredAssets: ['page-agent-parent-host.css'],
+		requiredAssetPatterns: [
+			[/\.page-agent-parent-feedback/, 'parent feedback class'],
+			[/data-page-agent-parent-feedback/, 'parent feedback marker'],
+			[/data-page-agent-parent-cursor/, 'parent visual cursor marker'],
+			[
+				/--page-agent-parent-cursor-width-resolved\s*:\s*var\(--page-agent-parent-cursor-width,/,
+				'inheritable parent cursor variables',
+			],
+			[/--page-agent-parent-cursor-ripple-radius/, 'cursor hotspot ripple configuration'],
+			[/--page-agent-parent-cursor-gradient-start/, 'main cursor gradient configuration'],
+			[/mask-image\s*:\s*url\('data:image\/svg\+xml;base64,/, 'main cursor SVG mask'],
+			[/rotate\(-135deg\)\s+scale\(1\.2\)/, 'main cursor orientation'],
+			[/position\s*:\s*fixed/, 'fixed parent visual feedback positioning'],
+			[/pointer-events\s*:\s*none\s*!important/, 'non-blocking visual feedback policy'],
+			[/@keyframes\s+page-agent-parent-cursor-ripple/, 'parent cursor ripple animation'],
+			[/data-state/, 'parent feedback state styling'],
+		],
+		forbiddenAssetPatterns: [
+			[/style\.setAttribute\s*\(\s*['\"]data-page-agent-css['\"]/, 'JavaScript CSS injection'],
+			[/createElement\s*\(\s*['\"]style['\"]\s*\)/, 'JavaScript CSS injection'],
+			[/<style/, 'inline style injection'],
+		],
 	},
 ]
 
@@ -63,12 +100,32 @@ for (const bundle of bundles) {
 	if ((await stat(sourceMapPath)).size === 0) throw new Error(`${bundle.label} source map is empty`)
 
 	const source = await readFile(filePath, 'utf8')
-	for (const [pattern, description] of forbiddenPatterns) {
+	for (const [pattern, description] of [
+		...forbiddenPatterns,
+		...(bundle.forbiddenPatterns ?? []),
+	]) {
 		if (pattern.test(source)) throw new Error(`${bundle.label} contains ${description}`)
 	}
 	if (!source.includes(bundle.globalName)) {
 		throw new Error(`${bundle.label} does not declare ${bundle.globalName}`)
 	}
+	for (const assetName of bundle.requiredAssets ?? []) {
+		const assetPath = resolve(bundle.directory, assetName)
+		if ((await stat(assetPath)).size === 0) {
+			throw new Error(`${bundle.label} asset is empty: ${assetName}`)
+		}
+		const assetSource = await readFile(assetPath, 'utf8')
+		for (const [pattern, description] of bundle.requiredAssetPatterns ?? []) {
+			if (!pattern.test(assetSource)) {
+				throw new Error(`${bundle.label} asset ${assetName} is missing ${description}`)
+			}
+		}
+	}
+	for (const [pattern, description] of bundle.forbiddenAssetPatterns ?? []) {
+		if (pattern.test(source)) {
+			throw new Error(`${bundle.label} contains ${description}`)
+		}
+	}
 }
 
-console.log('Verified standalone iframe bridge IIFE bundles.')
+console.log('Verified standalone iframe and parent-host IIFE bundles.')

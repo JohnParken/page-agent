@@ -26,6 +26,8 @@ export type DsMode = 'gateway' | 'api'
 
 /** Configuration for the DeepSeek client. */
 export interface DsAiConfig {
+	/** Opt in to logging complete SSE frames and validation details. */
+	debug?: boolean
 	/** Explicit transport mode. When omitted, endpointAgent selects gateway and baseURL selects api. */
 	dsMode?: DsMode
 	/** Tl-compatible gateway host or HTTP(S) base URL. */
@@ -50,6 +52,7 @@ export interface DsAiConfig {
 }
 
 export interface ResolvedDsAiConfig {
+	debug: boolean
 	dsMode: DsMode
 	endpointAgent?: string
 	baseURL?: string
@@ -124,6 +127,7 @@ export class DsAiClient implements LLMClient {
 		}
 
 		this.config = {
+			debug: config.debug ?? false,
 			dsMode,
 			endpointAgent: config.endpointAgent
 				? normalizeEndpointAgent(config.endpointAgent, 'DeepSeek gateway')
@@ -267,7 +271,7 @@ export class DsAiClient implements LLMClient {
 		const rawContent = await readStreamResponse(response, abortSignal)
 		const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
 		const content = isSse(rawContent, contentType)
-			? parseChatbbcSseContent(rawContent, 'DsAiClient').content
+			? parseChatbbcSseContent(rawContent, 'DsAiClient', this.config.debug).content
 			: this.extractGatewayContent(rawContent)
 		const parsed = parseAccumulatedContent(content, tools, options?.normalizeResponse)
 
@@ -327,7 +331,7 @@ export class DsAiClient implements LLMClient {
 
 		if (isSse(rawContent, contentType)) {
 			this.assertStreamFinishReason(rawContent)
-			const parsedStream = parseOpenAISseContent(rawContent, 'DsAiClient')
+			const parsedStream = parseOpenAISseContent(rawContent, 'DsAiClient', this.config.debug)
 			content = parsedStream.content
 			usage = parsedStream.usage as TokenUsage | undefined
 			rawResponse = { content, usage }
@@ -520,7 +524,7 @@ export class DsAiClient implements LLMClient {
 
 		const validation = tool.inputSchema.safeParse(parsedArgs)
 		if (!validation.success) {
-			console.error(z.prettifyError(validation.error))
+			if (this.config.debug) console.error(z.prettifyError(validation.error))
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_TOOL_ARGS,
 				'Tool arguments validation failed',

@@ -79,14 +79,20 @@ export class OpenAIClient implements LLMClient {
 			requestHeaders.Authorization = `Bearer ${this.config.apiKey}`
 		}
 
-		console.info(
-			'[OpenAIClient] Request payload:',
-			JSON.stringify(
-				{ url, method: 'POST', headers: requestHeaders, body: finalRequestBody },
-				null,
-				2
+		if (this.config.debug) {
+			const debugHeaders = {
+				...requestHeaders,
+				...(requestHeaders.Authorization ? { Authorization: '[REDACTED]' } : {}),
+			}
+			console.debug(
+				'[OpenAIClient] Request payload:',
+				JSON.stringify(
+					{ url, method: 'POST', headers: debugHeaders, body: finalRequestBody },
+					null,
+					2
+				)
 			)
-		)
+		}
 
 		// 2. Call API
 		let response: Response
@@ -99,7 +105,7 @@ export class OpenAIClient implements LLMClient {
 			})
 		} catch (error: unknown) {
 			if ((error as any)?.name === 'AbortError') throw error
-			console.error(error)
+			if (this.config.debug) console.error(error)
 			throw new InvokeError(InvokeErrorTypes.NETWORK_ERROR, 'Network request failed', error)
 		}
 
@@ -154,14 +160,16 @@ export class OpenAIClient implements LLMClient {
 			)
 		}
 
-		console.info(
-			'[OpenAIClient] Response payload:',
-			JSON.stringify(
-				{ status: response.status, statusText: response.statusText, body: data },
-				null,
-				2
+		if (this.config.debug) {
+			console.debug(
+				'[OpenAIClient] Response payload:',
+				JSON.stringify(
+					{ status: response.status, statusText: response.statusText, body: data },
+					null,
+					2
+				)
 			)
-		)
+		}
 
 		const choice = data.choices?.[0]
 		if (!choice) {
@@ -248,7 +256,7 @@ export class OpenAIClient implements LLMClient {
 		// Validate with schema
 		const validation = tool.inputSchema.safeParse(parsedArgs)
 		if (!validation.success) {
-			console.error(z.prettifyError(validation.error))
+			if (this.config.debug) console.error(z.prettifyError(validation.error))
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_TOOL_ARGS,
 				'Tool arguments validation failed',

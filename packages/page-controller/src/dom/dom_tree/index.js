@@ -35,17 +35,57 @@ export default (
 		interactiveBlacklist: [],
 		/** @type {Element[]} */
 		interactiveWhitelist: [],
+		/** @type {Element[]} */
+		contentBlacklist: [],
 		highlightOpacity: 0.1,
 		highlightLabelOpacity: 0.5,
+		/** @type {Element | undefined} */
+		root: undefined,
+		/** @type {boolean} */
+		isScoped: false,
 	}
 ) => {
 	/**
 	 * @edit
 	 */
-	const { interactiveBlacklist, interactiveWhitelist, highlightOpacity, highlightLabelOpacity } =
-		args
+	const {
+		interactiveBlacklist,
+		interactiveWhitelist,
+		contentBlacklist,
+		highlightOpacity,
+		highlightLabelOpacity,
+	} = args
+	const root = args.root || document.body
+	const isScoped = args.isScoped === true
+	const highlightCleanupRegistry = args.highlightCleanupRegistry
 
 	const { doHighlightElements, focusHighlightIndex, viewportExpansion, debugMode } = args
+
+	/**
+	 * Clip viewport tests to a scoped root. A root is an extraction boundary,
+	 * not merely a selector prefix, so geometry outside its client rectangle
+	 * must not receive indices when viewport filtering is enabled.
+	 */
+	function isRectInExtractionViewport(rect, expansion = viewportExpansion) {
+		if (expansion === -1) return true
+		if (
+			rect.bottom < -expansion ||
+			rect.top > window.innerHeight + expansion ||
+			rect.right < -expansion ||
+			rect.left > window.innerWidth + expansion
+		) {
+			return false
+		}
+		if (!isScoped) return true
+
+		const rootRect = root.getBoundingClientRect()
+		return !(
+			rect.bottom < rootRect.top ||
+			rect.top > rootRect.bottom ||
+			rect.right < rootRect.left ||
+			rect.left > rootRect.right
+		)
+	}
 	let highlightIndex = 0 // Reset highlight index
 
 	/**
@@ -406,9 +446,13 @@ export default (
 			// Store cleanup function for later use
 			if (cleanupFn) {
 				// Keep a reference to cleanup functions in a global array
-				;(window._highlightCleanupFunctions = window._highlightCleanupFunctions || []).push(
-					cleanupFn
-				)
+				if (highlightCleanupRegistry && typeof highlightCleanupRegistry.add === 'function') {
+					highlightCleanupRegistry.add(cleanupFn)
+				} else {
+					;(window._highlightCleanupFunctions = window._highlightCleanupFunctions || []).push(
+						cleanupFn
+					)
+				}
 			}
 		}
 	}
@@ -598,14 +642,7 @@ export default (
 					isAnyRectVisible = true
 
 					// Viewport check for this rect
-					if (
-						!(
-							rect.bottom < -viewportExpansion ||
-							rect.top > window.innerHeight + viewportExpansion ||
-							rect.right < -viewportExpansion ||
-							rect.left > window.innerWidth + viewportExpansion
-						)
-					) {
+					if (isRectInExtractionViewport(rect)) {
 						isAnyRectInViewport = true
 						break // Found a visible rect in viewport, no need to check others
 					}
@@ -980,19 +1017,7 @@ export default (
 		let isAnyRectInViewport = false
 		for (const rect of rects) {
 			// Use the same logic as isInExpandedViewport check
-			if (
-				rect.width > 0 &&
-				rect.height > 0 &&
-				!(
-					// Only check non-empty rects
-					(
-						rect.bottom < -viewportExpansion ||
-						rect.top > window.innerHeight + viewportExpansion ||
-						rect.right < -viewportExpansion ||
-						rect.left > window.innerWidth + viewportExpansion
-					)
-				)
-			) {
+			if (rect.width > 0 && rect.height > 0 && isRectInExtractionViewport(rect)) {
 				isAnyRectInViewport = true
 				break
 			}
@@ -1091,26 +1116,14 @@ export default (
 			if (!boundingRect || boundingRect.width === 0 || boundingRect.height === 0) {
 				return false
 			}
-			return !(
-				boundingRect.bottom < -viewportExpansion ||
-				boundingRect.top > window.innerHeight + viewportExpansion ||
-				boundingRect.right < -viewportExpansion ||
-				boundingRect.left > window.innerWidth + viewportExpansion
-			)
+			return isRectInExtractionViewport(boundingRect, viewportExpansion)
 		}
 
 		// Check if *any* client rect is within the viewport
 		for (const rect of rects) {
 			if (rect.width === 0 || rect.height === 0) continue // Skip empty rects
 
-			if (
-				!(
-					rect.bottom < -viewportExpansion ||
-					rect.top > window.innerHeight + viewportExpansion ||
-					rect.right < -viewportExpansion ||
-					rect.left > window.innerWidth + viewportExpansion
-				)
-			) {
+			if (isRectInExtractionViewport(rect, viewportExpansion)) {
 				return true // Found at least one rect in the viewport
 			}
 		}
@@ -1489,6 +1502,13 @@ export default (
 			return null
 		}
 
+		// Content blacklists are a subtree boundary: unlike an interactive
+		// blacklist, they prevent descendant text/attributes from reaching the
+		// simplified LLM state at all.
+		if (contentBlacklist.includes(node)) {
+			return null
+		}
+
 		/**
 		 * @edit add `data-browser-use-ignore` attribute
 		 */
@@ -1571,12 +1591,7 @@ export default (
 			// isInExpandedViewport will do the more accurate check later if needed.
 			if (
 				!rect ||
-				(!isFixedOrSticky &&
-					!hasSize &&
-					(rect.bottom < -viewportExpansion ||
-						rect.top > window.innerHeight + viewportExpansion ||
-						rect.right < -viewportExpansion ||
-						rect.left > window.innerWidth + viewportExpansion))
+				(!isFixedOrSticky && !hasSize && !isRectInExtractionViewport(rect, viewportExpansion))
 			) {
 				// console.log("Skipping node outside viewport (quick check):", node.tagName, rect);
 				return null
@@ -1674,8 +1689,10 @@ export default (
 		if (node.tagName) {
 			const tagName = node.tagName.toLowerCase()
 
-			// Handle iframes
-			if (tagName === 'iframe') {
+			// Handle iframes. A scoped controller deliberately treats an iframe as
+			// a leaf so an embedded document cannot escape its trusted root
+			// boundary or receive indices from a different document.
+			if (tagName === 'iframe' && !isScoped) {
 				try {
 					const iframeDoc = node.contentDocument || node.contentWindow?.document
 					if (iframeDoc) {
@@ -1742,7 +1759,26 @@ export default (
 		return id
 	}
 
-	const rootId = buildDomTree(document.body)
+	let rootId
+	if (isScoped) {
+		// A scoped root is a synthetic, non-interactive boundary.  Its own
+		// attributes/listeners must never become an indexed action target.
+		const rootData = {
+			tagName: root.tagName.toLowerCase(),
+			attributes: {},
+			children: [],
+		}
+		if (!contentBlacklist.includes(root)) {
+			for (const child of root.childNodes) {
+				const domElement = buildDomTree(child, null, false)
+				if (domElement) rootData.children.push(domElement)
+			}
+		}
+		rootId = `${ID.current++}`
+		DOM_HASH_MAP[rootId] = rootData
+	} else {
+		rootId = buildDomTree(root)
+	}
 
 	// Clear the cache before starting
 	DOM_CACHE.clearCache()

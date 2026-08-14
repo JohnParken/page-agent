@@ -21,7 +21,74 @@ export function resolveViewportExpansion(viewportExpansion?: number): number {
 	return viewportExpansion ?? DEFAULT_VIEWPORT_EXPANSION
 }
 
+/**
+ * A trusted extraction/action boundary.  A resolver is evaluated for every
+ * tree refresh and action so a host that replaces its mounted root cannot
+ * leave stale element references usable.
+ */
+export type DomRoot = Element | (() => Element | null | undefined)
+
+export type HighlightCleanupRegistry = Set<() => void>
+
+const highlightRegistries = new Set<HighlightCleanupRegistry>()
+
+/** Register a controller-local highlight registry for navigation cleanup. */
+export function registerHighlightCleanupRegistry(registry: HighlightCleanupRegistry): void {
+	highlightRegistries.add(registry)
+}
+
+/** Stop broadcasting navigation cleanup to a disposed controller. */
+export function unregisterHighlightCleanupRegistry(registry: HighlightCleanupRegistry): void {
+	highlightRegistries.delete(registry)
+}
+
+/**
+ * Resolve and validate a configured root in the current document.
+ *
+ * `undefined` preserves the historical whole-page body boundary.  A
+ * configured root is intentionally fail-closed: a missing, disconnected, or
+ * cross-document node is an error rather than a fallback to `document.body`.
+ */
+export function resolveRoot(root?: DomRoot): Element {
+	let resolved: Element | null | undefined
+
+	try {
+		resolved = typeof root === 'function' ? root() : root
+	} catch (error) {
+		throw new Error(`Configured DOM root resolver failed: ${String(error)}`)
+	}
+
+	if (resolved == null) {
+		if (root === undefined) return document.body
+		throw new Error('Configured DOM root is unavailable')
+	}
+
+	if (resolved.nodeType !== Node.ELEMENT_NODE || resolved.ownerDocument !== document) {
+		throw new Error('Configured DOM root must be an Element in the current document')
+	}
+
+	if (!resolved.isConnected || !document.documentElement.contains(resolved)) {
+		throw new Error('Configured DOM root is disconnected from the current document')
+	}
+
+	return resolved
+}
+
 export interface DomConfig {
+	/**
+	 * Optional trusted root boundary. When set, extraction and indexed actions
+	 * are limited to this element and its descendants. The root itself is a
+	 * synthetic non-interactive tree node and is never assigned an index.
+	 */
+	root?: DomRoot
+	/**
+	 * Elements whose entire subtrees must be omitted from the extracted tree.
+	 * Unlike `interactiveBlacklist`, this also suppresses descendant text and
+	 * attributes from LLM state.
+	 */
+	contentBlacklist?: (Element | (() => Element | null | undefined))[]
+	/** Internal per-controller highlight cleanup registry. */
+	highlightCleanupRegistry?: HighlightCleanupRegistry
 	viewportExpansion?: number
 	interactiveBlacklist?: (Element | (() => Element))[]
 	interactiveWhitelist?: (Element | (() => Element))[]
@@ -56,6 +123,8 @@ const newElementsCache = new WeakMap<HTMLElement, string>()
 
 export function getFlatTree(config: DomConfig): FlatDomTree {
 	const viewportExpansion = resolveViewportExpansion(config.viewportExpansion)
+	const root = resolveRoot(config.root)
+	const isScoped = config.root !== undefined
 
 	const interactiveBlacklist = [] as Element[]
 	for (const item of config.interactiveBlacklist || []) {
@@ -75,6 +144,12 @@ export function getFlatTree(config: DomConfig): FlatDomTree {
 		}
 	}
 
+	const contentBlacklist = [] as Element[]
+	for (const item of config.contentBlacklist || []) {
+		const element = typeof item === 'function' ? item() : item
+		if (element) contentBlacklist.push(element)
+	}
+
 	const elements = domTree({
 		doHighlightElements: true,
 		debugMode: true,
@@ -82,8 +157,12 @@ export function getFlatTree(config: DomConfig): FlatDomTree {
 		viewportExpansion,
 		interactiveBlacklist,
 		interactiveWhitelist,
+		contentBlacklist,
 		highlightOpacity: config.highlightOpacity ?? 0.0,
 		highlightLabelOpacity: config.highlightLabelOpacity ?? 0.1,
+		root,
+		isScoped,
+		highlightCleanupRegistry: config.highlightCleanupRegistry,
 	}) as FlatDomTree
 
 	const currentUrl = window.location.href
@@ -193,7 +272,8 @@ interface TreeNode {
 export function flatTreeToString(
 	flatTree: FlatDomTree,
 	includeAttributes: string[] = [],
-	keepSemanticTags = false
+	keepSemanticTags = false,
+	excludeAttributes: readonly string[] = []
 ): string {
 	const DEFAULT_INCLUDE_ATTRIBUTES = [
 		'title',
@@ -226,7 +306,10 @@ export function flatTreeToString(
 		'contenteditable',
 	]
 
-	const includeAttrs = [...includeAttributes, ...DEFAULT_INCLUDE_ATTRIBUTES]
+	const excludedAttributes = new Set(excludeAttributes.map((attribute) => attribute.toLowerCase()))
+	const includeAttrs = [...includeAttributes, ...DEFAULT_INCLUDE_ATTRIBUTES].filter(
+		(attribute) => !excludedAttributes.has(attribute.toLowerCase())
+	)
 
 	// Helper function to cap text length
 	const capTextLength = (text: string, maxLength: number): string => {
@@ -525,7 +608,19 @@ export function getElementTextMap(simplifiedHTML: string) {
 	return elementTextMap
 }
 
-export function cleanUpHighlights() {
+export function cleanUpHighlights(registry?: HighlightCleanupRegistry) {
+	if (registry) {
+		for (const cleanup of registry) {
+			if (typeof cleanup === 'function') cleanup()
+		}
+		registry.clear()
+		return
+	}
+
+	for (const registered of highlightRegistries) {
+		cleanUpHighlights(registered)
+	}
+
 	const cleanupFunctions = (window as any)._highlightCleanupFunctions || []
 	for (const cleanup of cleanupFunctions) {
 		if (typeof cleanup === 'function') {

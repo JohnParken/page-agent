@@ -7,8 +7,12 @@ interface DomTreeArgs {
 	debugMode?: boolean
 	interactiveBlacklist?: Element[]
 	interactiveWhitelist?: Element[]
+	contentBlacklist?: Element[]
 	highlightOpacity?: number
 	highlightLabelOpacity?: number
+	root?: Element
+	isScoped?: boolean
+	highlightCleanupRegistry?: { add(cleanup: () => void): void }
 }
 
 declare const domTree: (args?: DomTreeArgs) => FlatDomTree

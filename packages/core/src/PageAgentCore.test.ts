@@ -195,6 +195,31 @@ describe.concurrent('PageAgentCore lifecycle', () => {
 			expect(fetchMock).toHaveBeenCalledTimes(1)
 		})
 
+		it('omits raw provider payloads from history by default', async () => {
+			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('private result'))
+			const agent = createAgent(fetchMock)
+
+			const result = await agent.execute('private task')
+			const step = result.history.find((event) => event.type === 'step')
+
+			expect(step).toMatchObject({ type: 'step' })
+			if (step?.type !== 'step') throw new Error('Expected a step history event')
+			expect(step.rawRequest).toBeUndefined()
+			expect(step.rawResponse).toBeUndefined()
+		})
+
+		it('retains raw provider payloads only when explicitly enabled', async () => {
+			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('debug result'))
+			const agent = createAgent(fetchMock, { includeRawHistory: true })
+
+			const result = await agent.execute('debug task')
+			const step = result.history.find((event) => event.type === 'step')
+
+			if (step?.type !== 'step') throw new Error('Expected a step history event')
+			expect(step.rawRequest).toBeDefined()
+			expect(step.rawResponse).toBeDefined()
+		})
+
 		it('completes (not errors) when the LLM reports task failure', async () => {
 			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('gave up', false))
 			const agent = createAgent(fetchMock)

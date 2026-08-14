@@ -262,9 +262,9 @@ describe('TlAiClient.invoke — request construction', () => {
 // ---------- Wire logging ----------
 
 describe('TlAiClient — wire logging', () => {
-	it('logs client send and receive packets with titles distinct from TlProxy', async () => {
-		const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-		const { client, fetchMock } = makeClient()
+	it('logs client send and receive packets only when debug is enabled', async () => {
+		const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+		const { client, fetchMock } = makeClient({ debug: true })
 		setupSession(fetchMock, 'logged-session')
 		const rawChatResponse = JSON.stringify({
 			tool_name: 'greet',
@@ -282,27 +282,27 @@ describe('TlAiClient — wire logging', () => {
 				signal
 			)
 
-			expect(infoSpy).toHaveBeenCalledTimes(4)
-			expect(infoSpy).toHaveBeenNthCalledWith(
+			expect(debugSpy).toHaveBeenCalledTimes(4)
+			expect(debugSpy).toHaveBeenNthCalledWith(
 				1,
-				'[TlClient] 📤 INIT_SESSION request:',
+				'[TlClient] INIT_SESSION request:',
 				expect.objectContaining({
 					url: 'http://localhost:8089/chatbbc/init_session',
 					method: 'POST',
 					body: expect.objectContaining({ requestId: expect.any(String) }),
 				})
 			)
-			expect(infoSpy).toHaveBeenNthCalledWith(
+			expect(debugSpy).toHaveBeenNthCalledWith(
 				2,
-				'[TlClient] 📥 INIT_SESSION response:',
+				'[TlClient] INIT_SESSION response:',
 				expect.objectContaining({
 					status: 200,
 					body: initSessionBody('logged-session'),
 				})
 			)
-			expect(infoSpy).toHaveBeenNthCalledWith(
+			expect(debugSpy).toHaveBeenNthCalledWith(
 				3,
-				'[TlClient] 📤 CHAT request:',
+				'[TlClient] CHAT request:',
 				expect.objectContaining({
 					url: 'http://localhost:8089/chatbbc/chat',
 					body: expect.objectContaining({
@@ -314,16 +314,32 @@ describe('TlAiClient — wire logging', () => {
 					}),
 				})
 			)
-			expect(infoSpy).toHaveBeenNthCalledWith(
+			expect(debugSpy).toHaveBeenNthCalledWith(
 				4,
-				'[TlClient] 📥 CHAT response:',
+				'[TlClient] CHAT response:',
 				expect.objectContaining({ status: 200, body: rawChatResponse })
 			)
-			for (const [title] of infoSpy.mock.calls) {
+			for (const [title] of debugSpy.mock.calls) {
 				expect(title).not.toContain('[TlProxy]')
 			}
 		} finally {
-			infoSpy.mockRestore()
+			debugSpy.mockRestore()
+		}
+	})
+
+	it('does not log model payloads by default', async () => {
+		const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+		const { client, fetchMock } = makeClient()
+		setupSession(fetchMock, 'private-session')
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'private' } }))
+		)
+
+		try {
+			await client.invoke(defaultMessages, { greet: makeTool() }, signal)
+			expect(debugSpy).not.toHaveBeenCalled()
+		} finally {
+			debugSpy.mockRestore()
 		}
 	})
 })
@@ -416,7 +432,7 @@ describe('TlAiClient.initSession', () => {
 
 describe('TlAiClient.invoke — success', () => {
 	it('parses Tl SSE chunk events and concatenates their content', async () => {
-		const { client, fetchMock } = makeClient()
+		const { client, fetchMock } = makeClient({ debug: true })
 		const tool = makeTool()
 		const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
 		setupSession(fetchMock)

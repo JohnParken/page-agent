@@ -20,6 +20,9 @@ export default defineConfig({
 			entry: {
 				'page-controller': resolve(__dirname, 'src/PageController.ts'),
 				'iframe-bridge': resolve(__dirname, 'src/iframe-bridge/index.ts'),
+				'parent-bridge': resolve(__dirname, 'src/parent-bridge/index.ts'),
+				'parent-bridge/host': resolve(__dirname, 'src/parent-bridge/host.ts'),
+				'parent-bridge/adapter': resolve(__dirname, 'src/parent-bridge/adapter.ts'),
 			},
 			name: 'PageController',
 			fileName: (_format, entryName) => `${entryName}.js`,

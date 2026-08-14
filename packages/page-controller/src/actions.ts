@@ -42,16 +42,32 @@ export function getElementByIndex(
 	return element
 }
 
-let lastClickedElement: HTMLElement | null = null
+type ClickScope = object
 
-function blurLastClickedElement() {
+const lastClickedElements = new WeakMap<ClickScope, HTMLElement>()
+
+type ScrollBoundary = Element
+
+function isWithinBoundary(element: Element, boundary?: ScrollBoundary | null): boolean {
+	if (!boundary) return true
+	return boundary === element || boundary.contains(element)
+}
+
+function getComputedStyleFor(element: Element): CSSStyleDeclaration {
+	return (
+		element.ownerDocument.defaultView?.getComputedStyle(element) ?? window.getComputedStyle(element)
+	)
+}
+
+function blurLastClickedElement(scope: ClickScope) {
+	const lastClickedElement = lastClickedElements.get(scope)
 	if (lastClickedElement) {
 		lastClickedElement.dispatchEvent(new PointerEvent('pointerout', { bubbles: true }))
 		lastClickedElement.dispatchEvent(new PointerEvent('pointerleave', { bubbles: false }))
 		lastClickedElement.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
 		lastClickedElement.dispatchEvent(new MouseEvent('mouseleave', { bubbles: false }))
 		lastClickedElement.blur()
-		lastClickedElement = null
+		lastClickedElements.delete(scope)
 	}
 }
 
@@ -62,14 +78,22 @@ function blurLastClickedElement() {
  *
  * @private Internal method, subject to change at any time.
  */
-export async function clickElement(element: HTMLElement) {
-	blurLastClickedElement()
+export async function clickElement(
+	element: HTMLElement,
+	boundary?: ScrollBoundary | null,
+	clickScope: ClickScope = element.ownerDocument
+) {
+	if (!isWithinBoundary(element, boundary)) {
+		throw new Error('Element is outside the configured DOM root')
+	}
 
-	lastClickedElement = element
+	blurLastClickedElement(clickScope)
 
-	await scrollIntoViewIfNeeded(element)
+	lastClickedElements.set(clickScope, element)
+
+	await scrollIntoViewIfNeeded(element, boundary)
 	const frame = element.ownerDocument.defaultView?.frameElement
-	if (frame) await scrollIntoViewIfNeeded(frame)
+	if (frame && isWithinBoundary(frame, boundary)) await scrollIntoViewIfNeeded(frame, boundary)
 
 	const rect = element.getBoundingClientRect()
 	const x = rect.left + rect.width / 2
@@ -129,13 +153,18 @@ export async function clickElement(element: HTMLElement) {
 /**
  * @private Internal method, subject to change at any time.
  */
-export async function inputTextElement(element: HTMLElement, text: string) {
+export async function inputTextElement(
+	element: HTMLElement,
+	text: string,
+	boundary?: ScrollBoundary | null,
+	clickScope: ClickScope = element.ownerDocument
+) {
 	const isContentEditable = element.isContentEditable
 	if (!isInputElement(element) && !isTextAreaElement(element) && !isContentEditable) {
 		throw new Error('Element is not an input, textarea, or contenteditable')
 	}
 
-	await clickElement(element)
+	await clickElement(element, boundary, clickScope)
 
 	if (isContentEditable) {
 		// Contenteditable support (partial)
@@ -229,7 +258,7 @@ export async function inputTextElement(element: HTMLElement, text: string) {
 
 	await waitFor(0.1)
 
-	blurLastClickedElement()
+	blurLastClickedElement(clickScope)
 }
 
 /**
@@ -245,7 +274,7 @@ export async function selectOptionElement(selectElement: HTMLSelectElement, opti
 	const option = options.find((opt) => opt.textContent?.trim() === optionText.trim())
 
 	if (!option) {
-		throw new Error(`Option with text "${optionText}" not found in select element`)
+		throw new Error('Requested option was not found in select element')
 	}
 
 	selectElement.value = option.value
@@ -261,7 +290,35 @@ interface ScrollableElement extends Element {
 /**
  * @private Internal method, subject to change at any time.
  */
-export async function scrollIntoViewIfNeeded(element: Element) {
+export async function scrollIntoViewIfNeeded(element: Element, boundary?: ScrollBoundary | null) {
+	if (!isWithinBoundary(element, boundary)) {
+		throw new Error('Element is outside the configured DOM root')
+	}
+
+	if (boundary) {
+		// Do not call Element.scrollIntoView in scoped mode: browsers may scroll
+		// an ancestor outside the trusted root. Adjust only the root's own
+		// scroll offsets when geometry is available.
+		const scrollRoot = boundary as HTMLElement
+		if (
+			typeof scrollRoot.scrollTop !== 'number' ||
+			typeof scrollRoot.scrollLeft !== 'number' ||
+			typeof scrollRoot.getBoundingClientRect !== 'function'
+		) {
+			return
+		}
+
+		const rootRect = boundary.getBoundingClientRect()
+		const elementRect = element.getBoundingClientRect()
+		if (elementRect.top < rootRect.top) scrollRoot.scrollTop += elementRect.top - rootRect.top
+		if (elementRect.bottom > rootRect.bottom)
+			scrollRoot.scrollTop += elementRect.bottom - rootRect.bottom
+		if (elementRect.left < rootRect.left) scrollRoot.scrollLeft += elementRect.left - rootRect.left
+		if (elementRect.right > rootRect.right)
+			scrollRoot.scrollLeft += elementRect.right - rootRect.right
+		return
+	}
+
 	const el = element as ScrollableElement
 	if (typeof el.scrollIntoViewIfNeeded === 'function') {
 		el.scrollIntoViewIfNeeded()
@@ -273,7 +330,54 @@ export async function scrollIntoViewIfNeeded(element: Element) {
 	}
 }
 
-export async function scrollVertically(scroll_amount: number, element?: HTMLElement | null) {
+export async function scrollVertically(
+	scroll_amount: number,
+	element?: HTMLElement | null,
+	boundary?: ScrollBoundary | null
+) {
+	if (boundary) {
+		if (element && !isWithinBoundary(element, boundary)) {
+			throw new Error('Element is outside the configured DOM root')
+		}
+
+		const targetElement = element ?? (boundary as HTMLElement)
+		if (!targetElement || targetElement.nodeType !== Node.ELEMENT_NODE) {
+			return 'No scrollable container found inside the configured DOM root'
+		}
+
+		let currentElement: HTMLElement | null = targetElement
+		let attempts = 0
+		while (currentElement && attempts < 100) {
+			const computedStyle = getComputedStyleFor(currentElement)
+			const hasScrollableY =
+				/(auto|scroll|overlay)/.test(computedStyle.overflowY) ||
+				(computedStyle.scrollbarWidth && computedStyle.scrollbarWidth !== 'auto') ||
+				(computedStyle.scrollbarGutter && computedStyle.scrollbarGutter !== 'auto')
+			const canScrollVertically = currentElement.scrollHeight > currentElement.clientHeight
+
+			if (hasScrollableY && canScrollVertically) {
+				const beforeScroll = currentElement.scrollTop
+				const maxScroll = currentElement.scrollHeight - currentElement.clientHeight
+				const requested = scroll_amount / 3
+				const delta =
+					requested > 0
+						? Math.min(requested, maxScroll - beforeScroll)
+						: Math.max(requested, -beforeScroll)
+				currentElement.scrollTop = beforeScroll + delta
+				const actualDelta = currentElement.scrollTop - beforeScroll
+				if (Math.abs(actualDelta) > 0.5) {
+					return `Scrolled container (${currentElement.tagName}) by ${actualDelta}px`
+				}
+			}
+
+			if (currentElement === boundary) break
+			currentElement = currentElement.parentElement
+			attempts++
+		}
+
+		return `No scrollable container found for element (${targetElement.tagName})`
+	}
+
 	// Element-specific scrolling if element is provided
 	if (element) {
 		const targetElement = element
@@ -425,7 +529,54 @@ export async function scrollVertically(scroll_amount: number, element?: HTMLElem
 	}
 }
 
-export async function scrollHorizontally(scroll_amount: number, element?: HTMLElement | null) {
+export async function scrollHorizontally(
+	scroll_amount: number,
+	element?: HTMLElement | null,
+	boundary?: ScrollBoundary | null
+) {
+	if (boundary) {
+		if (element && !isWithinBoundary(element, boundary)) {
+			throw new Error('Element is outside the configured DOM root')
+		}
+
+		const targetElement = element ?? (boundary as HTMLElement)
+		if (!targetElement || targetElement.nodeType !== Node.ELEMENT_NODE) {
+			return 'No horizontally scrollable container found inside the configured DOM root'
+		}
+
+		let currentElement: HTMLElement | null = targetElement
+		let attempts = 0
+		while (currentElement && attempts < 100) {
+			const computedStyle = getComputedStyleFor(currentElement)
+			const hasScrollableX =
+				/(auto|scroll|overlay)/.test(computedStyle.overflowX) ||
+				(computedStyle.scrollbarWidth && computedStyle.scrollbarWidth !== 'auto') ||
+				(computedStyle.scrollbarGutter && computedStyle.scrollbarGutter !== 'auto')
+			const canScrollHorizontally = currentElement.scrollWidth > currentElement.clientWidth
+
+			if (hasScrollableX && canScrollHorizontally) {
+				const beforeScroll = currentElement.scrollLeft
+				const maxScroll = currentElement.scrollWidth - currentElement.clientWidth
+				const requested = scroll_amount / 3
+				const delta =
+					requested > 0
+						? Math.min(requested, maxScroll - beforeScroll)
+						: Math.max(requested, -beforeScroll)
+				currentElement.scrollLeft = beforeScroll + delta
+				const actualDelta = currentElement.scrollLeft - beforeScroll
+				if (Math.abs(actualDelta) > 0.5) {
+					return `Scrolled container (${currentElement.tagName}) horizontally by ${actualDelta}px`
+				}
+			}
+
+			if (currentElement === boundary) break
+			currentElement = currentElement.parentElement
+			attempts++
+		}
+
+		return `No horizontally scrollable container found for element (${targetElement.tagName})`
+	}
+
 	// Element-specific scrolling if element is provided
 	if (element) {
 		const targetElement = element

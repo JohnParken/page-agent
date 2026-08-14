@@ -22,6 +22,7 @@ export default defineConfig({
 	webServer: {
 		command: 'node server.mjs',
 		cwd: currentDirectory,
+		env: { PARENT_BRIDGE_DEMO_MOCK_TL: '1' },
 		url: 'http://127.0.0.1:4173/health',
 		reuseExistingServer: !process.env.CI,
 		timeout: 10_000,

@@ -13,6 +13,18 @@
         "./iframe-bridge": {
             "types": "./src/iframe-bridge.ts",
             "default": "./src/iframe-bridge.ts"
+        },
+        "./parent-bridge": {
+            "types": "./src/parent-bridge/index.ts",
+            "default": "./src/parent-bridge/index.ts"
+        },
+        "./parent-bridge/host": {
+            "types": "./src/parent-bridge/host.ts",
+            "default": "./src/parent-bridge/host.ts"
+        },
+        "./parent-bridge/adapter": {
+            "types": "./src/parent-bridge/adapter.ts",
+            "default": "./src/parent-bridge/adapter.ts"
         }
     },
     "publishConfig": {
@@ -29,6 +41,21 @@
                 "types": "./dist/esm/iframe-bridge.d.ts",
                 "import": "./dist/esm/iframe-bridge.js",
                 "default": "./dist/esm/iframe-bridge.js"
+            },
+            "./parent-bridge": {
+                "types": "./dist/esm/parent-bridge.d.ts",
+                "import": "./dist/esm/parent-bridge.js",
+                "default": "./dist/esm/parent-bridge.js"
+            },
+            "./parent-bridge/host": {
+                "types": "./dist/esm/parent-bridge/host.d.ts",
+                "import": "./dist/esm/parent-bridge/host.js",
+                "default": "./dist/esm/parent-bridge/host.js"
+            },
+            "./parent-bridge/adapter": {
+                "types": "./dist/esm/parent-bridge/adapter.d.ts",
+                "import": "./dist/esm/parent-bridge/adapter.js",
+                "default": "./dist/esm/parent-bridge/adapter.js"
             }
         }
     },

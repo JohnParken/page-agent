@@ -12,6 +12,21 @@
         "./iframe-bridge": {
             "types": "./src/iframe-bridge/index.ts",
             "default": "./src/iframe-bridge/index.ts"
+        },
+        "./parent-bridge": {
+            "types": "./src/parent-bridge/index.ts",
+            "default": "./src/parent-bridge/index.ts"
+        },
+        "./parent-bridge/host": {
+            "types": "./src/parent-bridge/host.ts",
+            "default": "./src/parent-bridge/host.ts"
+        },
+        "./parent-bridge/adapter": {
+            "types": "./src/parent-bridge/adapter.ts",
+            "default": "./src/parent-bridge/adapter.ts"
+        },
+        "./parent-bridge/host.css": {
+            "default": "./src/browser/parent-host.css"
         }
     },
     "publishConfig": {
@@ -28,6 +43,24 @@
                 "types": "./dist/lib/iframe-bridge.d.ts",
                 "import": "./dist/lib/iframe-bridge.js",
                 "default": "./dist/lib/iframe-bridge.js"
+            },
+            "./parent-bridge": {
+                "types": "./dist/lib/parent-bridge.d.ts",
+                "import": "./dist/lib/parent-bridge.js",
+                "default": "./dist/lib/parent-bridge.js"
+            },
+            "./parent-bridge/host": {
+                "types": "./dist/lib/parent-bridge/host.d.ts",
+                "import": "./dist/lib/parent-bridge/host.js",
+                "default": "./dist/lib/parent-bridge/host.js"
+            },
+            "./parent-bridge/adapter": {
+                "types": "./dist/lib/parent-bridge/adapter.d.ts",
+                "import": "./dist/lib/parent-bridge/adapter.js",
+                "default": "./dist/lib/parent-bridge/adapter.js"
+            },
+            "./parent-bridge/host.css": {
+                "default": "./dist/iife/page-agent-parent-host.css"
             }
         }
     },
@@ -51,7 +84,8 @@
     "homepage": "https://alibaba.github.io/page-agent/",
     "scripts": {
         "build": "vite build && tsup --config tsup.config.js && npm run build:iife",
-        "build:iife": "vite build --config vite.iframe-iife.config.js",
+        "build:iife": "vite build --config vite.iframe-iife.config.js && npm run build:parent-host",
+        "build:parent-host": "vite build --config vite.parent-host-iife.config.js",
         "test": "vitest run",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js"

@@ -86,6 +86,10 @@ For more programmatic usage, see [📖 Documentations](https://alibaba.github.io
 
 For cooperative cross-origin iframe support, see the [iframe bridge integration guide](docs/cross-origin-iframe-bridge.md). A standalone classic-script/IIFE integration is also available in the [Chinese IIFE guide](docs/cross-origin-iframe-bridge-script.zh-CN.md).
 
+For an assistant running inside a child iframe that needs explicitly authorized,
+scoped access to the parent page, see the [parent-page controller bridge guide](docs/parent-bridge.md)
+and its [中文版本](docs/parent-bridge.zh-CN.md).
+
 ### Cross-origin iframe in an existing test application
 
 The bridge can let a Page Agent in an existing parent app observe and operate a cooperative,

@@ -1,0 +1,281 @@
+/*
+ * Presentation-only feedback for the parent-page controller host.
+ *
+ * The feedback element must never capture page interaction.  Runtime state is
+ * represented by data-state and the hidden attribute; this stylesheet does
+ * not create or inject any DOM.
+ */
+.page-agent-parent-feedback,
+[data-page-agent-parent-feedback] {
+	position: fixed;
+	inset: auto 1rem 1rem auto;
+	z-index: 2147483647;
+	box-sizing: border-box;
+	max-width: min(24rem, calc(100vw - 2rem));
+	padding: 0.625rem 0.875rem;
+	border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+	border-radius: 0.5rem;
+	background: color-mix(in srgb, Canvas 94%, currentColor 6%);
+	color: CanvasText;
+	font:
+		500 0.8125rem/1.35 system-ui,
+		sans-serif;
+	box-shadow: 0 0.25rem 1rem rgb(0 0 0 / 14%);
+	pointer-events: none !important;
+	user-select: none;
+	contain: layout paint;
+	transition:
+		opacity 120ms ease,
+		background-color 120ms ease,
+		border-color 120ms ease;
+}
+
+.page-agent-parent-feedback[hidden],
+[data-page-agent-parent-feedback][hidden] {
+	display: none !important;
+}
+
+.page-agent-parent-feedback[data-state='running'],
+[data-page-agent-parent-feedback][data-state='running'] {
+	border-color: color-mix(in srgb, #2563eb 42%, transparent);
+	background: color-mix(in srgb, #dbeafe 90%, Canvas);
+	color: #1e3a8a;
+}
+
+.page-agent-parent-feedback[data-state='approval'],
+[data-page-agent-parent-feedback][data-state='approval'] {
+	border-color: color-mix(in srgb, #d97706 48%, transparent);
+	background: color-mix(in srgb, #fef3c7 90%, Canvas);
+	color: #78350f;
+}
+
+.page-agent-parent-feedback[data-state='error'],
+[data-page-agent-parent-feedback][data-state='error'] {
+	border-color: color-mix(in srgb, #dc2626 48%, transparent);
+	background: color-mix(in srgb, #fee2e2 90%, Canvas);
+	color: #7f1d1d;
+}
+
+.page-agent-parent-feedback[data-state='idle'],
+[data-page-agent-parent-feedback][data-state='idle'] {
+	opacity: 0.72;
+}
+
+/*
+ * Non-blocking AI pointer for scoped parent-page hosts.  The pointer is
+ * appended to the parent body and is deliberately not a mask: it never
+ * captures pointer, keyboard, or wheel input, including input destined for
+ * the assistant iframe.
+ */
+[data-page-agent-parent-cursor] {
+	/*
+	 * Keep the visual cursor configurable without coupling the parent host to
+	 * runtime styles.  Resolved variables intentionally read the public values
+	 * through inheritance, so a page can configure the cursor from :root (or a
+	 * host container) without having to target the generated cursor element.
+	 */
+	/*
+	 * The defaults mirror SimulatorMask's PageAgent cursor in git main:
+	 * a 75px square, rotated/offset SVG pointer with a cyan-to-purple border
+	 * and a 4px cyan click ripple.  The parent host keeps the cursor scoped to
+	 * the trusted root; these values only affect presentation.
+	 */
+	--page-agent-parent-cursor-width-resolved: var(--page-agent-parent-cursor-width, 75px);
+	--page-agent-parent-cursor-height-resolved: var(--page-agent-parent-cursor-height, 75px);
+	--page-agent-parent-cursor-offset-x-resolved: var(--page-agent-parent-cursor-offset-x, 0px);
+	--page-agent-parent-cursor-offset-y-resolved: var(--page-agent-parent-cursor-offset-y, 0px);
+	--page-agent-parent-cursor-fill-resolved: var(--page-agent-parent-cursor-fill, #fff);
+	--page-agent-parent-cursor-gradient-start-resolved: var(
+		--page-agent-parent-cursor-gradient-start,
+		rgb(57, 182, 255)
+	);
+	--page-agent-parent-cursor-gradient-end-resolved: var(
+		--page-agent-parent-cursor-gradient-end,
+		rgb(189, 69, 251)
+	);
+	--page-agent-parent-cursor-stroke-resolved: var(
+		--page-agent-parent-cursor-stroke,
+		linear-gradient(
+			45deg,
+			var(--page-agent-parent-cursor-gradient-start-resolved),
+			var(--page-agent-parent-cursor-gradient-end-resolved)
+		)
+	);
+	--page-agent-parent-cursor-shadow-resolved: var(
+		--page-agent-parent-cursor-shadow,
+		drop-shadow(3px 4px 4px light-dark(rgb(0 0 0 / 40%), rgb(237 237 237 / 40%)))
+	);
+	--page-agent-parent-cursor-ripple-radius-resolved: var(
+		--page-agent-parent-cursor-ripple-radius,
+		calc(var(--page-agent-parent-cursor-width-resolved) / 2)
+	);
+	--page-agent-parent-cursor-ripple-color-resolved: var(
+		--page-agent-parent-cursor-ripple-color,
+		rgb(57, 182, 255)
+	);
+	--page-agent-parent-cursor-ripple-width-resolved: var(
+		--page-agent-parent-cursor-ripple-width,
+		4px
+	);
+	--page-agent-parent-cursor-ripple-start-scale-resolved: var(
+		--page-agent-parent-cursor-ripple-start-scale,
+		0
+	);
+	--page-agent-parent-cursor-ripple-end-scale-resolved: var(
+		--page-agent-parent-cursor-ripple-end-scale,
+		2
+	);
+	--page-agent-parent-cursor-ripple-start-opacity-resolved: var(
+		--page-agent-parent-cursor-ripple-start-opacity,
+		1
+	);
+	--page-agent-parent-cursor-ripple-end-opacity-resolved: var(
+		--page-agent-parent-cursor-ripple-end-opacity,
+		0
+	);
+	--page-agent-parent-cursor-click-duration-resolved: var(
+		--page-agent-parent-cursor-click-duration,
+		300ms
+	);
+	--page-agent-parent-cursor-click-easing-resolved: var(
+		--page-agent-parent-cursor-click-easing,
+		ease-out
+	);
+	--page-agent-parent-cursor-move-duration-resolved: var(
+		--page-agent-parent-cursor-move-duration,
+		120ms
+	);
+	--page-agent-parent-cursor-move-easing-resolved: var(
+		--page-agent-parent-cursor-move-easing,
+		ease-out
+	);
+
+	position: fixed;
+	left: 0;
+	top: 0;
+	width: var(--page-agent-parent-cursor-width-resolved);
+	height: var(--page-agent-parent-cursor-height-resolved);
+	z-index: 2147483646;
+	box-sizing: border-box;
+	pointer-events: none !important;
+	user-select: none;
+	contain: layout;
+	overflow: visible;
+	transform: translate(
+		var(--page-agent-parent-cursor-offset-x-resolved),
+		var(--page-agent-parent-cursor-offset-y-resolved)
+	);
+	transition:
+		left var(--page-agent-parent-cursor-move-duration-resolved)
+			var(--page-agent-parent-cursor-move-easing-resolved),
+		top var(--page-agent-parent-cursor-move-duration-resolved)
+			var(--page-agent-parent-cursor-move-easing-resolved);
+}
+
+[data-page-agent-parent-cursor][hidden] {
+	display: none !important;
+}
+
+[data-page-agent-parent-cursor-pointer] {
+	position: absolute;
+	inset: 0 auto auto 0;
+	display: block;
+	width: var(--page-agent-parent-cursor-width-resolved);
+	height: var(--page-agent-parent-cursor-height-resolved);
+	transform-origin: center;
+	transform: rotate(-135deg) scale(1.2);
+	margin-left: -10px;
+	margin-top: -18px;
+	pointer-events: none;
+}
+/* Shared SVG mask layer setup for main's border and fill artwork. */
+[data-page-agent-parent-cursor-pointer]::after,
+[data-page-agent-parent-cursor-pointer]::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+	background-repeat: no-repeat;
+	background-size: 100% 100%;
+	mask-repeat: no-repeat;
+	mask-size: 100% 100%;
+	-webkit-mask-repeat: no-repeat;
+	-webkit-mask-size: 100% 100%;
+	pointer-events: none;
+}
+
+[data-page-agent-parent-cursor-pointer]::after {
+	z-index: 1;
+	background: var(--page-agent-parent-cursor-stroke-resolved);
+	mask-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIiBmaWxsPSJub25lIj4KICA8Zz48cGF0aCBkPSJNIDE1IDQyIEwgMTUgMzYuOTkgUSAxNSAzMS45OSAyMy43IDMxLjk5IEwgMjguMDUgMzEuOTkgUSAzMi40MSAzMS45OSAzMi40MSAyMS45OSBMIDMyLjQxIDE3IFEgMzIuNDEgMTIgNDEuMDkgMTYuOTUgTCA3Ni4zMSAzNy4wNSBRIDg1IDQyIDc2LjMxIDQ2Ljk1IEwgNDEuMDkgNjcuMDUgUSAzMi40MSA3MiAzMi40MSA2Mi4wMSBMIDMyLjQxIDU3LjAxIFEgMzIuNDEgNTIuMDEgMjMuNyA1Mi4wMSBMIDE5LjM1IDUyLjAxIFEgMTUgNTIuMDEgMTUgNDcuMDEgWiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDAwMDAwIiBzdHJva2Utd2lkdGg9IjYiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgc3R5bGU9InN0cm9rZTogbGlnaHQtZGFyayhyZ2IoMCwgMCwgMCksIHJnYigyNTUsIDI1NSwgMjU1KSk7Ii8+PC9nPgo8L3N2Zz4K');
+	-webkit-mask-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIiBmaWxsPSJub25lIj4KICA8Zz48cGF0aCBkPSJNIDE1IDQyIEwgMTUgMzYuOTkgUSAxNSAzMS45OSAyMy43IDMxLjk5IEwgMjguMDUgMzEuOTkgUSAzMi40MSAzMS45OSAzMi40MSAyMS45OSBMIDMyLjQxIDE3IFEgMzIuNDEgMTIgNDEuMDkgMTYuOTUgTCA3Ni4zMSAzNy4wNSBRIDg1IDQyIDc2LjMxIDQ2Ljk1IEwgNDEuMDkgNjcuMDUgUSAzMi40MSA3MiAzMi40MSA2Mi4wMSBMIDMyLjQxIDU3LjAxIFEgMzIuNDEgNTIuMDEgMjMuNyA1Mi4wMSBMIDE5LjM1IDUyLjAxIFEgMTUgNTIuMDEgMTUgNDcuMDEgWiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDAwMDAwIiBzdHJva2Utd2lkdGg9IjYiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgc3R5bGU9InN0cm9rZTogbGlnaHQtZGFyayhyZ2IoMCwgMCwgMCksIHJnYigyNTUsIDI1NSwgMjU1KSk7Ii8+PC9nPgo8L3N2Zz4K');
+}
+
+/* Main's cursor-fill.svg, including its light/dark mode drop shadow. */
+[data-page-agent-parent-cursor-pointer]::before {
+	z-index: 0;
+	background: var(--page-agent-parent-cursor-fill-resolved);
+	mask-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8ZGVmcz4KICA8L2RlZnM+CiAgPGcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiBzdHlsZT0iZmlsdGVyOiBkcm9wLXNoYWRvdyhsaWdodC1kYXJrKHJnYmEoMCwgMCwgMCwgMC40KSwgcmdiYSgyMzcsIDIzNywgMjM3LCAwLjQpKSAzcHggNHB4IDRweCk7Ij48cGF0aCBkPSJNIDE1IDQyIEwgMTUgMzYuOTkgUSAxNSAzMS45OSAyMy43IDMxLjk5IEwgMjguMDUgMzEuOTkgUSAzMi40MSAzMS45OSAzMi40MSAyMS45OSBMIDMyLjQxIDE3IFEgMzIuNDEgMTIgNDEuMDkgMTYuOTUgTCA3Ni4zMSAzNy4wNSBRIDg1IDQyIDc2LjMxIDQ2Ljk1IEwgNDEuMDkgNjcuMDUgUSAzMi40MSA3MiAzMi40MSA2Mi4wMSBMIDMyLjQxIDU3LjAxIFEgMzIuNDEgNTIuMDEgMjMuNyA1Mi4wMSBMIDE5LjM1IDUyLjAxIFEgMTUgNTIuMDEgMTUgNDcuMDEgWiIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSJub25lIiBzdHlsZT0iZmlsbDogI2ZmZmZmZjsiLz48L2c+Cjwvc3ZnPgo=');
+	-webkit-mask-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8ZGVmcz4KICA8L2RlZnM+CiAgPGcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiBzdHlsZT0iZmlsdGVyOiBkcm9wLXNoYWRvdyhsaWdodC1kYXJrKHJnYmEoMCwgMCwgMCwgMC40KSwgcmdiYSgyMzcsIDIzNywgMjM3LCAwLjQpKSAzcHggNHB4IDRweCk7Ij48cGF0aCBkPSJNIDE1IDQyIEwgMTUgMzYuOTkgUSAxNSAzMS45OSAyMy43IDMxLjk5IEwgMjguMDUgMzEuOTkgUSAzMi40MSAzMS45OSAzMi40MSAyMS45OSBMIDMyLjQxIDE3IFEgMzIuNDEgMTIgNDEuMDkgMTYuOTUgTCA3Ni4zMSAzNy4wNSBRIDg1IDQyIDc2LjMxIDQ2Ljk1IEwgNDEuMDkgNjcuMDUgUSAzMi40MSA3MiAzMi40MSA2Mi4wMSBMIDMyLjQxIDU3LjAxIFEgMzIuNDEgNTIuMDEgMjMuNyA1Mi4wMSBMIDE5LjM1IDUyLjAxIFEgMTUgNTIuMDEgMTUgNDcuMDEgWiIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSJub25lIiBzdHlsZT0iZmlsbDogI2ZmZmZmZjsiLz48L2c+Cjwvc3ZnPgo=');
+	filter: var(--page-agent-parent-cursor-shadow-resolved);
+}
+
+[data-page-agent-parent-cursor-ripple] {
+	position: absolute;
+	width: calc(2 * var(--page-agent-parent-cursor-ripple-radius-resolved));
+	height: calc(2 * var(--page-agent-parent-cursor-ripple-radius-resolved));
+	left: 0;
+	top: 0;
+	margin-left: -50%;
+	margin-top: -50%;
+	pointer-events: none;
+}
+
+[data-page-agent-parent-cursor-ripple]::after {
+	content: '';
+	opacity: 0;
+	position: absolute;
+	inset: 0;
+	box-sizing: border-box;
+	border: var(--page-agent-parent-cursor-ripple-width-resolved) solid
+		var(--page-agent-parent-cursor-ripple-color-resolved);
+	border-radius: 50%;
+}
+
+[data-page-agent-parent-cursor].page-agent-parent-cursor-clicking
+	[data-page-agent-parent-cursor-ripple]::after {
+	/* Keep the same selector/lifecycle as SimulatorMask's `.cursor.clicking`. */
+	animation: page-agent-parent-cursor-ripple var(--page-agent-parent-cursor-click-duration-resolved)
+		var(--page-agent-parent-cursor-click-easing-resolved) forwards;
+}
+
+@keyframes page-agent-parent-cursor-ripple {
+	0% {
+		transform: scale(var(--page-agent-parent-cursor-ripple-start-scale-resolved));
+		opacity: var(--page-agent-parent-cursor-ripple-start-opacity-resolved);
+	}
+	100% {
+		transform: scale(var(--page-agent-parent-cursor-ripple-end-scale-resolved));
+		opacity: var(--page-agent-parent-cursor-ripple-end-opacity-resolved);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.page-agent-parent-feedback,
+	[data-page-agent-parent-feedback] {
+		transition: none;
+	}
+
+	[data-page-agent-parent-cursor] {
+		transition: none;
+		--page-agent-parent-cursor-click-duration-resolved: 1ms;
+		--page-agent-parent-cursor-move-duration-resolved: 0ms;
+	}
+
+	[data-page-agent-parent-cursor].page-agent-parent-cursor-clicking
+		[data-page-agent-parent-cursor-ripple] {
+		animation-duration: 1ms;
+	}
+}

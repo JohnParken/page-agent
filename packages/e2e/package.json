@@ -5,6 +5,7 @@
     "type": "module",
     "scripts": {
         "demo:iframe-bridge": "node server.mjs",
+        "demo:parent-bridge": "node server.mjs",
         "test:e2e": "playwright test",
         "typecheck": "tsc --noEmit"
     },

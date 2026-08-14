@@ -50,6 +50,7 @@ export class LLM extends EventTarget {
 			this.client = config.client
 		} else if (config.provider === 'tl') {
 			this.client = new TlAiClient({
+				debug: this.config.debug,
 				endpointAgent: config.endpointAgent!,
 				model: config.model!,
 				appId: config.appId,
@@ -62,6 +63,7 @@ export class LLM extends EventTarget {
 			})
 		} else if (config.provider === 'ds') {
 			this.client = new DsAiClient({
+				debug: this.config.debug,
 				dsMode: config.dsMode,
 				endpointAgent: config.endpointAgent,
 				baseURL: config.baseURL,
@@ -94,20 +96,23 @@ export class LLM extends EventTarget {
 		abortSignal: AbortSignal,
 		options?: InvokeOptions
 	): Promise<InvokeResult> {
-		// Log request messages
-		console.log('[LLM] 📤 Request messages:', JSON.stringify(messages, null, 2))
+		if (this.config.debug) {
+			console.debug('[LLM] Request messages:', JSON.stringify(messages, null, 2))
+		}
 
 		return await withRetry(
 			async () => {
 				const result = await this.client.invoke(messages, tools, abortSignal, options)
 
-				// Log response
-				console.log('[LLM] 📥 Response:', JSON.stringify(result, null, 2))
+				if (this.config.debug) {
+					console.debug('[LLM] Response:', JSON.stringify(result, null, 2))
+				}
 
 				return result
 			},
 			{
 				maxRetries: this.config.maxRetries,
+				debug: this.config.debug,
 				onRetry: (attempt, lastError) => {
 					this.dispatchEvent(
 						new CustomEvent('retry', {
@@ -127,6 +132,7 @@ async function withRetry<T>(
 	fn: () => Promise<T>,
 	settings: {
 		maxRetries: number
+		debug: boolean
 		onRetry: (attempt: number, lastError: Error) => void
 	}
 ): Promise<T> {
@@ -140,7 +146,9 @@ async function withRetry<T>(
 			attempt++
 			if (attempt > settings.maxRetries) throw error
 
-			console.debug('[LLM] retryable failure, will retry:', error)
+			if (settings.debug) {
+				console.debug('[LLM] retryable failure, will retry:', error)
+			}
 			settings.onRetry(attempt, error as Error)
 
 			await new Promise((resolve) => setTimeout(resolve, 100))
@@ -196,6 +204,7 @@ export function parseLLMConfig(config: LLMConfig): ResolvedLLMConfig {
 	}
 
 	return {
+		debug: config.debug ?? false,
 		baseURL: config.baseURL || '',
 		model: config.model || '',
 		apiKey: config.apiKey || '',

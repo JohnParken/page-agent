@@ -7,6 +7,13 @@ import type { LLMConfig } from '@page-agent/llms'
 export type SupportedLanguage = 'en-US' | 'zh-CN'
 
 export interface AgentConfig extends LLMConfig {
+	/**
+	 * Retain provider request/response objects in history events.
+	 * Disabled by default because raw payloads can contain page data, user input,
+	 * authorization metadata, and provider-specific diagnostics.
+	 */
+	includeRawHistory?: boolean
+
 	language?: SupportedLanguage
 
 	/**

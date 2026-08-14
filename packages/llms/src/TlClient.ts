@@ -31,6 +31,8 @@ export type ToolCallingMode = 'api' | 'system_prompt'
  * Configuration for Tl AI (chatbbc) endpoint.
  */
 export interface TlAiConfig {
+	/** Opt in to logging complete requests, responses, and SSE frames. */
+	debug?: boolean
 	/** Agent host or HTTP(S) base URL, e.g. "localhost:8089" or "https://api.example.com". */
 	endpointAgent: string
 	/** Shared model identifier required by PageAgent; the Tl prompt-variable protocol does not send it. */
@@ -49,8 +51,8 @@ export interface TlAiConfig {
 	customFetch?: typeof globalThis.fetch
 	/**
 	 * Called once for each received chat response that fails during parsing, validation, or tool execution.
-	 * Defaults to a structured console.error log. Node hosts may use this callback to write a local file.
-	 * Entries contain raw model responses and must be stored as sensitive data.
+	 * The default console entry is redacted. A custom callback receives raw model responses and
+	 * must store them as sensitive data.
 	 */
 	failureLogger?: TlFailureLogger
 }
@@ -129,7 +131,8 @@ export class TlAiClient implements LLMClient {
 	private failureLogger: TlFailureLogger
 
 	private logRequest(operation: TlOperation, url: string, body: unknown): void {
-		console.info(`[TlClient] 📤 ${operation} request:`, {
+		if (!this.config.debug) return
+		console.debug(`[TlClient] ${operation} request:`, {
 			url,
 			method: 'POST',
 			headers: {
@@ -141,7 +144,8 @@ export class TlAiClient implements LLMClient {
 	}
 
 	private logResponse(operation: TlOperation, response: Response, body: unknown): void {
-		console.info(`[TlClient] 📥 ${operation} response:`, {
+		if (!this.config.debug) return
+		console.debug(`[TlClient] ${operation} response:`, {
 			status: response.status,
 			statusText: response.statusText,
 			contentType: response.headers.get('content-type') ?? '',
@@ -180,6 +184,7 @@ export class TlAiClient implements LLMClient {
 		}
 
 		this.config = {
+			debug: config.debug ?? false,
 			endpointAgent: normalizeEndpointAgent(config.endpointAgent, 'Tl'),
 			model: config.model,
 			appId: config.appId ?? '',
@@ -195,7 +200,23 @@ export class TlAiClient implements LLMClient {
 		this.failureLogger =
 			config.failureLogger ??
 			((entry) => {
-				console.error('[TlAiClient] Tool invocation failed', entry)
+				if (this.config.debug) {
+					console.error('[TlAiClient] Tool invocation failed', entry)
+					return
+				}
+				console.error('[TlAiClient] Tool invocation failed', {
+					timestamp: entry.timestamp,
+					stage: entry.stage,
+					endpoint: entry.endpoint,
+					requestId: entry.requestId,
+					status: entry.response.status,
+					error: {
+						name: entry.error.name,
+						message: entry.error.message,
+						type: entry.error.type,
+						retryable: entry.error.retryable,
+					},
+				})
 			})
 	}
 
@@ -443,7 +464,11 @@ export class TlAiClient implements LLMClient {
 		const contentType = trace.contentType
 		const isSseResponse = /^(?:\uFEFF)?(?:id|event|data|retry):/m.test(rawContent)
 		if (contentType.includes('text/event-stream') || isSseResponse) {
-			trace.accumulatedContent = parseChatbbcSseContent(rawContent, 'TlAiClient').content
+			trace.accumulatedContent = parseChatbbcSseContent(
+				rawContent,
+				'TlAiClient',
+				this.config.debug
+			).content
 			return parseAccumulatedContent(trace.accumulatedContent, tools, normalizeResponse)
 		}
 
@@ -535,7 +560,9 @@ export class TlAiClient implements LLMClient {
 
 			// This is intentionally one local correction attempt. Any generic retry
 			// configured on LLM.invoke remains outside this method.
-			console.debug('[TlClient] response_parse failed; attempting one JSON correction')
+			if (this.config.debug) {
+				console.debug('[TlClient] response_parse failed; attempting one JSON correction')
+			}
 			try {
 				return await this.invokeAttempt(
 					correctionChatText,
@@ -549,11 +576,13 @@ export class TlAiClient implements LLMClient {
 					correctionError instanceof TlAttemptFailure ? correctionError : undefined
 				const strictError = correctionFailure?.originalError ?? correctionError
 				const correctionStage = correctionFailure?.stage
-				console.debug(
-					correctionStage
-						? `[TlClient] JSON correction ${correctionStage} failed; propagating the strict failure`
-						: '[TlClient] JSON correction attempt failed before response_parse; propagating the strict failure'
-				)
+				if (this.config.debug) {
+					console.debug(
+						correctionStage
+							? `[TlClient] JSON correction ${correctionStage} failed; propagating the strict failure`
+							: '[TlClient] JSON correction attempt failed before response_parse; propagating the strict failure'
+					)
+				}
 				throw strictError
 			}
 		}

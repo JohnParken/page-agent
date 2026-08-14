@@ -39,6 +39,18 @@ describe('LLM.invoke retry behavior', () => {
 		expect(retryListener).not.toHaveBeenCalled()
 	})
 
+	it('does not log complete model messages or results by default', async () => {
+		const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+		client.invoke.mockResolvedValueOnce({ private: 'model-result' })
+
+		try {
+			await llm.invoke([{ role: 'user', content: 'private page data' }], {}, signal)
+			expect(debugSpy).not.toHaveBeenCalled()
+		} finally {
+			debugSpy.mockRestore()
+		}
+	})
+
 	it('retries up to maxRetries on retryable errors, then throws last error', async () => {
 		const retryable = new InvokeError(InvokeErrorTypes.NETWORK_ERROR, 'boom')
 		client.invoke

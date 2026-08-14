@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Reverse parent controller host fixture</title>
+		<link rel="stylesheet" href="/controller-iife/page-agent-parent-host.css" />
+		<style>
+			:root {
+				color: #172033;
+				background: #f4f7fb;
+				font-family:
+					Inter,
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				--ink: #172033;
+				--muted: #667085;
+				--line: #e4e9f1;
+				--panel: #ffffff;
+				--brand: #315efb;
+				--success: #14956a;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				min-width: 320px;
+				min-height: 100vh;
+				margin: 0;
+				padding: clamp(1rem, 2.5vw, 2.5rem);
+				background: radial-gradient(circle at 10% 0%, rgba(49, 94, 251, 0.08), transparent 28rem),
+					#f4f7fb;
+			}
+
+			button,
+			input,
+			select {
+				font: inherit;
+			}
+
+			button {
+				cursor: pointer;
+			}
+
+			.page-shell {
+				width: min(100%, 1320px);
+				margin: 0 auto;
+				padding-right: clamp(19rem, 27vw, 25rem);
+			}
+
+			.page-header,
+			.root-heading,
+			.panel-heading {
+				display: flex;
+				align-items: flex-start;
+				justify-content: space-between;
+				gap: 1rem;
+			}
+
+			.page-header {
+				margin-bottom: 1.5rem;
+			}
+
+			.eyebrow {
+				color: var(--brand);
+				font-size: 0.72rem;
+				font-weight: 750;
+				letter-spacing: 0.11em;
+				text-transform: uppercase;
+			}
+
+			.page-header h1 {
+				margin: 0.35rem 0 0.4rem;
+				font-size: clamp(1.65rem, 3vw, 2.35rem);
+				letter-spacing: -0.04em;
+			}
+
+			.page-header p,
+			.root-heading p,
+			.control-panel p {
+				margin: 0;
+				color: var(--muted);
+				line-height: 1.5;
+			}
+
+			.page-header p {
+				max-width: 45rem;
+			}
+
+			.header-actions {
+				display: flex;
+				align-items: center;
+				gap: 0.75rem;
+				flex-shrink: 0;
+			}
+
+			.user-chip,
+			.status-pill {
+				display: inline-flex;
+				align-items: center;
+				gap: 0.45rem;
+				padding: 0.45rem 0.7rem;
+				border-radius: 999px;
+				font-size: 0.75rem;
+				font-weight: 700;
+				white-space: nowrap;
+			}
+
+			.user-chip {
+				border: 1px solid var(--line);
+				background: var(--panel);
+				color: var(--muted);
+			}
+
+			.user-chip::before,
+			.status-pill::before {
+				width: 0.45rem;
+				height: 0.45rem;
+				border-radius: 50%;
+				background: #20b47a;
+				content: '';
+			}
+
+			#outside-host-control {
+				padding: 0.6rem 0.8rem;
+				border: 1px solid #d0d7e4;
+				border-radius: 0.55rem;
+				background: var(--panel);
+				color: #475467;
+				font-size: 0.82rem;
+			}
+
+			#parent-agent-root {
+				display: grid;
+				gap: 1.15rem;
+				padding: clamp(1rem, 2vw, 1.5rem);
+				border: 1px solid #dce4f0;
+				border-radius: 1.05rem;
+				background: rgba(255, 255, 255, 0.82);
+				box-shadow: 0 0.9rem 2.75rem rgba(32, 50, 82, 0.07);
+			}
+
+			.root-heading h2 {
+				margin: 0.25rem 0 0.35rem;
+				font-size: clamp(1.15rem, 2vw, 1.55rem);
+				letter-spacing: -0.025em;
+			}
+
+			.status-pill {
+				border: 1px solid #bfead9;
+				background: #effcf7;
+				color: #087853;
+			}
+
+			.section-nav {
+				display: flex;
+				gap: 0.3rem;
+				overflow-x: auto;
+				padding: 0.3rem;
+				border: 1px solid var(--line);
+				border-radius: 0.7rem;
+				background: #f8faff;
+			}
+
+			.section-nav a {
+				padding: 0.48rem 0.7rem;
+				border-radius: 0.45rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+				text-decoration: none;
+				white-space: nowrap;
+			}
+
+			.section-nav a:first-child {
+				background: var(--panel);
+				box-shadow: 0 0.2rem 0.65rem rgba(37, 55, 93, 0.08);
+				color: var(--brand);
+				font-weight: 700;
+			}
+
+			.metric-grid,
+			.workspace-grid,
+			.control-grid {
+				display: grid;
+				gap: 0.75rem;
+			}
+
+			.metric-grid {
+				grid-template-columns: repeat(4, minmax(0, 1fr));
+			}
+
+			.metric-card,
+			.panel {
+				min-width: 0;
+				padding: 1rem;
+				border: 1px solid var(--line);
+				border-radius: 0.85rem;
+				background: var(--panel);
+			}
+
+			.metric-card .metric-label,
+			.panel-heading span {
+				display: block;
+				color: var(--muted);
+				font-size: 0.72rem;
+			}
+
+			.metric-card strong {
+				display: block;
+				margin: 0.4rem 0;
+				font-size: 1.25rem;
+				letter-spacing: -0.025em;
+			}
+
+			.metric-change {
+				color: var(--success);
+				font-size: 0.72rem;
+				font-weight: 650;
+			}
+
+			.workspace-grid {
+				grid-template-columns: minmax(0, 1.35fr) minmax(14rem, 0.65fr);
+			}
+
+			.panel-heading {
+				align-items: center;
+				margin-bottom: 0.8rem;
+			}
+
+			.panel-heading h3 {
+				margin: 0;
+				font-size: 0.95rem;
+			}
+
+			.order-table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.78rem;
+			}
+
+			.order-table th,
+			.order-table td {
+				padding: 0.65rem 0.45rem;
+				border-bottom: 1px solid #edf0f5;
+				text-align: left;
+				white-space: nowrap;
+			}
+
+			.order-table th {
+				color: var(--muted);
+				font-size: 0.68rem;
+				font-weight: 650;
+				text-transform: uppercase;
+			}
+
+			.order-table td:last-child {
+				color: var(--success);
+				font-weight: 700;
+			}
+
+			.activity-list {
+				display: grid;
+				gap: 0.8rem;
+				margin: 0;
+				padding: 0;
+				list-style: none;
+			}
+
+			.activity-list li {
+				display: grid;
+				grid-template-columns: 0.55rem minmax(0, 1fr);
+				gap: 0.6rem;
+				color: #344054;
+				font-size: 0.78rem;
+				line-height: 1.45;
+			}
+
+			.activity-list li::before {
+				width: 0.45rem;
+				height: 0.45rem;
+				margin-top: 0.35rem;
+				border-radius: 50%;
+				background: var(--brand);
+				content: '';
+			}
+
+			.activity-list time {
+				display: block;
+				color: var(--muted);
+				font-size: 0.68rem;
+			}
+
+			.control-panel {
+				display: grid;
+				gap: 0.9rem;
+				padding: 1rem;
+				border: 1px solid #d9e2ff;
+				border-radius: 0.85rem;
+				background: linear-gradient(135deg, #f8faff, #eef3ff);
+			}
+
+			.control-panel p {
+				font-size: 0.78rem;
+			}
+
+			.control-grid {
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+			}
+
+			.control-field {
+				display: grid;
+				gap: 0.35rem;
+				color: #475467;
+				font-size: 0.72rem;
+				font-weight: 650;
+			}
+
+			.control-field input,
+			.control-field select {
+				width: 100%;
+				padding: 0.6rem 0.7rem;
+				border: 1px solid #cdd6e5;
+				border-radius: 0.55rem;
+				background: #ffffff;
+				color: var(--ink);
+			}
+
+			#parent-button {
+				align-self: end;
+				padding: 0.6rem 0.8rem;
+				border: 0;
+				border-radius: 0.55rem;
+				background: var(--brand);
+				color: #ffffff;
+				font-weight: 700;
+			}
+
+			#parent-click-result {
+				margin: 0;
+				color: var(--success);
+				font-size: 0.78rem;
+				font-weight: 650;
+			}
+
+			.scroll-panel {
+				display: grid;
+				gap: 0.7rem;
+			}
+
+			.scroll-panel h3 {
+				margin: 0;
+				font-size: 0.95rem;
+			}
+
+			#parent-scroll {
+				height: 150px;
+				overflow: auto;
+				border: 1px solid #dbe3ef;
+				border-radius: 0.65rem;
+				background: #f8fafc;
+			}
+
+			#parent-scroll-content {
+				height: 520px;
+				padding: 0.8rem;
+				background: linear-gradient(#e8efff, #e2f8f0);
+				color: #475467;
+				font-size: 0.78rem;
+				line-height: 2.2;
+			}
+
+			#replace-parent-root {
+				margin-top: 1rem;
+				padding: 0.6rem 0.8rem;
+				border: 1px dashed #aab6c9;
+				border-radius: 0.55rem;
+				background: transparent;
+				color: #596579;
+				font-size: 0.78rem;
+			}
+
+			#assistant-frame {
+				position: fixed;
+				top: 50%;
+				right: clamp(0.8rem, 2vw, 2rem);
+				z-index: 1000;
+				display: block;
+				width: clamp(300px, 25vw, 430px);
+				height: min(80vh, calc(100vh - 2rem));
+				min-height: 420px;
+				border: 1px solid #d7deec;
+				border-radius: 1.1rem;
+				background: #ffffff;
+				box-shadow:
+					0 1.5rem 4rem rgba(25, 39, 67, 0.24),
+					0 0.3rem 1rem rgba(25, 39, 67, 0.08);
+				transform: translateY(-50%);
+			}
+
+			.probe-frame {
+				position: fixed;
+				left: -2px;
+				bottom: -2px;
+				z-index: -1;
+				width: 1px;
+				height: 1px;
+				border: 0;
+				opacity: 0;
+				pointer-events: none;
+			}
+
+			@media (max-width: 980px) {
+				.page-shell {
+					padding-right: clamp(19rem, 31vw, 22rem);
+				}
+
+				.metric-grid {
+					grid-template-columns: repeat(2, minmax(0, 1fr));
+				}
+
+				.workspace-grid {
+					grid-template-columns: 1fr;
+				}
+
+				#assistant-frame {
+					width: min(31vw, 340px);
+				}
+			}
+
+			@media (max-width: 700px) {
+				.page-shell {
+					padding-right: 0;
+				}
+
+				.page-header,
+				.root-heading {
+					flex-direction: column;
+				}
+
+				.header-actions {
+					width: 100%;
+					justify-content: space-between;
+				}
+
+				#assistant-frame {
+					top: auto;
+					right: 4vw;
+					bottom: 1rem;
+					width: 92vw;
+					height: min(80vh, calc(100vh - 2rem));
+					min-height: 360px;
+					transform: none;
+				}
+
+				.control-grid {
+					grid-template-columns: 1fr;
+				}
+			}
+
+			@media (max-width: 430px) {
+				.metric-grid {
+					grid-template-columns: 1fr;
+				}
+
+				.order-table {
+					display: block;
+					overflow-x: auto;
+				}
+
+				#assistant-frame {
+					right: 2vw;
+					width: 96vw;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="page-shell" data-testid="parent-demo-dashboard">
+			<header class="page-header">
+				<div>
+					<span class="eyebrow">Northstar Commerce</span>
+					<h1>Operations overview</h1>
+					<p>
+						A realistic cross-origin workspace. The floating PageAgent can observe and operate only
+						the trusted business area below.
+					</p>
+				</div>
+				<div class="header-actions">
+					<span class="user-chip">Workspace online</span>
+					<button id="outside-host-control" type="button">Account settings</button>
+				</div>
+			</header>
+
+			<main>
+				<section id="parent-agent-root" data-vue-host-root>
+					<div class="root-heading">
+						<div>
+							<span class="eyebrow">Trusted automation scope</span>
+							<h2>Revenue and fulfilment workspace</h2>
+							<p>Monitor daily performance and update the active service plan.</p>
+						</div>
+						<span class="status-pill">Systems healthy</span>
+					</div>
+
+					<nav class="section-nav" aria-label="Workspace sections">
+						<a href="#overview">Overview</a>
+						<a href="#orders">Orders</a>
+						<a href="#customers">Customers</a>
+						<a href="#activity">Activity</a>
+					</nav>
+
+					<div class="metric-grid" id="overview">
+						<article class="metric-card">
+							<span class="metric-label">Gross revenue</span>
+							<strong>$128,430</strong>
+							<span class="metric-change">↑ 12.4% this month</span>
+						</article>
+						<article class="metric-card">
+							<span class="metric-label">Orders processed</span>
+							<strong>1,842</strong>
+							<span class="metric-change">↑ 8.1% this month</span>
+						</article>
+						<article class="metric-card">
+							<span class="metric-label">Active customers</span>
+							<strong>6,290</strong>
+							<span class="metric-change">↑ 5.7% this month</span>
+						</article>
+						<article class="metric-card">
+							<span class="metric-label">Fulfilment SLA</span>
+							<strong>98.6%</strong>
+							<span class="metric-change">Within target</span>
+						</article>
+					</div>
+
+					<div class="workspace-grid">
+						<article class="panel" id="orders">
+							<div class="panel-heading">
+								<h3>Recent orders</h3>
+								<span>Updated moments ago</span>
+							</div>
+							<table class="order-table">
+								<thead>
+									<tr>
+										<th>Order</th>
+										<th>Customer</th>
+										<th>Total</th>
+										<th>Status</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td>#NS-1048</td>
+										<td>Acme Labs</td>
+										<td>$1,920</td>
+										<td>Shipped</td>
+									</tr>
+									<tr>
+										<td>#NS-1047</td>
+										<td>Orbit Studio</td>
+										<td>$860</td>
+										<td>Processing</td>
+									</tr>
+									<tr>
+										<td>#NS-1046</td>
+										<td>Horizon Co.</td>
+										<td>$2,410</td>
+										<td>Approved</td>
+									</tr>
+									<tr>
+										<td>#NS-1045</td>
+										<td>Juniper Inc.</td>
+										<td>$640</td>
+										<td>Delivered</td>
+									</tr>
+								</tbody>
+							</table>
+						</article>
+
+						<article class="panel" id="activity">
+							<div class="panel-heading">
+								<h3>Live activity</h3>
+								<span>Today</span>
+							</div>
+							<ul class="activity-list">
+								<li>
+									<span>Pro plan renewed for Acme Labs<time>4 minutes ago</time></span>
+								</li>
+								<li>
+									<span>Inventory sync completed<time>18 minutes ago</time></span>
+								</li>
+								<li>
+									<span>New customer imported<time>42 minutes ago</time></span>
+								</li>
+								<li>
+									<span>Weekly report generated<time>1 hour ago</time></span>
+								</li>
+							</ul>
+						</article>
+					</div>
+
+					<section class="control-panel" id="customers" aria-labelledby="control-title">
+						<div class="panel-heading">
+							<div>
+								<h3 id="control-title">Customer plan controls</h3>
+								<p>These controls are the PageAgent task targets in this demo.</p>
+							</div>
+							<p id="parent-click-result">not clicked</p>
+						</div>
+						<div class="control-grid">
+							<label class="control-field">
+								Parent value
+								<input id="parent-input" aria-label="parent input" placeholder="Customer note" />
+							</label>
+							<label class="control-field">
+								Parent plan
+								<select id="parent-select" aria-label="parent select">
+									<option>Basic</option>
+									<option>Pro</option>
+								</select>
+							</label>
+							<button id="parent-button" type="button">Apply plan update</button>
+						</div>
+					</section>
+
+					<section class="panel scroll-panel">
+						<h3>Fulfilment event stream</h3>
+						<div id="parent-scroll" data-scrollable aria-label="parent scroll">
+							<div id="parent-scroll-content">
+								<strong>Live event timeline</strong><br />08:10 — Warehouse batch opened<br />
+								08:32 — 28 labels generated<br />09:05 — Courier handoff confirmed<br />
+								09:44 — International manifest approved<br />10:18 — Returns queue reconciled<br />
+								11:06 — Priority shipment released<br />12:22 — Inventory threshold alert cleared<br />
+								13:40 — Final event in the demonstration stream
+							</div>
+						</div>
+					</section>
+				</section>
+
+				<button id="replace-parent-root" type="button">Replace trusted root</button>
+			</main>
+		</div>
+
+		<iframe
+			id="assistant-frame"
+			data-testid="assistant-floating-panel"
+			data-page-agent-parent-bridge
+			title="cross-origin child assistant"
+			sandbox="allow-scripts allow-same-origin"
+		></iframe>
+		<iframe
+			id="sibling-frame"
+			class="probe-frame"
+			title="sibling source"
+			sandbox="allow-scripts allow-same-origin"
+		></iframe>
+		<iframe
+			id="wrong-origin-frame"
+			class="probe-frame"
+			title="wrong source"
+			sandbox="allow-scripts allow-same-origin"
+		></iframe>
+
+		<script type="module">
+			import { ParentPageControllerHost } from '/lib/parent-bridge/host.js'
+
+			const params = new URLSearchParams(location.search)
+			const childOrigin = 'http://127.0.0.1:4174'
+			const childExpectedParentOrigin = params.get('childExpectedParentOrigin') || location.origin
+			const childPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
+				childExpectedParentOrigin
+			)}&role=target&policy=reverse-e2e-policy`
+			const siblingPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
+				location.origin
+			)}&role=sibling&policy=reverse-e2e-policy`
+			const wrongPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
+				location.origin
+			)}&role=wrong-source&policy=reverse-e2e-policy`
+			document.querySelector('#assistant-frame').src = `${childOrigin}${childPath}`
+			document.querySelector('#sibling-frame').src = `${childOrigin}${siblingPath}`
+			document.querySelector('#wrong-origin-frame').src = `${childOrigin}${wrongPath}`
+			let policySequence = 0
+
+			const host = new ParentPageControllerHost({
+				iframe: document.querySelector('#assistant-frame'),
+				assistantOrigin: childOrigin,
+				root: () => document.querySelector('#parent-agent-root'),
+				scopeId: 'reverse-e2e-root',
+				capabilities: [
+					'observe',
+					'click',
+					'input',
+					'select',
+					'scroll',
+					'scrollHorizontally',
+					'cleanup',
+					'visual',
+				],
+				controllerOptions: {
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+					enableMask: false,
+				},
+				visualFeedback: 'non-blocking',
+				getEmbedPolicy: async () => 'reverse-e2e-policy',
+				verifyEmbedPolicy: (policy, context) => {
+					if (policy !== 'reverse-e2e-policy') return false
+					const now = Math.floor(Date.now() / 1_000)
+					return {
+						jti: `reverse-e2e-policy-jti-${++policySequence}`,
+						tenant: 'e2e-tenant',
+						user: 'e2e-user',
+						targetId: 'reverse-e2e-target',
+						scopeId: 'reverse-e2e-root',
+						parentOrigin: context.actualParentOrigin,
+						assistantOrigin: context.frameContext.assistantOrigin,
+						cap: [
+							'observe',
+							'click',
+							'input',
+							'select',
+							'scroll',
+							'scrollHorizontally',
+							'cleanup',
+							'visual',
+						],
+						protocolVersionMin: 1,
+						protocolVersionMax: 1,
+						nbf: now - 30,
+						exp: now + 300,
+					}
+				},
+			})
+			host.start()
+
+			window.reverseParentHost = host
+			window.reverseParentController = host.controller
+			window.reverseParentRoot = () => document.querySelector('#parent-agent-root')
+			document.querySelector('#parent-button').addEventListener('click', () => {
+				document.querySelector('#parent-click-result').textContent = 'clicked'
+			})
+			document.querySelector('#replace-parent-root').addEventListener('click', () => {
+				const oldRoot = document.querySelector('#parent-agent-root')
+				const replacement = oldRoot.cloneNode(true)
+				replacement.querySelector('#parent-click-result').textContent = 'replacement'
+				replacement.id = 'parent-agent-root'
+				oldRoot.replaceWith(replacement)
+				replacement.querySelector('#parent-button').addEventListener('click', () => {
+					replacement.querySelector('#parent-click-result').textContent = 'clicked replacement'
+				})
+			})
+		</script>
+	</body>
+</html>

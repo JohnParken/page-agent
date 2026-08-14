@@ -52,6 +52,16 @@ export interface PageControllerConfig extends dom.DomConfig {
 	enableMask?: boolean
 }
 
+/** Stable error name/code for a missing, disconnected, or replaced root. */
+export class DomRootUnavailableError extends Error {
+	readonly code = 'ROOT_UNAVAILABLE'
+
+	constructor(message: string) {
+		super(message)
+		this.name = 'DomRootUnavailableError'
+	}
+}
+
 /**
  * Structured browser state for LLM consumption
  */
@@ -150,6 +160,7 @@ export interface IndexedPageControllerAdapter extends PageControllerAdapter {
  */
 export class PageController extends EventTarget implements IndexedPageControllerAdapter {
 	private config: PageControllerConfig
+	private activeRoot: Element | null = null
 
 	/** Corresponds to eval_page in browser-use */
 	private flatTree: FlatDomTree | null = null
@@ -181,21 +192,124 @@ export class PageController extends EventTarget implements IndexedPageController
 	/** Visual mask overlay for blocking user interaction during automation */
 	private mask: InstanceType<typeof import('./mask/SimulatorMask').SimulatorMask> | null = null
 	private maskReady: Promise<void> | null = null
+	private readonly highlightCleanupRegistry: dom.HighlightCleanupRegistry = new Set()
+	private readonly clickScope = {}
 
 	constructor(config: PageControllerConfig = {}) {
 		super()
 
 		this.config = config
+		dom.registerHighlightCleanupRegistry(this.highlightCleanupRegistry)
 
-		patchReact(this)
+		// Scoped roots may be resolved lazily and must not trigger a document-wide
+		// React patch before their boundary is known. Legacy controllers retain
+		// the historical eager patch.
+		if (config.root === undefined) patchReact(this)
 
-		if (config.enableMask) this.initMask()
+		// A SimulatorMask is a document-wide, interaction-blocking overlay. It
+		// cannot be scoped to an embedded root, so never create one for a scoped
+		// controller even when callers carry over the legacy enableMask option.
+		if (config.enableMask && !this.isRootScoped()) this.initMask()
+	}
+
+	private isRootScoped(): boolean {
+		return this.config.root !== undefined
+	}
+
+	private resolveConfiguredRoot(): Element {
+		try {
+			return dom.resolveRoot(this.config.root)
+		} catch (error) {
+			if (error instanceof DomRootUnavailableError) throw error
+			throw new DomRootUnavailableError(String(error))
+		}
+	}
+
+	/** Clear all index state and invalidate every previously observed index. */
+	private invalidateTree(): void {
+		dom.cleanUpHighlights(this.highlightCleanupRegistry)
+		this.flatTree = null
+		this.selectorMap.clear()
+		this.elementTextMap.clear()
+		this.simplifiedHTML = '<EMPTY>'
+		this.isIndexed = false
+		this.activeRoot = null
+		this.treeRevision += 1
+	}
+
+	/**
+	 * Resolve the root again before an action. Replaced or disconnected roots
+	 * fail closed and invalidate the current selector map.
+	 */
+	private resolveActionRoot(): Element {
+		this.assertIndexed()
+
+		let root: Element
+		try {
+			root = this.resolveConfiguredRoot()
+		} catch (error) {
+			this.invalidateTree()
+			throw error
+		}
+
+		if (!this.activeRoot || root !== this.activeRoot) {
+			this.invalidateTree()
+			throw new DomRootUnavailableError(
+				'Configured DOM root changed; updateTree() is required before actions.'
+			)
+		}
+
+		return root
+	}
+
+	private getActionElement(index: number, root: Element): HTMLElement {
+		const element = getElementByIndex(this.selectorMap, index)
+		if (
+			element.ownerDocument !== document ||
+			!element.isConnected ||
+			(element !== root && !root.contains(element))
+		) {
+			this.invalidateTree()
+			throw new DomRootUnavailableError(
+				`Element at index ${index} is no longer inside the configured DOM root.`
+			)
+		}
+		return element
+	}
+
+	/**
+	 * Resolve an indexed element for a local host-side policy decision.
+	 *
+	 * This intentionally is not part of `PageControllerAdapter` and must not be
+	 * exposed through the parent-controller RPC protocol. It performs the same
+	 * indexed/revision/root/live-containment checks as an action, so a policy
+	 * callback cannot authorize a stale or out-of-scope element.
+	 */
+	getIndexedElementForPolicy(index: number): HTMLElement {
+		const root = this.resolveActionRoot()
+		return this.getActionElement(index, root)
+	}
+
+	/**
+	 * Return the local selector-map revision for a parent-host response
+	 * envelope. This is intentionally not part of the adapter/RPC contract;
+	 * remote callers receive the revision embedded in BrowserState instead.
+	 */
+	getTreeRevision(): number {
+		return this.treeRevision
+	}
+
+	private getRootViewportHeight(root: Element): number {
+		if (!this.isRootScoped()) return window.innerHeight
+		const element = root as HTMLElement
+		return element.clientHeight || Math.max(1, Math.round(root.getBoundingClientRect().height))
 	}
 
 	/**
 	 * Initialize mask asynchronously (dynamic import to avoid CSS loading in Node)
 	 */
 	initMask() {
+		if (this.isRootScoped()) return
 		if (this.maskReady !== null) return
 		this.maskReady = (async () => {
 			const { SimulatorMask } = await import('./mask/SimulatorMask')
@@ -227,13 +341,14 @@ export class PageController extends EventTarget implements IndexedPageController
 	async getBrowserState(context?: PageControllerCallContext): Promise<IndexedBrowserState> {
 		throwIfAborted(context?.signal)
 
-		const url = window.location.href
-		const title = document.title
-		const pi = getPageInfo()
-		const viewportExpansion = dom.resolveViewportExpansion(this.config.viewportExpansion)
-
 		await this.updateTree(context)
 		throwIfAborted(context?.signal)
+
+		const root = this.activeRoot ?? this.resolveConfiguredRoot()
+		const url = window.location.href
+		const title = document.title
+		const pi = getPageInfo(root)
+		const viewportExpansion = dom.resolveViewportExpansion(this.config.viewportExpansion)
 
 		const content = this.simplifiedHTML
 
@@ -248,8 +363,9 @@ export class PageController extends EventTarget implements IndexedPageController
 			1
 		)} total pages, at ${(pi.current_page_position * 100).toFixed(0)}% of page`
 
-		const elementsLabel =
-			viewportExpansion === -1
+		const elementsLabel = this.isRootScoped()
+			? 'Interactive elements inside the configured root:'
+			: viewportExpansion === -1
 				? 'Interactive elements from top layer of the current page (full page):'
 				: 'Interactive elements from top layer of the current page inside the viewport:'
 
@@ -293,51 +409,89 @@ export class PageController extends EventTarget implements IndexedPageController
 	async updateTree(context?: PageControllerCallContext): Promise<string> {
 		throwIfAborted(context?.signal)
 
+		let root: Element
+		try {
+			root = this.resolveConfiguredRoot()
+		} catch (error) {
+			this.invalidateTree()
+			throw error
+		}
+
+		// A root identity change invalidates all indices before extraction. This
+		// also prevents actions from observing a previous host mount.
+		if (this.activeRoot && this.activeRoot !== root) this.invalidateTree()
+		this.activeRoot = root
+
 		this.dispatchEvent(new Event('beforeUpdate'))
 
-		this.lastTimeUpdate = Date.now()
-
 		// Temporarily bypass mask to allow DOM extraction
-		if (this.mask) {
-			this.mask.wrapper.style.pointerEvents = 'none'
+		if (this.mask) this.mask.wrapper.style.pointerEvents = 'none'
+
+		try {
+			dom.cleanUpHighlights(this.highlightCleanupRegistry)
+
+			if (this.isRootScoped()) patchReact(this, root)
+
+			const configuredBlacklist: Element[] = []
+			for (const item of this.config.interactiveBlacklist || []) {
+				const candidate = typeof item === 'function' ? item() : item
+				if (candidate && (candidate === root || root.contains(candidate))) {
+					configuredBlacklist.push(candidate)
+				}
+			}
+			const configuredContentBlacklist: Element[] = []
+			for (const item of this.config.contentBlacklist || []) {
+				const candidate = typeof item === 'function' ? item() : item
+				if (candidate && (candidate === root || root.contains(candidate))) {
+					configuredContentBlacklist.push(candidate)
+				}
+			}
+			const sensitiveContent = Array.from(
+				root.querySelectorAll(
+					'input[type="password"], [autocomplete="new-password"], [autocomplete="current-password"], [autocomplete="one-time-code"], [data-page-agent-sensitive], [name*="password" i], [name*="token" i], [id*="password" i], [id*="token" i]'
+				)
+			)
+			const blacklist = [
+				...configuredBlacklist,
+				...(root.matches('[data-page-agent-not-interactive]') ? [root] : []),
+				...Array.from(root.querySelectorAll('[data-page-agent-not-interactive]')),
+			]
+
+			this.flatTree = dom.getFlatTree({
+				...this.config,
+				root: this.isRootScoped() ? root : undefined,
+				interactiveBlacklist: blacklist,
+				contentBlacklist: [...configuredContentBlacklist, ...sensitiveContent],
+				highlightCleanupRegistry: this.highlightCleanupRegistry,
+			})
+
+			this.simplifiedHTML = dom.flatTreeToString(
+				this.flatTree,
+				this.config.includeAttributes,
+				this.config.keepSemanticTags,
+				this.isRootScoped() ? ['value', 'defaultvalue'] : []
+			)
+
+			this.selectorMap.clear()
+			this.selectorMap = dom.getSelectorMap(this.flatTree)
+
+			this.elementTextMap.clear()
+			this.elementTextMap = dom.getElementTextMap(this.simplifiedHTML)
+
+			// Mark as indexed - now element actions are allowed
+			this.isIndexed = true
+			this.treeRevision += 1
+			this.lastTimeUpdate = Date.now()
+
+			this.dispatchEvent(new Event('afterUpdate'))
+			return this.simplifiedHTML
+		} catch (error) {
+			this.invalidateTree()
+			throw error
+		} finally {
+			// Restore mask blocking even when extraction fails.
+			if (this.mask) this.mask.wrapper.style.pointerEvents = 'auto'
 		}
-
-		dom.cleanUpHighlights()
-
-		const blacklist = [
-			...(this.config.interactiveBlacklist || []),
-			...Array.from(document.querySelectorAll('[data-page-agent-not-interactive]')),
-		]
-
-		this.flatTree = dom.getFlatTree({
-			...this.config,
-			interactiveBlacklist: blacklist,
-		})
-
-		this.simplifiedHTML = dom.flatTreeToString(
-			this.flatTree,
-			this.config.includeAttributes,
-			this.config.keepSemanticTags
-		)
-
-		this.selectorMap.clear()
-		this.selectorMap = dom.getSelectorMap(this.flatTree)
-
-		this.elementTextMap.clear()
-		this.elementTextMap = dom.getElementTextMap(this.simplifiedHTML)
-
-		// Mark as indexed - now element actions are allowed
-		this.isIndexed = true
-		this.treeRevision += 1
-
-		// Restore mask blocking
-		if (this.mask) {
-			this.mask.wrapper.style.pointerEvents = 'auto'
-		}
-
-		this.dispatchEvent(new Event('afterUpdate'))
-
-		return this.simplifiedHTML
 	}
 
 	/**
@@ -345,7 +499,7 @@ export class PageController extends EventTarget implements IndexedPageController
 	 */
 	async cleanUpHighlights(): Promise<void> {
 		console.log('[PageController] cleanUpHighlights')
-		dom.cleanUpHighlights()
+		dom.cleanUpHighlights(this.highlightCleanupRegistry)
 	}
 
 	// ======= Element Actions =======
@@ -369,10 +523,10 @@ export class PageController extends EventTarget implements IndexedPageController
 	): Promise<PageActionResult> {
 		try {
 			throwIfAborted(context?.signal)
-			this.assertIndexed()
-			const element = getElementByIndex(this.selectorMap, index)
+			const root = this.resolveActionRoot()
+			const element = this.getActionElement(index, root)
 			const elemText = this.elementTextMap.get(index)
-			await clickElement(element)
+			await clickElement(element, this.isRootScoped() ? root : undefined, this.clickScope)
 			throwIfAborted(context?.signal)
 
 			// Handle links that open in new tabs
@@ -406,15 +560,15 @@ export class PageController extends EventTarget implements IndexedPageController
 	): Promise<PageActionResult> {
 		try {
 			throwIfAborted(context?.signal)
-			this.assertIndexed()
-			const element = getElementByIndex(this.selectorMap, index)
+			const root = this.resolveActionRoot()
+			const element = this.getActionElement(index, root)
 			const elemText = this.elementTextMap.get(index)
-			await inputTextElement(element, text)
+			await inputTextElement(element, text, this.isRootScoped() ? root : undefined, this.clickScope)
 			throwIfAborted(context?.signal)
 
 			return {
 				success: true,
-				message: `✅ Input text (${text}) into element (${elemText ?? index}).`,
+				message: `✅ Input ${text.length} characters into element (${elemText ?? index}).`,
 			}
 		} catch (error) {
 			throwIfAborted(context?.signal)
@@ -435,15 +589,17 @@ export class PageController extends EventTarget implements IndexedPageController
 	): Promise<PageActionResult> {
 		try {
 			throwIfAborted(context?.signal)
-			this.assertIndexed()
-			const element = getElementByIndex(this.selectorMap, index)
+			const root = this.resolveActionRoot()
+			const element = this.getActionElement(index, root)
 			const elemText = this.elementTextMap.get(index)
 			await selectOptionElement(element as HTMLSelectElement, optionText)
 			throwIfAborted(context?.signal)
 
 			return {
 				success: true,
-				message: `✅ Selected option (${optionText}) in element (${elemText ?? index}).`,
+				message: `✅ Selected an option (${optionText.length} characters) in element (${
+					elemText ?? index
+				}).`,
 			}
 		} catch (error) {
 			throwIfAborted(context?.signal)
@@ -465,13 +621,16 @@ export class PageController extends EventTarget implements IndexedPageController
 			throwIfAborted(context?.signal)
 			const { down, numPages, pixels, index } = options
 
-			this.assertIndexed()
+			const root = this.resolveActionRoot()
+			const scrollAmount = (pixels ?? numPages * this.getRootViewportHeight(root)) * (down ? 1 : -1)
 
-			const scrollAmount = (pixels ?? numPages * window.innerHeight) * (down ? 1 : -1)
+			const element = index !== undefined ? this.getActionElement(index, root) : null
 
-			const element = index !== undefined ? getElementByIndex(this.selectorMap, index) : null
-
-			const message = await scrollVertically(scrollAmount, element)
+			const message = await scrollVertically(
+				scrollAmount,
+				element,
+				this.isRootScoped() ? root : undefined
+			)
 			throwIfAborted(context?.signal)
 
 			return {
@@ -498,13 +657,17 @@ export class PageController extends EventTarget implements IndexedPageController
 			throwIfAborted(context?.signal)
 			const { right, pixels, index } = options
 
-			this.assertIndexed()
+			const root = this.resolveActionRoot()
 
 			const scrollAmount = pixels * (right ? 1 : -1)
 
-			const element = index !== undefined ? getElementByIndex(this.selectorMap, index) : null
+			const element = index !== undefined ? this.getActionElement(index, root) : null
 
-			const message = await scrollHorizontally(scrollAmount, element)
+			const message = await scrollHorizontally(
+				scrollAmount,
+				element,
+				this.isRootScoped() ? root : undefined
+			)
 			throwIfAborted(context?.signal)
 
 			return {
@@ -526,6 +689,13 @@ export class PageController extends EventTarget implements IndexedPageController
 	 * can abort promptly when the task is stopped.
 	 */
 	async executeJavascript(script: string, signal?: AbortSignal): Promise<PageActionResult> {
+		if (this.isRootScoped()) {
+			return {
+				success: false,
+				message: '❌ JavaScript execution is disabled when a scoped DOM root is configured.',
+			}
+		}
+
 		try {
 			// Wrap script in async function to support await, exposing `signal`.
 			const asyncFunction = eval(`(async (signal) => { ${script} })`)
@@ -566,12 +736,14 @@ export class PageController extends EventTarget implements IndexedPageController
 	 * Dispose and clean up resources
 	 */
 	dispose(): void {
-		dom.cleanUpHighlights()
+		dom.cleanUpHighlights(this.highlightCleanupRegistry)
+		dom.unregisterHighlightCleanupRegistry(this.highlightCleanupRegistry)
 		this.flatTree = null
 		this.selectorMap.clear()
 		this.elementTextMap.clear()
 		this.simplifiedHTML = '<EMPTY>'
 		this.isIndexed = false
+		this.activeRoot = null
 		this.mask?.dispose()
 		this.mask = null
 	}

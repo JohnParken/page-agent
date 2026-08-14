@@ -143,7 +143,9 @@ export class PageAgentCore<
 			this.history.push({
 				type: 'error',
 				message: String(lastError),
-				rawResponse: (lastError as InvokeError).rawResponse,
+				...(this.config.includeRawHistory
+					? { rawResponse: (lastError as InvokeError).rawResponse }
+					: {}),
 			})
 			this.history.push({
 				type: 'retry',
@@ -276,7 +278,7 @@ export class PageAgentCore<
 
 				// handle internal agent errors
 				try {
-					console.group(`step: ${step}`)
+					if (this.config.debug) console.group(`step: ${step}`)
 
 					// @note It's convenient to treat stepDelay as part of the next step.
 					// Maybe move it to a dedicated try block for better semantics?
@@ -286,7 +288,7 @@ export class PageAgentCore<
 
 					// observe
 
-					console.log(chalk.blue.bold('👀 Observing...'))
+					if (this.config.debug) console.debug(chalk.blue.bold('Observing...'))
 
 					this.#states.browserState = await this.pageController.getBrowserState({ signal })
 					await this.#handleObservations(step, signal)
@@ -302,7 +304,7 @@ export class PageAgentCore<
 
 					// invoke LLM
 
-					console.log(chalk.blue.bold('🧠 Thinking...'))
+					if (this.config.debug) console.debug(chalk.blue.bold('Thinking...'))
 					this.#emitActivity({ type: 'thinking' })
 
 					const result = await this.#llm.invoke(messages, macroTool, signal, {
@@ -333,14 +335,17 @@ export class PageAgentCore<
 						reflection,
 						action,
 						usage: result.usage,
-						rawResponse: result.rawResponse,
-						rawRequest: result.rawRequest,
+						...(this.config.includeRawHistory
+							? { rawResponse: result.rawResponse, rawRequest: result.rawRequest }
+							: {}),
 					})
 
 					if (actionName === 'done') {
 						const success = action.input?.success ?? false
 						const data = action.input?.text || 'no text provided'
-						console.log(chalk.green.bold('Task completed'), success, data)
+						if (this.config.debug) {
+							console.debug(chalk.green.bold('Task completed'), success, data)
+						}
 						taskResult = { success, data, history: this.history }
 						this.#lastResult = taskResult
 						finalStatus = 'completed'
@@ -350,10 +355,14 @@ export class PageAgentCore<
 					// catch block must not throw error. otherwise the error may be overridden if finally block also throws error.
 
 					const isAbortError = (error as any)?.name === 'AbortError'
-					if (!isAbortError) console.error('Task failed', error)
+					if (!isAbortError && this.config.debug) console.error('Task failed', error)
 					const message = isAbortError ? 'Task aborted' : String(error)
 					this.#emitActivity({ type: 'error', message: message })
-					this.#emitHistoryChange({ type: 'error', message: message, rawResponse: error })
+					this.#emitHistoryChange({
+						type: 'error',
+						message: message,
+						...(this.config.includeRawHistory ? { rawResponse: error } : {}),
+					})
 					taskResult = { success: false, data: message, history: this.history }
 					this.#lastResult = taskResult
 					finalStatus = isAbortError ? 'stopped' : 'error'
@@ -361,7 +370,7 @@ export class PageAgentCore<
 				} finally {
 					// finally block runs before the break above.
 
-					console.groupEnd()
+					if (this.config.debug) console.groupEnd()
 					// @note hook may throw error.
 					// which will override the `break` above and be handled as an external error.
 					// as expected.
@@ -371,7 +380,7 @@ export class PageAgentCore<
 				step++
 				if (step > maxSteps) {
 					const message = 'Step count exceeded maximum limit'
-					console.error(message)
+					if (this.config.debug) console.error(message)
 					this.#emitActivity({ type: 'error', message: message })
 					this.#emitHistoryChange({ type: 'error', message: message })
 					taskResult = { success: false, data: message, history: this.history }
@@ -413,7 +422,7 @@ export class PageAgentCore<
 				const signal = this.#abortController.signal
 				signal.throwIfAborted()
 
-				console.log(chalk.blue.bold('MacroTool input'), input)
+				if (this.config.debug) console.debug(chalk.blue.bold('MacroTool input'), input)
 				const action = input.action
 
 				const toolName = Object.keys(action)[0]
@@ -428,15 +437,15 @@ export class PageAgentCore<
 
 				const reflectionText = reflectionLines.length > 0 ? reflectionLines.join('\n') : ''
 
-				if (reflectionText) {
-					console.log(reflectionText)
-				}
+				if (reflectionText && this.config.debug) console.debug(reflectionText)
 
 				// Find the corresponding tool
 				const tool = tools.get(toolName)
 				assert(tool, `Tool ${toolName} not found`)
 
-				console.log(chalk.blue.bold(`Executing tool: ${toolName}`), toolInput)
+				if (this.config.debug) {
+					console.debug(chalk.blue.bold(`Executing tool: ${toolName}`), toolInput)
+				}
 
 				// Emit executing activity
 				this.#emitActivity({ type: 'executing', tool: toolName, input: toolInput })
@@ -448,7 +457,9 @@ export class PageAgentCore<
 				signal.throwIfAborted()
 
 				const duration = Date.now() - startTime
-				console.log(chalk.green.bold(`Tool (${toolName}) executed for ${duration}ms`), result)
+				if (this.config.debug) {
+					console.debug(chalk.green.bold(`Tool (${toolName}) executed for ${duration}ms`), result)
+				}
 
 				// Emit executed activity
 				this.#emitActivity({
@@ -586,10 +597,12 @@ an inner action tool directly and do not place the AgentOutput object in assista
 			try {
 				pageInstructions = instructions.getPageInstructions(url)?.trim()
 			} catch (error) {
-				console.error(
-					chalk.red('[PageAgent] Failed to execute getPageInstructions callback:'),
-					error
-				)
+				if (this.config.debug) {
+					console.error(
+						chalk.red('[PageAgent] Failed to execute getPageInstructions callback:'),
+						error
+					)
+				}
 			}
 		}
 
@@ -655,7 +668,7 @@ an inner action tool directly and do not place the AgentOutput object in assista
 		if (this.#observations.length > 0) {
 			for (const content of this.#observations) {
 				this.history.push({ type: 'observation', content })
-				console.log(chalk.cyan('Observation:'), content)
+				if (this.config.debug) console.debug(chalk.cyan('Observation:'), content)
 			}
 			this.#observations = []
 			this.#emitHistoryChange()
@@ -733,7 +746,7 @@ an inner action tool directly and do not place the AgentOutput object in assista
 	}
 
 	dispose() {
-		console.log('Disposing PageAgent...')
+		if (this.config.debug) console.debug('Disposing PageAgent...')
 		this.disposed = true
 		this.pageController.dispose()
 		// this.history = []

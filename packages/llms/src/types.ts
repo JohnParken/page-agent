@@ -138,6 +138,12 @@ export interface InvokeResult<TResult = unknown> {
  */
 export interface LLMConfig {
 	/**
+	 * Log complete model requests, responses, and streaming frames for local debugging.
+	 * Disabled by default because these payloads can contain page data and credentials.
+	 */
+	debug?: boolean
+
+	/**
 	 * Base URL for OpenAI-compatible endpoints.
 	 * Required when using the built-in OpenAI client (default).
 	 */
@@ -213,9 +219,9 @@ export interface LLMConfig {
 	trVersion?: string
 
 	/**
-	 * Tl-specific failure logger. Defaults to a structured console.error entry.
+	 * Tl-specific failure logger. The default console entry contains metadata only.
 	 * Browser clients can inspect it locally; Node hosts can append the entry to a file.
-	 * Entries contain raw model responses and must be stored as sensitive data.
+	 * Custom logger entries contain raw model responses and must be stored as sensitive data.
 	 */
 	tlFailureLogger?: TlFailureLogger
 
@@ -247,6 +253,7 @@ export interface LLMConfig {
 }
 
 export interface ResolvedLLMConfig {
+	debug: boolean
 	baseURL: string
 	model: string
 	apiKey: string

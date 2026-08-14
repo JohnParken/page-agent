@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Reverse parent bridge assistant fixture</title>
+		<style>
+			:root {
+				color-scheme: light;
+				font-family:
+					Inter,
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				background: #f6f7fb;
+				color: #172033;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			html,
+			body {
+				margin: 0;
+				min-height: 100%;
+				background: radial-gradient(circle at 100% 0, rgb(219 234 254 / 70%), transparent 34%),
+					#f6f7fb;
+			}
+			#assistant-root {
+				display: flex;
+				min-height: 100dvh;
+				flex-direction: column;
+				gap: 0.75rem;
+				padding: 1rem;
+				overflow: auto;
+			}
+			#assistant-root > strong:first-child {
+				font-size: 0.78rem;
+				font-weight: 750;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				color: #5b21b6;
+			}
+			#assistant-status,
+			#assistant-agent-status {
+				margin: 0;
+				font-size: 0.82rem;
+				line-height: 1.45;
+				color: #596579;
+			}
+			#assistant-status {
+				align-self: flex-start;
+				padding: 0.28rem 0.55rem;
+				border: 1px solid #dbe4f0;
+				border-radius: 999px;
+				background: rgb(255 255 255 / 82%);
+			}
+			.agent-demo {
+				display: grid;
+				gap: 0.65rem;
+				padding: 0.9rem;
+				border: 1px solid #e4e7ec;
+				border-radius: 1rem;
+				background: rgb(255 255 255 / 94%);
+				box-shadow: 0 12px 32px rgb(30 41 59 / 8%);
+			}
+			.agent-demo h2 {
+				margin: 0;
+				font-size: 1.05rem;
+				line-height: 1.3;
+				color: #1e293b;
+			}
+			.agent-demo > strong {
+				font-size: 0.75rem;
+				color: #7c3aed;
+			}
+			.agent-actions {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr);
+				gap: 0.5rem;
+			}
+			button,
+			input {
+				font: inherit;
+			}
+			button {
+				min-width: 0;
+				padding: 0.58rem 0.65rem;
+				border: 1px solid #d7dce5;
+				border-radius: 0.65rem;
+				background: #fff;
+				color: #334155;
+				font-size: 0.78rem;
+				font-weight: 650;
+				line-height: 1.25;
+				cursor: pointer;
+				transition:
+					border-color 140ms ease,
+					background-color 140ms ease,
+					transform 140ms ease;
+			}
+			button:hover:not(:disabled) {
+				border-color: #a78bfa;
+				background: #f5f3ff;
+				transform: translateY(-1px);
+			}
+			#assistant-run-agent {
+				border-color: #6d5ce8;
+				background: #6d5ce8;
+				color: #fff;
+			}
+			#assistant-stop-agent {
+				color: #b42318;
+			}
+			.agent-task {
+				margin: 0;
+				padding: 0.7rem;
+				border: 1px solid #ddd6fe;
+				border-radius: 0.7rem;
+				background: #faf9ff;
+				font-size: 0.82rem;
+				line-height: 1.55;
+			}
+			button:disabled {
+				cursor: not-allowed;
+				opacity: 0.55;
+			}
+			.manual-controls {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 0.4rem;
+				padding: 0.75rem;
+				border: 1px solid #e4e7ec;
+				border-radius: 0.9rem;
+				background: rgb(255 255 255 / 78%);
+			}
+			pre {
+				white-space: pre-wrap;
+				word-break: break-word;
+				margin: 0;
+				min-height: 2rem;
+				max-height: 11rem;
+				overflow: auto;
+				font-size: 0.72rem;
+				line-height: 1.5;
+				color: #475467;
+			}
+			#assistant-state {
+				padding: 0.7rem;
+				border-radius: 0.75rem;
+				background: #111827;
+				color: #d1fae5;
+			}
+			@media (max-width: 360px) {
+				#assistant-root {
+					padding: 0.75rem;
+				}
+				.manual-controls {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div id="assistant-root" data-v-app>
+			<strong>Cross-origin assistant iframe</strong>
+			<p id="assistant-status">Waiting for parent controller…</p>
+			<section class="agent-demo" aria-labelledby="page-agent-demo-title">
+				<h2 id="page-agent-demo-title">PageAgent controls the parent page</h2>
+				<strong>Fixed local demo task</strong>
+				<p id="assistant-agent-task" class="agent-task">
+					请依次点击父页面按钮，在 Parent value 输入框中输入 PageAgent Demo，并将 Parent plan 选择为
+					Pro。
+				</p>
+				<div class="agent-actions">
+					<button id="assistant-run-agent" type="button" disabled>Run PageAgent</button>
+					<button id="assistant-stop-agent" type="button" disabled>Stop</button>
+				</div>
+				<p id="assistant-agent-status">Agent waits for the parent bridge.</p>
+				<pre id="assistant-agent-result"></pre>
+			</section>
+			<div class="manual-controls" aria-label="Low-level bridge controls">
+				<button id="assistant-run-observe" type="button">Observe parent root</button>
+				<button id="assistant-run-click" type="button">Click parent control</button>
+				<button id="assistant-run-input" type="button">Input parent control</button>
+				<button id="assistant-run-select" type="button">Select parent option</button>
+				<button id="assistant-run-scroll" type="button">Scroll parent container</button>
+				<button id="assistant-run-script" type="button">Try JavaScript</button>
+			</div>
+			<pre id="assistant-state"></pre>
+		</div>
+
+		<script src="/page-agent/page-agent.demo.js?autoInit=false"></script>
+		<script type="module">
+			import { ParentPageControllerAdapter } from '/lib/parent-bridge/adapter.js'
+
+			const params = new URLSearchParams(location.search)
+			const expectedParentOrigin = params.get('expectedParentOrigin') || 'http://127.0.0.1:4173'
+			const expectedPolicy = params.get('policy') || 'reverse-e2e-policy'
+			const role = params.get('role') || 'target'
+			const status = document.querySelector('#assistant-status')
+			const stateOutput = document.querySelector('#assistant-state')
+			const agentTask = document.querySelector('#assistant-agent-task')
+			const agentRun = document.querySelector('#assistant-run-agent')
+			const agentStop = document.querySelector('#assistant-stop-agent')
+			const agentStatus = document.querySelector('#assistant-agent-status')
+			const agentResult = document.querySelector('#assistant-agent-result')
+			let pageAgent = null
+			const setStatus = (value) => {
+				if (status) status.textContent = value
+			}
+			const writeState = (value) => {
+				if (stateOutput) stateOutput.textContent = JSON.stringify(value)
+			}
+			const markerIndex = (content, marker) => {
+				const line = content.split('\n').find((candidate) => candidate.includes(`id=${marker}`))
+				const match = line?.match(/\[(\d+)\]/)
+				if (!match) throw new Error(`Could not find parent marker: ${marker}`)
+				return Number(match[1])
+			}
+			const setAgentStatus = (value) => {
+				if (agentStatus) agentStatus.textContent = value
+			}
+			const writeAgentResult = (value) => {
+				if (agentResult) agentResult.textContent = JSON.stringify(value, null, 2)
+			}
+			const cleanParentPresentation = async ({ hideMask = false } = {}) => {
+				try {
+					await adapter.cleanUpHighlights()
+				} catch (error) {
+					setStatus(`cleanup-error:${error?.code || error?.name || String(error)}`)
+				} finally {
+					if (!hideMask) return
+					try {
+						await adapter.hideMask()
+					} catch (error) {
+						setStatus(`mask-error:${error?.code || error?.name || String(error)}`)
+					}
+				}
+			}
+			const createPageAgent = () => {
+				if (pageAgent) return pageAgent
+				if (typeof window.PageAgent !== 'function') {
+					throw new Error('PageAgent IIFE did not load')
+				}
+
+				pageAgent = new window.PageAgent({
+					pageController: adapter,
+					provider: 'tl',
+					endpointAgent: new URL('/api/tl', window.location.origin).toString().replace(/\/$/, ''),
+					model: 'parent-bridge-demo',
+					toolCallingMode: 'system_prompt',
+					tlSystemPromptVariableName: 'system_prompt',
+					maxRetries: 0,
+					maxSteps: 4,
+					stepDelay: 0,
+					language: 'zh-CN',
+					promptForNextTask: false,
+					experimentalScriptExecutionTool: false,
+					experimentalLlmsTxt: false,
+					debug: false,
+					includeRawHistory: false,
+				})
+				pageAgent.addEventListener('statuschange', () => {
+					setAgentStatus(`agent:${pageAgent.status}`)
+				})
+				window.reversePageAgent = pageAgent
+				if (agentRun) agentRun.disabled = false
+				setAgentStatus('agent:ready')
+				return pageAgent
+			}
+
+			const adapter = new ParentPageControllerAdapter({
+				handshakeTimeoutMs: Number(params.get('handshakeTimeoutMs') || 1_500),
+				requestedCapabilities: [
+					'observe',
+					'click',
+					'input',
+					'select',
+					'scroll',
+					'scrollHorizontally',
+					'cleanup',
+					'visual',
+				],
+				onApprovalRequired: async () => true,
+				authorizeOffer: async (offer, actualParentOrigin, signal) => {
+					if (
+						signal.aborted ||
+						role === 'wrong-source' ||
+						actualParentOrigin !== expectedParentOrigin ||
+						offer.policy !== expectedPolicy
+					) {
+						return undefined
+					}
+					return {
+						parentOrigin: actualParentOrigin,
+						policyId: offer.policyId,
+						capabilities: offer.capabilities,
+					}
+				},
+			})
+
+			window.reverseParentController = adapter
+			window.reverseParentRole = role
+			window.reverseParentConnection = adapter
+				.connect()
+				.then(async (connection) => {
+					setStatus(`connected:${connection.parentOrigin}`)
+					try {
+						const state = await adapter.getBrowserState()
+						writeState(state)
+						if (role === 'target') createPageAgent()
+						return connection
+					} finally {
+						await cleanParentPresentation({ hideMask: true })
+					}
+				})
+				.catch((error) => {
+					setStatus(`error:${error?.code || error?.name || String(error)}`)
+					return null
+				})
+			window.reversePageAgentReady = window.reverseParentConnection.then((connection) =>
+				connection && role === 'target' ? createPageAgent() : null
+			)
+
+			agentRun?.addEventListener('click', async () => {
+				try {
+					const agent = await window.reversePageAgentReady
+					if (!agent) throw new Error('Parent PageAgent is unavailable')
+					if (agentRun) agentRun.disabled = true
+					if (agentStop) agentStop.disabled = false
+					writeAgentResult({})
+					const result = await agent.execute(
+						agentTask?.textContent?.trim() || 'Run the parent demo task'
+					)
+					writeAgentResult(result)
+					setAgentStatus(`agent:${agent.status}:${result.success}`)
+				} catch (error) {
+					setAgentStatus(`agent:error:${error?.message || String(error)}`)
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
+					if (agentRun) agentRun.disabled = false
+					if (agentStop) agentStop.disabled = true
+				}
+			})
+			agentStop?.addEventListener('click', async () => {
+				if (!pageAgent) return
+				try {
+					await pageAgent.stop()
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
+					setAgentStatus('agent:stopped')
+				}
+			})
+			window.addEventListener(
+				'pagehide',
+				() => {
+					pageAgent?.dispose()
+				},
+				{ once: true }
+			)
+
+			document.querySelector('#assistant-run-observe')?.addEventListener('click', async () => {
+				try {
+					const state = await adapter.getBrowserState()
+					writeState(state)
+					setStatus(`observed:${state.treeRevision}`)
+				} catch (error) {
+					setStatus(`error:${error?.code || error?.name || String(error)}`)
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
+				}
+			})
+			document.querySelector('#assistant-run-click')?.addEventListener('click', async () => {
+				try {
+					const state = await adapter.getBrowserState()
+					const result = await adapter.clickElement(markerIndex(state.content, 'parent-button'))
+					writeState(result)
+					setStatus(`click:${result.success}`)
+				} catch (error) {
+					setStatus(`error:${error?.code || error?.name || String(error)}`)
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
+				}
+			})
+			document.querySelector('#assistant-run-input')?.addEventListener('click', async () => {
+				try {
+					const state = await adapter.getBrowserState()
+					const result = await adapter.inputText(
+						markerIndex(state.content, 'parent-input'),
+						'bridge-input'
+					)
+					writeState(result)
+					setStatus(`input:${result.success}`)
+				} catch (error) {
+					setStatus(`error:${error?.code || error?.name || String(error)}`)
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
+				}
+			})
+			document.querySelector('#assistant-run-select')?.addEventListener('click', async () => {
+				try {
+					const state = await adapter.getBrowserState()
+					const result = await adapter.selectOption(
+						markerIndex(state.content, 'parent-select'),
+						'Pro'
+					)
+					writeState(result)
+					setStatus(`select:${result.success}`)
+				} catch (error) {
+					setStatus(`error:${error?.code || error?.name || String(error)}`)
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
+				}
+			})
+			document.querySelector('#assistant-run-scroll')?.addEventListener('click', async () => {
+				try {
+					const state = await adapter.getBrowserState()
+					const result = await adapter.scroll({
+						down: true,
+						numPages: 1,
+						index: markerIndex(state.content, 'parent-scroll'),
+					})
+					writeState(result)
+					setStatus(`scroll:${result.success}`)
+				} catch (error) {
+					setStatus(`error:${error?.code || error?.name || String(error)}`)
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
+				}
+			})
+			document.querySelector('#assistant-run-script')?.addEventListener('click', async () => {
+				try {
+					const result = await adapter.executeJavascript?.('return document.title')
+					writeState(result)
+					setStatus(`script:${result?.success}`)
+				} catch (error) {
+					setStatus(`script-error:${error?.code || error?.name || String(error)}`)
+				}
+			})
+		</script>
+	</body>
+</html>
