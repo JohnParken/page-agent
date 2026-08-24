@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CHILD_ORIGIN, createBridgeHarness } from './bridge-test-helpers'
 import { FrameBridgeClient } from './FrameBridgeClient'
@@ -44,7 +44,7 @@ describe('FrameBridgeClient', () => {
 
 		await client.connect('session-1')
 		harness.sendPointer({ action: 'move', x: 1, y: 2 }, 'not-pending')
-		await new Promise((resolve) => setTimeout(resolve, 0))
+		await new Promise((resolve) => setTimeout(resolve, 10))
 		expect(received).toEqual([])
 
 		await client.getBrowserState()
@@ -52,6 +52,43 @@ describe('FrameBridgeClient', () => {
 		await client.clickElement(1)
 
 		expect(received).toEqual([{ action: 'move', x: 12, y: 34 }, { action: 'click' }])
+	})
+
+	it('fails closed or commits according to the direct approval callback', async () => {
+		const deniedHarness = createBridgeHarness()
+		harnesses.push(deniedHarness)
+		deniedHarness.setPreparedDecision('approval_required')
+		const deniedClient = new FrameBridgeClient({
+			iframe: deniedHarness.iframe,
+			allowedChildOrigins: [CHILD_ORIGIN],
+			window: deniedHarness.ownerWindow,
+		})
+		await deniedClient.connect('session-denied')
+		await deniedClient.getBrowserState()
+		await expect(deniedClient.clickElement(1)).rejects.toMatchObject({
+			code: BridgeErrorCode.APPROVAL_REQUIRED,
+		})
+
+		const approvedHarness = createBridgeHarness()
+		harnesses.push(approvedHarness)
+		approvedHarness.setPreparedDecision('approval_required')
+		const onApprovalRequired = vi.fn(async () => true)
+		const approvedClient = new FrameBridgeClient({
+			iframe: approvedHarness.iframe,
+			allowedChildOrigins: [CHILD_ORIGIN],
+			window: approvedHarness.ownerWindow,
+			onApprovalRequired,
+		})
+		await approvedClient.connect('session-approved')
+		await approvedClient.getBrowserState()
+		expect((await approvedClient.clickElement(1)).success).toBe(true)
+		expect(onApprovalRequired).toHaveBeenCalledWith(
+			expect.objectContaining({
+				method: 'clickElement',
+				summary: { index: 1 },
+				target: { tag: 'button', label: 'Remote' },
+			})
+		)
 	})
 
 	it('keeps the current tree revision monotonic when a stale response arrives', async () => {
@@ -107,7 +144,7 @@ describe('FrameBridgeClient', () => {
 		await client.getBrowserState()
 		harness.setDropResponses(true)
 		const action = client.clickElement(1)
-		await new Promise((resolve) => setTimeout(resolve, 0))
+		await harness.waitForCommit()
 		client.invalidate('navigation')
 		await expect(action).rejects.toMatchObject({ code: BridgeErrorCode.OUTCOME_UNKNOWN })
 	})
@@ -127,7 +164,7 @@ describe('FrameBridgeClient', () => {
 		harness.setDropResponses(true)
 
 		const action = client.clickElement(1)
-		await new Promise((resolve) => setTimeout(resolve, 0))
+		await harness.waitForCommit()
 		client.invalidate('navigation before started notification')
 
 		await expect(action).rejects.toMatchObject({ code: BridgeErrorCode.OUTCOME_UNKNOWN })
@@ -148,7 +185,7 @@ describe('FrameBridgeClient', () => {
 		harness.setDropResponses(true)
 
 		const action = client.clickElement(1)
-		await new Promise((resolve) => setTimeout(resolve, 0))
+		await harness.waitForCommit()
 		client.dispose()
 
 		await expect(action).rejects.toMatchObject({ code: BridgeErrorCode.OUTCOME_UNKNOWN })
@@ -173,7 +210,7 @@ describe('FrameBridgeClient', () => {
 		})
 	})
 
-	it('treats an explicit abort of a posted mutation as an unknown outcome', async () => {
+	it('treats an explicit abort after commit as an unknown outcome', async () => {
 		const harness = createBridgeHarness()
 		harnesses.push(harness)
 		const client = new FrameBridgeClient({
@@ -188,10 +225,7 @@ describe('FrameBridgeClient', () => {
 
 		const abortController = new AbortController()
 		const action = client.clickElement(1, { signal: abortController.signal })
-		// The request can be observed by the child and started before the
-		// parent receives its `started` notification. The client must still
-		// classify an explicit abort as outcome-unknown once it was posted.
-		await new Promise((resolve) => setTimeout(resolve, 0))
+		await harness.waitForCommit()
 		abortController.abort()
 
 		await expect(action).rejects.toMatchObject({

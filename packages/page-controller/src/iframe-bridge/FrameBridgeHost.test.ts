@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { hashFrameBridgePayload } from './action-security'
 import { FrameBridgeHost } from './FrameBridgeHost'
 import {
 	BRIDGE_PROTOCOL_VERSION,
@@ -12,6 +13,8 @@ import {
 } from './protocol'
 
 import type { FrameBridgeHostWindow, FrameBridgeMessagePort } from './FrameBridgeHost'
+import type { FrameBridgePolicyController } from './FrameBridgeHost'
+import type { BridgeResponseMessage } from './protocol'
 import type { IndexedPageControllerAdapter } from '../PageController'
 
 const PARENT_ORIGIN = 'https://parent.example.test'
@@ -31,13 +34,38 @@ class FakePort implements FrameBridgeMessagePort {
 	peer: FakePort | null = null
 	closed = false
 	messages: unknown[] = []
+	private messageWaiters: {
+		predicate: (message: unknown) => boolean
+		resolve: (message: unknown) => void
+	}[] = []
 
 	postMessage(message: unknown): void {
 		if (this.closed) throw new Error('closed')
-		this.messages.push(message)
+		this.receive(message)
 		const peer = this.peer
 		if (peer && !peer.closed)
 			queueMicrotask(() => peer.onmessage?.({ data: message } as MessageEvent))
+	}
+
+	receive(message: unknown): void {
+		this.messages.push(message)
+		for (let index = this.messageWaiters.length - 1; index >= 0; index--) {
+			const waiter = this.messageWaiters[index]
+			if (!waiter.predicate(message)) continue
+			this.messageWaiters.splice(index, 1)
+			waiter.resolve(message)
+		}
+	}
+
+	waitForMessage<T>(predicate: (message: unknown) => message is T): Promise<T> {
+		const existing = this.messages.find(predicate)
+		if (existing !== undefined) return Promise.resolve(existing)
+		return new Promise<T>((resolve) => {
+			this.messageWaiters.push({
+				predicate,
+				resolve: (message) => resolve(message as T),
+			})
+		})
 	}
 
 	start(): void {}
@@ -118,8 +146,10 @@ function messageBase(type: string, extra: Record<string, unknown> = {}) {
 	}
 }
 
-function createController(overrides: Partial<IndexedPageControllerAdapter> = {}) {
-	const controller: IndexedPageControllerAdapter = {
+function createController(overrides: Partial<FrameBridgePolicyController> = {}) {
+	const target = document.createElement('button')
+	target.type = 'button'
+	const controller: FrameBridgePolicyController = {
 		getCurrentUrl: vi.fn(async () => CHILD_ORIGIN),
 		getLastUpdateTime: vi.fn(async () => 0),
 		getBrowserState: vi.fn(async () => ({
@@ -142,6 +172,7 @@ function createController(overrides: Partial<IndexedPageControllerAdapter> = {})
 		showMask: vi.fn(async () => undefined),
 		hideMask: vi.fn(async () => undefined),
 		dispose: vi.fn(),
+		getIndexedElementForPolicy: vi.fn(() => target),
 		...overrides,
 	}
 	return controller
@@ -171,7 +202,7 @@ function discoverAndConnect(
 	expect(isBridgeAvailableMessage(available)).toBe(true)
 
 	const [parentPort, childPort] = createPortPair()
-	parentPort.onmessage = (event) => parentPort.messages.push(event.data)
+	parentPort.onmessage = (event) => parentPort.receive(event.data)
 	hostWindow.dispatch(
 		messageBase('connect', {
 			sessionId,
@@ -185,10 +216,17 @@ function discoverAndConnect(
 	return parentPort
 }
 
+function waitForResponse(port: FakePort, requestId: string): Promise<BridgeResponseMessage> {
+	return port.waitForMessage(
+		(message): message is BridgeResponseMessage =>
+			isBridgeResponseMessage(message) && message.requestId === requestId
+	)
+}
+
 describe('FrameBridgeHost', () => {
 	let parent: FakeParent
 	let hostWindow: FakeWindow
-	let controller: IndexedPageControllerAdapter
+	let controller: FrameBridgePolicyController
 
 	beforeEach(() => {
 		parent = new FakeParent()
@@ -249,7 +287,7 @@ describe('FrameBridgeHost', () => {
 				payload: { index: 1 },
 			})
 		)
-		await new Promise((resolve) => setTimeout(resolve, 0))
+		await waitForResponse(port, 'click-before-observe')
 		expect(controller.clickElement).not.toHaveBeenCalled()
 		expect((port.messages.at(-1) as { error: { code: string } }).error.code).toBe(
 			BridgeErrorCode.STALE_TREE
@@ -265,7 +303,7 @@ describe('FrameBridgeHost', () => {
 				payload: {},
 			})
 		)
-		await new Promise((resolve) => setTimeout(resolve, 0))
+		await waitForResponse(port, 'observe')
 		expect(isBridgeResponseMessage(port.messages.at(-1))).toBe(true)
 
 		port.postMessage(
@@ -816,5 +854,183 @@ describe('FrameBridgeHost', () => {
 					})
 			).toThrow()
 		}
+	})
+
+	it('transforms child state without allowing index metadata changes', async () => {
+		const transformState = vi.fn(
+			(state: Awaited<ReturnType<typeof controller.getBrowserState>>) => ({
+				...state,
+				content: '[1]<button>Redacted child control</button>',
+			})
+		)
+		const host = new FrameBridgeHost({
+			controller,
+			allowedParentOrigins: [PARENT_ORIGIN],
+			frameInstanceId: FRAME_INSTANCE_ID,
+			window: hostWindow,
+			transformState,
+		})
+		host.start()
+		const port = discoverAndConnect(hostWindow, host)
+		port.postMessage(
+			messageBase('request', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 0,
+				requestId: 'observe-transformed',
+				method: 'getBrowserState',
+				payload: {},
+			})
+		)
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(port.messages.filter(isBridgeResponseMessage).at(-1)).toMatchObject({
+			ok: true,
+			result: {
+				content: '[1]<button>Redacted child control</button>',
+				treeRevision: 1,
+				indices: [1],
+			},
+		})
+		expect(transformState).toHaveBeenCalledWith(
+			expect.objectContaining({ treeRevision: 1, indices: [1] }),
+			expect.objectContaining({ parentOrigin: PARENT_ORIGIN, signal: expect.any(AbortSignal) })
+		)
+	})
+
+	it('binds confirm actions to a single prepared token and unchanged payload', async () => {
+		const target = document.createElement('input')
+		target.setAttribute('aria-label', 'Sensitive child input')
+		controller = createController({
+			getIndexedElementForPolicy: vi.fn(() => target),
+		})
+		const host = new FrameBridgeHost({
+			controller,
+			allowedParentOrigins: [PARENT_ORIGIN],
+			frameInstanceId: FRAME_INSTANCE_ID,
+			window: hostWindow,
+			actionPolicy: () => ({ decision: 'approval_required', reason: 'Sensitive action' }),
+		})
+		host.start()
+		const port = discoverAndConnect(hostWindow, host)
+		port.postMessage(
+			messageBase('request', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 0,
+				requestId: 'observe-v2',
+				method: 'getBrowserState',
+				payload: {},
+			})
+		)
+		await waitForResponse(port, 'observe-v2')
+
+		const payload = { index: 1, text: 'approved value' }
+		const prepare = async (
+			requestId: string,
+			summary: Record<string, unknown> = { index: 1, textLength: payload.text.length }
+		) => {
+			port.postMessage(
+				messageBase('prepare-action', {
+					sessionId: SESSION_ID,
+					frameInstanceId: FRAME_INSTANCE_ID,
+					treeRevision: 1,
+					requestId,
+					method: 'inputText',
+					payloadHash: await hashFrameBridgePayload(payload),
+					summary,
+				})
+			)
+			const response = await waitForResponse(port, requestId)
+			expect(response).toMatchObject({
+				ok: true,
+				result: {
+					decision: 'approval_required',
+					reason: 'Sensitive action',
+				},
+			})
+			if (summary.index === 1)
+				expect(response).toMatchObject({
+					result: { target: { tag: 'input', label: 'Sensitive child input' } },
+				})
+			return (response as { result: { preparedActionId: string } }).result.preparedActionId
+		}
+
+		const deniedToken = await prepare('prepare-denied')
+		port.postMessage(
+			messageBase('commit-action', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 1,
+				requestId: 'commit-denied',
+				method: 'inputText',
+				preparedActionId: deniedToken,
+				approved: false,
+				payload,
+			})
+		)
+		const deniedResponse = await waitForResponse(port, 'commit-denied')
+		expect(deniedResponse).toMatchObject({
+			ok: false,
+			error: { code: BridgeErrorCode.APPROVAL_REQUIRED },
+		})
+		expect(controller.inputText).not.toHaveBeenCalled()
+
+		const misleadingToken = await prepare('prepare-misleading', {
+			textLength: payload.text.length,
+		})
+		port.postMessage(
+			messageBase('commit-action', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 1,
+				requestId: 'commit-misleading',
+				method: 'inputText',
+				preparedActionId: misleadingToken,
+				approved: true,
+				payload,
+			})
+		)
+		const misleadingResponse = await waitForResponse(port, 'commit-misleading')
+		expect(misleadingResponse).toMatchObject({
+			ok: false,
+			error: { code: BridgeErrorCode.APPROVAL_DENIED },
+		})
+		expect(controller.inputText).not.toHaveBeenCalled()
+
+		const approvedToken = await prepare('prepare-approved')
+		port.postMessage(
+			messageBase('commit-action', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 1,
+				requestId: 'commit-approved',
+				method: 'inputText',
+				preparedActionId: approvedToken,
+				approved: true,
+				payload,
+			})
+		)
+		const approvedResponse = await waitForResponse(port, 'commit-approved')
+		expect(controller.inputText).toHaveBeenCalledOnce()
+		expect(approvedResponse).toMatchObject({ ok: true })
+
+		port.postMessage(
+			messageBase('commit-action', {
+				sessionId: SESSION_ID,
+				frameInstanceId: FRAME_INSTANCE_ID,
+				treeRevision: 1,
+				requestId: 'commit-replay',
+				method: 'inputText',
+				preparedActionId: approvedToken,
+				approved: true,
+				payload,
+			})
+		)
+		const replayResponse = await waitForResponse(port, 'commit-replay')
+		expect(replayResponse).toMatchObject({
+			ok: false,
+			error: { code: BridgeErrorCode.APPROVAL_DENIED },
+		})
+		expect(controller.inputText).toHaveBeenCalledOnce()
 	})
 })

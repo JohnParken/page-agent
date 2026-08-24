@@ -2,7 +2,7 @@
 export const IFRAME_BRIDGE_PROTOCOL = 'page-agent:iframe-bridge'
 
 /** Increment this value whenever a wire-level breaking change is introduced. */
-export const BRIDGE_PROTOCOL_VERSION = 1
+export const BRIDGE_PROTOCOL_VERSION = 2
 
 export const BridgeErrorCode = {
 	INVALID_MESSAGE: 'INVALID_MESSAGE',
@@ -18,6 +18,8 @@ export const BridgeErrorCode = {
 	CONNECTION_CLOSED: 'CONNECTION_CLOSED',
 	TIMEOUT: 'TIMEOUT',
 	OUTCOME_UNKNOWN: 'OUTCOME_UNKNOWN',
+	APPROVAL_REQUIRED: 'APPROVAL_REQUIRED',
+	APPROVAL_DENIED: 'APPROVAL_DENIED',
 	INTERNAL_ERROR: 'INTERNAL_ERROR',
 } as const
 
@@ -46,6 +48,44 @@ export const FRAME_BRIDGE_METHODS = [
 ] as const
 
 export type FrameBridgeMethod = (typeof FRAME_BRIDGE_METHODS)[number]
+
+export const FRAME_BRIDGE_ACTION_METHODS = [
+	'clickElement',
+	'inputText',
+	'selectOption',
+	'scroll',
+	'scrollHorizontally',
+] as const
+
+export type FrameBridgeActionMethod = (typeof FRAME_BRIDGE_ACTION_METHODS)[number]
+
+export type FrameBridgePolicyDecision = 'allow' | 'deny' | 'approval_required'
+
+/** Sanitized action details used for policy checks before raw input is released. */
+export interface BridgeActionPayloadSummary {
+	index?: number
+	textLength?: number
+	optionLength?: number
+	down?: boolean
+	right?: boolean
+	numPages?: number
+	pixels?: number
+}
+
+export interface FrameBridgeTargetSummary {
+	tag: string
+	role?: string
+	label?: string
+}
+
+export interface FrameBridgePreparedAction {
+	preparedActionId: string
+	method: FrameBridgeActionMethod
+	payloadHash: string
+	decision: FrameBridgePolicyDecision
+	reason?: string
+	target?: FrameBridgeTargetSummary
+}
 
 export interface SerializedBridgeError {
 	code: BridgeErrorCode
@@ -91,6 +131,23 @@ export interface BridgeRequestMessage extends BridgePortMessageBase {
 	type: 'request'
 	requestId: string
 	method: FrameBridgeMethod
+	payload: unknown
+}
+
+export interface BridgePrepareActionMessage extends BridgePortMessageBase {
+	type: 'prepare-action'
+	requestId: string
+	method: FrameBridgeActionMethod
+	payloadHash: string
+	summary: BridgeActionPayloadSummary
+}
+
+export interface BridgeCommitActionMessage extends BridgePortMessageBase {
+	type: 'commit-action'
+	requestId: string
+	method: FrameBridgeActionMethod
+	preparedActionId: string
+	approved: boolean
 	payload: unknown
 }
 
@@ -155,6 +212,8 @@ export type BridgeWindowMessage =
 export type BridgePortMessage =
 	| BridgeConnectedMessage
 	| BridgeRequestMessage
+	| BridgePrepareActionMessage
+	| BridgeCommitActionMessage
 	| BridgeStartedMessage
 	| BridgePointerMessage
 	| BridgeResponseMessage
@@ -163,6 +222,7 @@ export type BridgePortMessage =
 const errorCodes = new Set<string>(Object.values(BridgeErrorCode))
 const capabilities = new Set<string>(FRAME_BRIDGE_CAPABILITIES)
 const methods = new Set<string>(FRAME_BRIDGE_METHODS)
+const actionMethods = new Set<string>(FRAME_BRIDGE_ACTION_METHODS)
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -196,6 +256,10 @@ function isCapabilityList(value: unknown): value is FrameBridgeCapability[] {
 
 function isMethod(value: unknown): value is FrameBridgeMethod {
 	return typeof value === 'string' && methods.has(value)
+}
+
+export function isFrameBridgeActionMethod(value: unknown): value is FrameBridgeActionMethod {
+	return typeof value === 'string' && actionMethods.has(value)
 }
 
 function isPortBase(value: Record<string, unknown>): boolean {
@@ -360,6 +424,91 @@ export function isBridgeRequestMessage(value: unknown): value is BridgeRequestMe
 	)
 }
 
+function isPayloadHash(value: unknown): value is string {
+	return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
+export function isBridgeActionPayloadSummary(value: unknown): value is BridgeActionPayloadSummary {
+	if (!isRecord(value)) return false
+	if (
+		!hasOnlyKeys(value, [
+			'index',
+			'textLength',
+			'optionLength',
+			'down',
+			'right',
+			'numPages',
+			'pixels',
+		])
+	)
+		return false
+	for (const key of ['index', 'textLength', 'optionLength'] as const) {
+		if (value[key] !== undefined && (!Number.isSafeInteger(value[key]) || Number(value[key]) < 0))
+			return false
+	}
+	for (const key of ['numPages', 'pixels'] as const) {
+		if (
+			value[key] !== undefined &&
+			(typeof value[key] !== 'number' || !Number.isFinite(value[key]) || value[key] < 0)
+		)
+			return false
+	}
+	return (
+		(value.down === undefined || typeof value.down === 'boolean') &&
+		(value.right === undefined || typeof value.right === 'boolean')
+	)
+}
+
+export function isBridgePrepareActionMessage(value: unknown): value is BridgePrepareActionMessage {
+	return (
+		isRecord(value) &&
+		hasOnlyKeys(value, [
+			'protocol',
+			'version',
+			'type',
+			'sessionId',
+			'frameInstanceId',
+			'treeRevision',
+			'requestId',
+			'method',
+			'payloadHash',
+			'summary',
+		]) &&
+		isPortBase(value) &&
+		value.type === 'prepare-action' &&
+		isIdentifier(value.requestId) &&
+		isFrameBridgeActionMethod(value.method) &&
+		isPayloadHash(value.payloadHash) &&
+		isBridgeActionPayloadSummary(value.summary)
+	)
+}
+
+export function isBridgeCommitActionMessage(value: unknown): value is BridgeCommitActionMessage {
+	return (
+		isRecord(value) &&
+		hasOnlyKeys(value, [
+			'protocol',
+			'version',
+			'type',
+			'sessionId',
+			'frameInstanceId',
+			'treeRevision',
+			'requestId',
+			'method',
+			'preparedActionId',
+			'approved',
+			'payload',
+		]) &&
+		isPortBase(value) &&
+		value.type === 'commit-action' &&
+		isIdentifier(value.requestId) &&
+		isFrameBridgeActionMethod(value.method) &&
+		isIdentifier(value.preparedActionId) &&
+		typeof value.approved === 'boolean' &&
+		Object.prototype.hasOwnProperty.call(value, 'payload')
+	)
+}
+
 export function isBridgeStartedMessage(value: unknown): value is BridgeStartedMessage {
 	return (
 		isRecord(value) &&
@@ -501,6 +650,8 @@ export function isBridgePortMessage(value: unknown): value is BridgePortMessage 
 	return (
 		isBridgeConnectedMessage(value) ||
 		isBridgeRequestMessage(value) ||
+		isBridgePrepareActionMessage(value) ||
+		isBridgeCommitActionMessage(value) ||
 		isBridgeStartedMessage(value) ||
 		isBridgePointerMessage(value) ||
 		isBridgeResponseMessage(value) ||

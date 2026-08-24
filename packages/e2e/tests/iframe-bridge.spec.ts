@@ -267,6 +267,39 @@ test.describe('cross-origin iframe bridge demo', () => {
 		expect(state.indices.length).toBeGreaterThan(8)
 	})
 
+	test('treats same-origin iframe documents as opaque local leaves', async ({ page }) => {
+		await page.evaluate(async () => {
+			const iframe = document.createElement('iframe')
+			iframe.id = 'same-origin-opaque-frame'
+			iframe.title = 'Same-origin opaque frame'
+			const loaded = new Promise<void>((resolve) =>
+				iframe.addEventListener('load', () => resolve(), { once: true })
+			)
+			iframe.srcdoc = `
+				<!doctype html>
+				<html><body>
+					<button id="same-origin-hidden-control" type="button">
+						Same-origin hidden control
+					</button>
+				</body></html>
+			`
+			document.body.append(iframe)
+			await loaded
+		})
+		await expect(
+			page
+				.frameLocator('#same-origin-opaque-frame')
+				.getByRole('button', { name: 'Same-origin hidden control' })
+		).toBeVisible()
+
+		const state = await controller(page)
+
+		expect(state.content).toContain('id=parent-button')
+		expect(state.content).not.toContain('Same-origin hidden control')
+		expect(state.content).not.toContain('id=same-origin-hidden-control')
+		expect(() => markerIndex(state.content, /id=same-origin-hidden-control/)).toThrow()
+	})
+
 	test('supports every page operation type on the parent page', async ({ page }) => {
 		const state = await controller(page)
 		const parentButton = markerIndex(state.content, /<button[^>]*id=parent-button/)

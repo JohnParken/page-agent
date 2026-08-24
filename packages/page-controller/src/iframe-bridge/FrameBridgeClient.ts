@@ -1,11 +1,16 @@
+import { hashFrameBridgePayload, summarizeFrameBridgePayload } from './action-security'
 import {
 	BRIDGE_PROTOCOL_VERSION,
+	type BridgeActionPayloadSummary,
 	type BridgeAvailableMessage,
 	BridgeErrorCode,
 	type BridgeErrorCode as BridgeErrorCodeValue,
 	type BridgePortMessage,
+	type FrameBridgeActionMethod,
 	type FrameBridgeCapability,
 	type FrameBridgeMethod,
+	type FrameBridgePreparedAction,
+	type FrameBridgeTargetSummary,
 	IFRAME_BRIDGE_PROTOCOL,
 	isBridgeAvailableMessage,
 	isBridgePortMessage,
@@ -27,7 +32,20 @@ export interface FrameBridgeClientOptions {
 	handshakeTimeoutMs?: number
 	requestTimeoutMs?: number
 	window?: Window
+	/** Direct-controller approval hook. Missing hooks fail closed for confirm targets. */
+	onApprovalRequired?: FrameBridgeApprovalHandler
 }
+
+export interface FrameBridgeApprovalRequest {
+	readonly method: FrameBridgeActionMethod
+	readonly summary: BridgeActionPayloadSummary
+	readonly target?: FrameBridgeTargetSummary
+	readonly reason?: string
+}
+
+export type FrameBridgeApprovalHandler = (
+	request: FrameBridgeApprovalRequest
+) => boolean | Promise<boolean>
 
 export interface FrameBridgeConnection {
 	frameInstanceId: string
@@ -42,6 +60,7 @@ export type FrameBridgePointerDetail =
 
 interface PendingRequest {
 	method: FrameBridgeMethod
+	phase: 'request' | 'prepare' | 'commit'
 	resolve: (value: unknown) => void
 	reject: (reason?: unknown) => void
 	timer: ReturnType<typeof setTimeout>
@@ -83,11 +102,17 @@ function isMutatingMethod(method: FrameBridgeMethod): boolean {
 	return method !== 'getBrowserState' && method !== 'cleanUpHighlights'
 }
 
+function hasUnknownOutcomeRisk(request: PendingRequest): boolean {
+	return (
+		request.phase === 'commit' || (request.phase === 'request' && isMutatingMethod(request.method))
+	)
+}
+
 function requestAbortError(request: PendingRequest): FrameBridgeError {
 	// A mutating request may execute synchronously after the host receives it,
 	// before its `started` notification reaches this client. Once postMessage
 	// succeeded, cancellation therefore cannot prove that no side effect ran.
-	return (request.started || request.posted) && isMutatingMethod(request.method)
+	return (request.started || request.posted) && hasUnknownOutcomeRisk(request)
 		? new FrameBridgeError(
 				BridgeErrorCode.OUTCOME_UNKNOWN,
 				`Iframe bridge ${request.method} was sent before abort; outcome is unknown.`
@@ -158,7 +183,9 @@ export function getFrameSourceOrigin(
 
 /**
  * Returns true only when the parent cannot synchronously inspect the child
- * document. Same-origin frames are intentionally left to the local controller.
+ * document. Same-origin frames are not eligible for this cooperative bridge;
+ * the regular PageController treats their child documents as opaque leaves and
+ * does not read or operate their contents.
  */
 export function isDirectCrossOriginFrame(
 	iframe: HTMLIFrameElement,
@@ -198,6 +225,7 @@ export class FrameBridgeClient extends EventTarget {
 	readonly allowedChildOrigins: readonly string[]
 	readonly handshakeTimeoutMs: number
 	readonly requestTimeoutMs: number
+	readonly onApprovalRequired: FrameBridgeApprovalHandler | undefined
 
 	private readonly ownerWindow: Window
 	private readonly pending = new Map<string, PendingRequest>()
@@ -229,6 +257,7 @@ export class FrameBridgeClient extends EventTarget {
 		)
 		this.requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)
 		this.ownerWindow = options.window ?? window
+		this.onApprovalRequired = options.onApprovalRequired
 	}
 
 	get connected(): boolean {
@@ -441,7 +470,7 @@ export class FrameBridgeClient extends EventTarget {
 	}
 
 	clickElement(index: number, context?: PageControllerCallContext): Promise<PageActionResult> {
-		return this.request('clickElement', { index }, context) as Promise<PageActionResult>
+		return this.runPreparedAction('clickElement', { index }, context)
 	}
 
 	inputText(
@@ -449,7 +478,7 @@ export class FrameBridgeClient extends EventTarget {
 		text: string,
 		context?: PageControllerCallContext
 	): Promise<PageActionResult> {
-		return this.request('inputText', { index, text }, context) as Promise<PageActionResult>
+		return this.runPreparedAction('inputText', { index, text }, context)
 	}
 
 	selectOption(
@@ -457,18 +486,97 @@ export class FrameBridgeClient extends EventTarget {
 		optionText: string,
 		context?: PageControllerCallContext
 	): Promise<PageActionResult> {
-		return this.request('selectOption', { index, optionText }, context) as Promise<PageActionResult>
+		return this.runPreparedAction('selectOption', { index, optionText }, context)
 	}
 
 	scroll(options: ScrollOptions, context?: PageControllerCallContext): Promise<PageActionResult> {
-		return this.request('scroll', options, context) as Promise<PageActionResult>
+		return this.runPreparedAction('scroll', options, context)
 	}
 
 	scrollHorizontally(
 		options: HorizontalScrollOptions,
 		context?: PageControllerCallContext
 	): Promise<PageActionResult> {
-		return this.request('scrollHorizontally', options, context) as Promise<PageActionResult>
+		return this.runPreparedAction('scrollHorizontally', options, context)
+	}
+
+	async prepareAction(
+		method: FrameBridgeActionMethod,
+		payload: unknown,
+		context?: PageControllerCallContext
+	): Promise<FrameBridgePreparedAction> {
+		const payloadHash = await hashFrameBridgePayload(payload)
+		const summary = summarizeFrameBridgePayload(method, payload)
+		const message = this.messageBase('prepare-action', method, {
+			payloadHash,
+			summary,
+		})
+		return this.postRequest(
+			message,
+			method,
+			'prepare',
+			context
+		) as Promise<FrameBridgePreparedAction>
+	}
+
+	async commitPreparedAction(
+		prepared: FrameBridgePreparedAction,
+		payload: unknown,
+		approved: boolean,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult> {
+		if ((await hashFrameBridgePayload(payload)) !== prepared.payloadHash) {
+			throw new FrameBridgeError(
+				BridgeErrorCode.APPROVAL_DENIED,
+				'Prepared iframe action payload changed.'
+			)
+		}
+		const message = this.messageBase('commit-action', prepared.method, {
+			preparedActionId: prepared.preparedActionId,
+			approved,
+			payload,
+		})
+		return this.postRequest(
+			message,
+			prepared.method,
+			'commit',
+			context
+		) as Promise<PageActionResult>
+	}
+
+	private async runPreparedAction(
+		method: FrameBridgeActionMethod,
+		payload: unknown,
+		context?: PageControllerCallContext
+	): Promise<PageActionResult> {
+		const prepared = await this.prepareAction(method, payload, context)
+		if (prepared.decision === 'deny') {
+			throw new FrameBridgeError(
+				BridgeErrorCode.CAPABILITY_DENIED,
+				prepared.reason ?? 'Iframe action denied by child policy.'
+			)
+		}
+		let approved = false
+		if (prepared.decision === 'approval_required') {
+			if (!this.onApprovalRequired) {
+				throw new FrameBridgeError(
+					BridgeErrorCode.APPROVAL_REQUIRED,
+					prepared.reason ?? 'Iframe action requires approval.'
+				)
+			}
+			approved = await this.onApprovalRequired({
+				method,
+				summary: summarizeFrameBridgePayload(method, payload),
+				target: prepared.target,
+				reason: prepared.reason,
+			})
+			if (!approved)
+				throw new FrameBridgeError(
+					BridgeErrorCode.APPROVAL_DENIED,
+					'Iframe action approval was denied.'
+				)
+		}
+		return this.commitPreparedAction(prepared, payload, approved, context)
 	}
 
 	/** Execute JavaScript is intentionally not part of the bridge surface. */
@@ -484,6 +592,38 @@ export class FrameBridgeClient extends EventTarget {
 	private request(
 		method: FrameBridgeMethod,
 		payload: unknown,
+		context?: PageControllerCallContext
+	): Promise<unknown> {
+		return this.postRequest(
+			this.messageBase('request', method, { payload }),
+			method,
+			'request',
+			context
+		)
+	}
+
+	private messageBase(
+		type: 'request' | 'prepare-action' | 'commit-action',
+		method: FrameBridgeMethod,
+		extra: Record<string, unknown>
+	): Record<string, unknown> {
+		return {
+			protocol: IFRAME_BRIDGE_PROTOCOL,
+			version: BRIDGE_PROTOCOL_VERSION,
+			type,
+			sessionId: this.sessionId,
+			frameInstanceId: this.frameInstanceId,
+			treeRevision: this.treeRevision,
+			requestId: randomId('request'),
+			method,
+			...extra,
+		}
+	}
+
+	private postRequest(
+		message: Record<string, unknown>,
+		method: FrameBridgeMethod,
+		phase: PendingRequest['phase'],
 		context?: PageControllerCallContext
 	): Promise<unknown> {
 		if (this.disposed) {
@@ -511,18 +651,7 @@ export class FrameBridgeClient extends EventTarget {
 			)
 		}
 
-		const requestId = randomId('request')
-		const message = {
-			protocol: IFRAME_BRIDGE_PROTOCOL,
-			version: BRIDGE_PROTOCOL_VERSION,
-			type: 'request' as const,
-			sessionId: this.sessionId,
-			frameInstanceId: this.frameInstanceId,
-			treeRevision: this.treeRevision,
-			requestId,
-			method,
-			payload,
-		}
+		const requestId = message.requestId as string
 
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -545,13 +674,14 @@ export class FrameBridgeClient extends EventTarget {
 					// The channel may already have been closed; the timeout is final.
 				}
 				const code =
-					(pending.started || pending.posted) && isMutatingMethod(pending.method)
+					(pending.started || pending.posted) && hasUnknownOutcomeRisk(pending)
 						? BridgeErrorCode.OUTCOME_UNKNOWN
 						: BridgeErrorCode.TIMEOUT
 				pending.reject(new FrameBridgeError(code, `Iframe bridge request timed out (${method})`))
 			}, this.requestTimeoutMs)
 			const pending: PendingRequest = {
 				method,
+				phase,
 				resolve,
 				reject,
 				timer,
@@ -704,7 +834,7 @@ export class FrameBridgeClient extends EventTarget {
 			clearTimeout(pending.timer)
 			pending.abortCleanup?.()
 			const pendingError =
-				(pending.started || pending.posted) && isMutatingMethod(pending.method)
+				(pending.started || pending.posted) && hasUnknownOutcomeRisk(pending)
 					? new FrameBridgeError(
 							BridgeErrorCode.OUTCOME_UNKNOWN,
 							`Iframe bridge closed after ${pending.method} was sent; outcome is unknown.`

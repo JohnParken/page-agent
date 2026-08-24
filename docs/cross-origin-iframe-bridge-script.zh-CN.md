@@ -4,6 +4,8 @@ Page Agent 除 npm/ESM 次级入口外，还提供两个彼此独立、自包含
 
 本文不仅说明如何构建 IIFE，还覆盖一套可实际运行的完整接入：主页面如何提供并初始化 PageAgent、如何连接 LLM、如何把跨 frame controller 注入 Agent，以及主页面和跨域 iframe 子页面分别必须完成哪些改造。
 
+> **当前 iframe 支持边界：** 普通 `PageController` 会把所有 iframe 的子文档视为不透明叶节点（opaque leaf），不会读取或操作同源 iframe 的内部内容，同源 iframe 也不会进入本协作 bridge。跨域 iframe 只有在子页面主动接入并运行兼容的 host IIFE 时才支持读取和操作。这个限制针对 iframe 子文档遍历；独立的 parent bridge（由 iframe 内的 Page Agent 操作父页面中明确授权的 root）不受影响。
+
 ## 1. 先理解两个 IIFE 的职责
 
 | 页面         | 文件                                  | 浏览器全局对象                | 职责                                                                                            |
@@ -32,7 +34,7 @@ Page Agent 除 npm/ESM 次级入口外，还提供两个彼此独立、自包含
 └── 子页面 PageController
 ```
 
-bridge 只支持父页面中由 `frameSelector` 选中的**直接子 iframe**。它不会递归发现孙 iframe，也不会让父页面绕过同源策略读取未接入 host 的第三方页面。
+bridge 只支持父页面中由 `frameSelector` 选中的**跨域直接子 iframe**。普通 `PageController` 不会读取或操作同源 iframe 的子文档；同源 iframe 是 opaque leaf，也不会进入 cooperative bridge。bridge 不会递归发现孙 iframe，也不会让父页面绕过同源策略读取未接入 host 的第三方页面。
 
 ## 2. 部署前准备
 
@@ -324,7 +326,7 @@ agent.onAskUser = async function (question, options) {
 -   目标必须是当前主文档的直接子 iframe。
 -   `src` 的 Origin 必须在 `allowedChildOrigins` 中。
 -   如果 `src` 会重定向到另一个 Origin，声明 Origin 和最终 Origin 都必须受信任并加入 allow-list；更推荐避免跨 Origin 重定向。
--   同源 iframe 会继续交给本地 controller，不会重复通过 bridge 处理。
+-   同源 iframe 的子文档暂不支持读取或操作：普通 `PageController` 将其视为 opaque leaf，也不会通过 bridge 处理。
 -   未匹配 selector 的 iframe 不参与 bridge。
 
 ### 5.2 调整主页面响应头
@@ -689,21 +691,22 @@ FrameAware controller 的 click/input/select/scroll 路由失败通常返回：
 
 ## 9. 常见故障排查
 
-| 现象                                  | 常见原因                                                                              | 处理方式                                                       |
-| ------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `PageAgent is unavailable`            | 自有 Agent bundle 未加载、未显式挂载全局对象或被 CSP 拒绝                             | 检查 script 顺序和 CSP；不要期待 bridge IIFE 提供 PageAgent    |
-| Agent 构造时报 LLM 配置缺失           | 缺少 `model`，或当前 provider 缺少 `baseURL`/`endpointAgent`                          | 按 4.3 的 provider 表补齐配置并核对 gateway                    |
-| `PageAgentFrameBridge is unavailable` | 父 IIFE 路径错误、CSP 拒绝、MIME 错误或版本目录不存在                                 | 检查 Network、`script-src`、SRI 和 `Content-Type`              |
-| `PageAgentFrameHost is unavailable`   | 子 IIFE 未部署或被子页面 CSP 拒绝                                                     | 检查子页面 Network/Console 和 `script-src`                     |
-| PageAgent 能操作父页面但看不到子页面  | 创建 Agent 时没有传 `pageController: frameBridge.controller`，或旧 Agent 已自动初始化 | 关闭 auto-init，dispose 旧实例并用 bridge controller 重建      |
-| Agent 一启动就报已有任务正在运行      | 在同一实例上并发调用了 `execute()`                                                    | 禁用重复提交，等待前一次 execute 收敛或先调用 `stop()`         |
-| `CAPABILITY_DENIED` 出现在握手前      | iframe `src` Origin 不在 `allowedChildOrigins`                                        | 核对 scheme、host、port 和重定向后的 Origin                    |
-| `CAPABILITY_DENIED` 出现在动作时      | 子 host 没有开放对应 capability                                                       | 按最小权限补充所需 capability                                  |
-| `TIMEOUT`                             | 子 host 未启动、父 Origin 不在 allow-list、协议版本不兼容、CSP/sandbox 阻止脚本       | 逐项检查子脚本、`allowedParentOrigins`、父子版本和浏览器控制台 |
-| Origin 为 `null`                      | iframe sandbox 缺少 `allow-same-origin`，或使用 `data:`/`file:` 等 opaque URL         | 使用 HTTP(S) URL，并配置 `allow-scripts allow-same-origin`     |
-| iframe 直接加载成功但嵌入失败         | 子页面 `frame-ancestors` 或 X-Frame-Options 拒绝父页面                                | 修改子页面响应头，而不是添加 CORS                              |
-| reload 后动作报 `STALE_TREE`          | 复用了旧索引                                                                          | 重新观察并使用新索引                                           |
-| 远端 `executeJavascript` 被拒绝       | 该方法明确不属于 bridge                                                               | 只在父页面本地执行脚本，不要尝试扩展 postMessage 绕过          |
+| 现象                                  | 常见原因                                                                              | 处理方式                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `PageAgent is unavailable`            | 自有 Agent bundle 未加载、未显式挂载全局对象或被 CSP 拒绝                             | 检查 script 顺序和 CSP；不要期待 bridge IIFE 提供 PageAgent                                                            |
+| Agent 构造时报 LLM 配置缺失           | 缺少 `model`，或当前 provider 缺少 `baseURL`/`endpointAgent`                          | 按 4.3 的 provider 表补齐配置并核对 gateway                                                                            |
+| `PageAgentFrameBridge is unavailable` | 父 IIFE 路径错误、CSP 拒绝、MIME 错误或版本目录不存在                                 | 检查 Network、`script-src`、SRI 和 `Content-Type`                                                                      |
+| `PageAgentFrameHost is unavailable`   | 子 IIFE 未部署或被子页面 CSP 拒绝                                                     | 检查子页面 Network/Console 和 `script-src`                                                                             |
+| PageAgent 能操作父页面但看不到子页面  | 创建 Agent 时没有传 `pageController: frameBridge.controller`，或旧 Agent 已自动初始化 | 关闭 auto-init，dispose 旧实例并用 bridge controller 重建                                                              |
+| PageAgent 看不到同源 iframe 内部内容  | 当前版本普通 `PageController` 将同源 iframe 子文档视为 opaque leaf                    | 这是预期限制；如需支持子页面，请将其部署为跨域 direct child 并接入 host IIFE，或使用不依赖 iframe 子文档读取的页面流程 |
+| Agent 一启动就报已有任务正在运行      | 在同一实例上并发调用了 `execute()`                                                    | 禁用重复提交，等待前一次 execute 收敛或先调用 `stop()`                                                                 |
+| `CAPABILITY_DENIED` 出现在握手前      | iframe `src` Origin 不在 `allowedChildOrigins`                                        | 核对 scheme、host、port 和重定向后的 Origin                                                                            |
+| `CAPABILITY_DENIED` 出现在动作时      | 子 host 没有开放对应 capability                                                       | 按最小权限补充所需 capability                                                                                          |
+| `TIMEOUT`                             | 子 host 未启动、父 Origin 不在 allow-list、协议版本不兼容、CSP/sandbox 阻止脚本       | 逐项检查子脚本、`allowedParentOrigins`、父子版本和浏览器控制台                                                         |
+| Origin 为 `null`                      | iframe sandbox 缺少 `allow-same-origin`，或使用 `data:`/`file:` 等 opaque URL         | 使用 HTTP(S) URL，并配置 `allow-scripts allow-same-origin`                                                             |
+| iframe 直接加载成功但嵌入失败         | 子页面 `frame-ancestors` 或 X-Frame-Options 拒绝父页面                                | 修改子页面响应头，而不是添加 CORS                                                                                      |
+| reload 后动作报 `STALE_TREE`          | 复用了旧索引                                                                          | 重新观察并使用新索引                                                                                                   |
+| 远端 `executeJavascript` 被拒绝       | 该方法明确不属于 bridge                                                               | 只在父页面本地执行脚本，不要尝试扩展 postMessage 绕过                                                                  |
 
 ## 10. 上线验收清单
 

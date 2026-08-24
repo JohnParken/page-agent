@@ -1689,21 +1689,12 @@ export default (
 		if (node.tagName) {
 			const tagName = node.tagName.toLowerCase()
 
-			// Handle iframes. A scoped controller deliberately treats an iframe as
-			// a leaf so an embedded document cannot escape its trusted root
-			// boundary or receive indices from a different document.
-			if (tagName === 'iframe' && !isScoped) {
-				try {
-					const iframeDoc = node.contentDocument || node.contentWindow?.document
-					if (iframeDoc) {
-						for (const child of iframeDoc.childNodes) {
-							const domElement = buildDomTree(child, node, false)
-							if (domElement) nodeData.children.push(domElement)
-						}
-					}
-				} catch (e) {
-					console.warn('Unable to access iframe:', e)
-				}
+			// Iframe documents are always opaque leaves. Same-origin iframe content
+			// is intentionally not read or indexed by the local controller; supported
+			// cross-origin documents must opt into the cooperative iframe bridge.
+			if (tagName === 'iframe') {
+				// Keep the iframe element itself in the parent tree without traversing
+				// into a different Document or assigning indices to its descendants.
 			}
 			// Handle rich text editors and contenteditable elements
 			else if (

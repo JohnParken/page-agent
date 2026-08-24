@@ -5,7 +5,9 @@ import {
 	BridgeErrorCode,
 	IFRAME_BRIDGE_PROTOCOL,
 	isBridgeAvailableMessage,
+	isBridgeCommitActionMessage,
 	isBridgePortMessage,
+	isBridgePrepareActionMessage,
 	isBridgeRequestMessage,
 	isBridgeResponseMessage,
 	isHorizontalScrollPayload,
@@ -109,5 +111,42 @@ describe('iframe bridge protocol validators', () => {
 				action: 'click',
 			})
 		).toBe(true)
+	})
+
+	it('strictly validates v2 prepare and commit action envelopes', () => {
+		const prepare = {
+			...base,
+			type: 'prepare-action',
+			sessionId: 'session',
+			frameInstanceId: 'frame',
+			treeRevision: 2,
+			requestId: 'prepare-1',
+			method: 'inputText',
+			payloadHash: 'a'.repeat(64),
+			summary: { index: 1, textLength: 12 },
+		}
+		expect(isBridgePrepareActionMessage(prepare)).toBe(true)
+		expect(isBridgePortMessage(prepare)).toBe(true)
+		expect(isBridgePrepareActionMessage({ ...prepare, payloadHash: 'not-a-hash' })).toBe(false)
+		expect(
+			isBridgePrepareActionMessage({ ...prepare, summary: { index: 1, text: 'secret' } })
+		).toBe(false)
+
+		const commit = {
+			...base,
+			type: 'commit-action',
+			sessionId: 'session',
+			frameInstanceId: 'frame',
+			treeRevision: 2,
+			requestId: 'commit-1',
+			method: 'inputText',
+			preparedActionId: 'prepared-1',
+			approved: true,
+			payload: { index: 1, text: 'secret' },
+		}
+		expect(isBridgeCommitActionMessage(commit)).toBe(true)
+		expect(isBridgePortMessage(commit)).toBe(true)
+		expect(isBridgeCommitActionMessage({ ...commit, approved: 'yes' })).toBe(false)
+		expect(isBridgeCommitActionMessage({ ...commit, method: 'getBrowserState' })).toBe(false)
 	})
 })
