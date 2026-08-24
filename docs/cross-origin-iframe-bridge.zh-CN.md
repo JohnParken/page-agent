@@ -159,12 +159,19 @@ LLM 请求由父页面的 PageAgent 发起。子页面 host 不创建 Agent、�
 
 ### 可公开的能力
 
-Version 1 的 bridge 能力名称为：
+Version 2 的 bridge 能力名称为：
 
 -   `observe`：获取子页面浏览器状态；
 -   `click`、`input`、`select`：按当前观察中的索引操作元素；
 -   `scroll`、`scrollHorizontally`：滚动文档或可滚动元素；
 -   `cleanup`：清理 controller 的高亮。
+
+Version 2 对变更动作使用 fail-closed 的 prepare/commit 流程。父侧先把脱敏后的动作摘要交给
+`FrameBridgeHost.actionPolicy`，prepare 阶段不会发送原始输入文本。允许后生成短时、一次性
+token，并绑定 frame instance、tree revision、method、target 和 payload hash；只有完全匹配的
+commit 才会携带动作 payload 并消费 token。需要审批的动作不能绕过 prepare 直接执行，子侧
+`deny` 也不能被父侧覆盖。还可以用 `FrameBridgeHost.transformState` 在观察状态跨 iframe 前继续
+脱敏。双方必须使用相同的协议主版本；v1 与 v2 端点不互通。
 
 父页面看到的观察状态包含 URL、标题、页面信息/滚动提示、简化且带索引的内容，以及 `treeRevision`/索引元数据。动作请求只携带索引和相应的文本、选项或滚动参数；执行 click/input 期间，host 还会通过已认证端口发送绑定当前 `requestId` 的子视口光标坐标和点击反馈。父侧只接受当前正在执行的请求反馈，bridge 不提供任意 `postMessage` payload 扩展点。
 

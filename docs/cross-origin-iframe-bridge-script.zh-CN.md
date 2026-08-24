@@ -6,6 +6,10 @@ Page Agent 除 npm/ESM 次级入口外，还提供两个彼此独立、自包含
 
 > **当前 iframe 支持边界：** 普通 `PageController` 会把所有 iframe 的子文档视为不透明叶节点（opaque leaf），不会读取或操作同源 iframe 的内部内容，同源 iframe 也不会进入本协作 bridge。跨域 iframe 只有在子页面主动接入并运行兼容的 host IIFE 时才支持读取和操作。这个限制针对 iframe 子文档遍历；独立的 parent bridge（由 iframe 内的 Page Agent 操作父页面中明确授权的 root）不受影响。
 
+> **协议兼容性：** 当前 IIFE 使用 iframe bridge v2。变更动作先执行只含脱敏摘要的
+> prepare，再用短时、一次性 token commit；原始输入不会在子侧策略通过前发送。父、子 IIFE
+> 必须来自相同协议主版本，v1 与 v2 不能混用。
+
 ## 1. 先理解两个 IIFE 的职责
 
 | 页面         | 文件                                  | 浏览器全局对象                | 职责                                                                                            |

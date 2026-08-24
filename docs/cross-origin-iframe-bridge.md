@@ -113,11 +113,21 @@ top-level viewport rectangle before updating its `SimulatorMask`.
 
 ## Exposed surface and limits
 
-The host advertises capabilities independently. Version 1 supports `observe`, `click`,
+The host advertises capabilities independently. Version 2 supports `observe`, `click`,
 `input`, `select`, `scroll`, `scrollHorizontally`, and `cleanup`; a parent request for a
 capability not advertised by the child is denied. `executeJavascript` is intentionally
 not a bridge method and is never forwarded to the child. Arbitrary `postMessage` payloads
 are not an extension mechanism.
+
+Version 2 uses a fail-closed prepare/commit flow for mutating actions. The parent first
+sends a sanitized action summary to `FrameBridgeHost.actionPolicy`; raw input text is not
+sent during this phase. An allowed action receives a short-lived, single-use token bound
+to the frame instance, tree revision, method, target, and payload hash. Only the matching
+commit carries the action payload and can consume that token. Direct action requests that
+would require approval are rejected, and a deny cannot be overridden by the parent.
+`FrameBridgeHost.transformState` may additionally redact observed state before it crosses
+the iframe boundary. Both endpoints must use the same protocol major version; v1 and v2
+endpoints do not interoperate.
 
 Observation sends the child controller's browser state (URL, title, scroll hints,
 simplified indexed content, and tree revision/index metadata) to the parent. Actions send

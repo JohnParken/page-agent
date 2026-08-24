@@ -28,6 +28,13 @@ interface ReverseChildWindow extends Window {
 		executeJavascript(script: string): Promise<ActionResult>
 	}
 	reverseParentConnection?: Promise<unknown>
+	reverseApprovalRequests?: {
+		method: string
+		capability: string
+		payload: unknown
+		reason?: string
+	}[]
+	brokeredInputResult?: Promise<ActionResult>
 	reversePageAgent?: {
 		readonly status: string
 		readonly history: readonly {
@@ -39,10 +46,12 @@ interface ReverseChildWindow extends Window {
 
 interface ReverseParentWindow extends Window {
 	reverseParentHost?: { controller?: unknown }
+	PageAgentParentHost?: unknown
 }
 
 const parentOrigins = ['http://127.0.0.1:4173', 'http://127.0.0.1:4175'] as const
 const childOrigin = 'http://127.0.0.1:4174'
+const businessOrigin = 'http://127.0.0.1:4176'
 
 function markerIndex(content: string, pattern: RegExp): number {
 	for (const line of content.split('\n')) {
@@ -79,6 +88,27 @@ async function connectedChildFrame(page: Page, parentOrigin: string): Promise<Fr
 	return frame
 }
 
+async function businessFrame(page: Page): Promise<Frame> {
+	await expect
+		.poll(() =>
+			page
+				.frames()
+				.find(
+					(frame) =>
+						frame.url().startsWith(`${businessOrigin}/reverse-business-child.html`) &&
+						frame.url().includes('role=authorized')
+				)
+		)
+		.toBeTruthy()
+	return page
+		.frames()
+		.find(
+			(frame) =>
+				frame.url().startsWith(`${businessOrigin}/reverse-business-child.html`) &&
+				frame.url().includes('role=authorized')
+		)!
+}
+
 async function openParent(
 	page: Page,
 	parentOrigin: (typeof parentOrigins)[number] = parentOrigins[0]
@@ -88,7 +118,10 @@ async function openParent(
 	await expect
 		.poll(() => page.evaluate(() => Boolean((window as ReverseParentWindow).reverseParentHost)))
 		.toBe(true)
-	return connectedChildFrame(page, parentOrigin)
+	const assistant = await connectedChildFrame(page, parentOrigin)
+	const business = await businessFrame(page)
+	await expect(business.locator('#business-button')).toBeVisible()
+	return assistant
 }
 
 async function state(frame: Frame): Promise<BrowserState> {
@@ -130,9 +163,143 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 
 		expect(browserState.content).toContain('parent-button')
 		expect(browserState.content).toContain('parent-input')
+		expect(browserState.content).toContain('authorized-child-frames')
+		expect(browserState.content).toContain('business-button')
+		expect(browserState.content).toContain('business-input')
 		expect(browserState.content).not.toContain('outside-host-control')
 		expect(browserState.content).not.toContain('assistant-root')
 		expect(browserState.content).not.toContain('Vue assistant origin fixture')
+		expect(browserState.content).not.toContain('UNAUTHORIZED_CHILD_SECRET')
+		expect(
+			await page.evaluate(() => Boolean((window as ReverseParentWindow).PageAgentParentHost))
+		).toBe(true)
+
+		const business = await businessFrame(page)
+		expect(new URL(frame.url()).origin).toBe(childOrigin)
+		expect(new URL(business.url()).origin).toBe(businessOrigin)
+		expect(new URL(page.url()).origin).not.toBe(new URL(business.url()).origin)
+		expect(new URL(frame.url()).origin).not.toBe(new URL(business.url()).origin)
+	})
+
+	test('routes allowed and confirmed actions through the parent into the business iframe', async ({
+		page,
+	}) => {
+		const frame = await openParent(page)
+		const business = await businessFrame(page)
+		const browserState = await state(frame)
+		const buttonIndex = markerIndex(browserState.content, /<button[^>]*id=business-button/)
+
+		const clickResult = await frame.evaluate(
+			async (index) => (window as ReverseChildWindow).reverseParentController!.clickElement(index),
+			buttonIndex
+		)
+		expect(clickResult.success).toBe(true)
+		await expect(business.locator('#business-result')).toHaveText('shipment released')
+
+		const inputValue = 'approved brokered input'
+		const refreshedState = await state(frame)
+		const inputIndex = markerIndex(refreshedState.content, /<input[^>]*id=business-input/)
+		await frame.evaluate(
+			({ index, text }) => {
+				;(window as ReverseChildWindow).brokeredInputResult = (
+					window as ReverseChildWindow
+				).reverseParentController!.inputText(index, text)
+			},
+			{ index: inputIndex, text: inputValue }
+		)
+		await expect
+			.poll(() =>
+				frame.evaluate(() => (window as ReverseChildWindow).reverseApprovalRequests?.length ?? 0)
+			)
+			.toBe(1)
+		const inputResult = await frame.evaluate(async () => {
+			const result = (window as ReverseChildWindow).brokeredInputResult
+			if (!result) throw new Error('Brokered input result promise is missing')
+			return await result
+		})
+		expect(inputResult.success).toBe(true)
+		expect(inputResult.message).not.toContain(inputValue)
+		await expect(business.locator('#business-input')).toHaveValue(inputValue)
+
+		const approvals = await frame.evaluate(
+			() => (window as ReverseChildWindow).reverseApprovalRequests ?? []
+		)
+		expect(approvals).toHaveLength(1)
+		expect(approvals[0]).toMatchObject({
+			method: 'inputText',
+			capability: 'input',
+			payload: {
+				textLength: inputValue.length,
+				frame: { id: 'fulfilment-app', origin: businessOrigin },
+				target: { tag: 'input', label: 'business approval note' },
+			},
+		})
+		expect(JSON.stringify(approvals)).not.toContain(inputValue)
+	})
+
+	test('does not let parent or assistant approval override a business-frame deny', async ({
+		page,
+	}) => {
+		const frame = await openParent(page)
+		const business = await businessFrame(page)
+		const browserState = await state(frame)
+		const deniedIndex = markerIndex(browserState.content, /<button[^>]*id=business-deny-button/)
+		const result = await frame.evaluate(
+			async (index) => (window as ReverseChildWindow).reverseParentController!.clickElement(index),
+			deniedIndex
+		)
+		expect(result.success).toBe(false)
+		expect(result.message).toContain('CAPABILITY_DENIED')
+		await expect(business.locator('#business-result')).toHaveText('not released')
+		expect(
+			await frame.evaluate(
+				() => (window as ReverseChildWindow).reverseApprovalRequests?.length ?? 0
+			)
+		).toBe(0)
+	})
+
+	test('invalidates a brokered child index on reload and reconnects after observation', async ({
+		page,
+	}) => {
+		const frame = await openParent(page)
+		const firstState = await state(frame)
+		const staleIndex = markerIndex(firstState.content, /<button[^>]*id=business-button/)
+		await page.locator('#business-frame').evaluate((element: HTMLIFrameElement) => {
+			const source = element.getAttribute('src')
+			if (!source) throw new Error('Business iframe source is missing')
+			element.setAttribute('src', source)
+		})
+		const reloadedBusiness = await businessFrame(page)
+		await expect(reloadedBusiness.locator('#business-result')).toHaveText('not released')
+
+		const staleResult = await frame.evaluate(
+			async (index) => (window as ReverseChildWindow).reverseParentController!.clickElement(index),
+			staleIndex
+		)
+		expect(staleResult.success).toBe(false)
+		expect(staleResult.message).toMatch(/stale|reload|connected/i)
+
+		const refreshedState = await state(frame)
+		expect(refreshedState.treeRevision).toBeGreaterThan(firstState.treeRevision)
+		const refreshedIndex = markerIndex(refreshedState.content, /<button[^>]*id=business-button/)
+		const refreshedResult = await frame.evaluate(
+			async (index) => (window as ReverseChildWindow).reverseParentController!.clickElement(index),
+			refreshedIndex
+		)
+		expect(refreshedResult.success).toBe(true)
+	})
+
+	test('keeps configured business-frame contents hidden when signed claims omit the grant', async ({
+		page,
+	}) => {
+		const parentOrigin = parentOrigins[0]
+		await page.goto(`${parentOrigin}/reverse-parent.html?authorizeBusiness=false`)
+		const frame = await connectedChildFrame(page, parentOrigin)
+		const browserState = await state(frame)
+		expect(browserState.content).not.toContain('authorized-child-frames')
+		expect(browserState.content).not.toContain('business-button')
+		expect(browserState.content).not.toContain('authorized-business-content')
+		expect(browserState.content).not.toContain('UNAUTHORIZED_CHILD_SECRET')
 	})
 
 	test('renders the assistant as a right-side floating panel beside the rich parent page', async ({

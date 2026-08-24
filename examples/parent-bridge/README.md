@@ -28,8 +28,9 @@ does not add Vue or an authentication dependency to the repository.
     the non-Vue example sources without adding Vue to this repository.
 -   To run the reverse parent-bridge fixture, use `npm run demo:parent-bridge`
     from the repository root. The command builds the PageAgent IIFE and starts
-    the two parent origins (`127.0.0.1:4173` and `127.0.0.1:4175`) plus the
-    shared assistant iframe origin (`127.0.0.1:4174`). After an existing build,
+    the two parent origins (`127.0.0.1:4173` and `127.0.0.1:4175`), the shared
+    assistant iframe origin (`127.0.0.1:4174`), and the cooperative business
+    iframe origin (`127.0.0.1:4176`). After an existing build,
     run the server-only workspace command:
 
         npm run demo:parent-bridge --workspace=@page-agent/e2e
@@ -44,6 +45,10 @@ does not add Vue or an authentication dependency to the repository.
     **Run PageAgent** submits the fixed task (click the parent button, enter
     `PageAgent Demo`, and select `Pro`); the low-level
     observe/click/input/select/scroll/JavaScript controls remain available. The
+    state includes an explicitly signed business iframe so the fixture also
+    demonstrates assistant → parent broker → business iframe observation,
+    actions, approval, denial, and reload invalidation. An unconfigured sibling
+    iframe is never exposed. The
     parent shows a root-bounded, non-blocking cursor with click ripple while
     actions run; it never covers the assistant iframe. Its `main`-compatible
     PageAgent arrow can be branded through the `--page-agent-parent-cursor-*`

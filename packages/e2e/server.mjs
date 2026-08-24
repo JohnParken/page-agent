@@ -378,8 +378,13 @@ function createFixtureServer(port) {
 				securityHeaders['Content-Security-Policy'] =
 					"frame-ancestors http://127.0.0.1:4173 http://127.0.0.1:4175; connect-src 'self'"
 			}
+			if (requestURL.pathname === '/reverse-business-child.html') {
+				securityHeaders['Content-Security-Policy'] =
+					'frame-ancestors http://127.0.0.1:4173 http://127.0.0.1:4175'
+			}
 			if (requestURL.pathname === '/reverse-parent.html') {
-				securityHeaders['Content-Security-Policy'] = 'frame-src http://127.0.0.1:4174'
+				securityHeaders['Content-Security-Policy'] =
+					'frame-src http://127.0.0.1:4174 http://127.0.0.1:4176'
 			}
 
 			response.writeHead(200, {
@@ -398,9 +403,15 @@ function createFixtureServer(port) {
 }
 
 // 4173 and 4175 represent two independently deployed parent applications;
-// 4174 is the shared assistant/Vue child origin used by reverse parent-bridge
-// tests. Keeping all listeners explicit makes origin/source checks observable.
-const servers = [createFixtureServer(4173), createFixtureServer(4174), createFixtureServer(4175)]
+// 4174 is the shared assistant/Vue child origin, while 4176 is the separately
+// deployed business iframe proxied by the parent host. Keeping all listeners
+// explicit makes every origin/source check observable.
+const servers = [
+	createFixtureServer(4173),
+	createFixtureServer(4174),
+	createFixtureServer(4175),
+	createFixtureServer(4176),
+]
 
 function shutdown() {
 	let remaining = servers.length

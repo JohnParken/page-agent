@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Parent-brokered business iframe</title>
+		<style>
+			:root {
+				font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+				color: #23324d;
+				background: #f4f8ff;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0.9rem;
+			}
+			main {
+				display: grid;
+				gap: 0.7rem;
+			}
+			.controls {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: 0.6rem;
+			}
+			label,
+			button {
+				font: inherit;
+			}
+			label {
+				display: grid;
+				gap: 0.35rem;
+				font-size: 0.78rem;
+				font-weight: 650;
+			}
+			input,
+			button {
+				min-width: 0;
+				padding: 0.55rem 0.65rem;
+				border: 1px solid #a9bad8;
+				border-radius: 0.5rem;
+				background: #fff;
+				font: inherit;
+			}
+			button {
+				align-self: end;
+				cursor: pointer;
+			}
+			#business-button {
+				border-color: #315efb;
+				background: #315efb;
+				color: #fff;
+			}
+			#business-deny-button {
+				color: #b42318;
+			}
+			p {
+				margin: 0;
+				font-size: 0.78rem;
+				color: #667085;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<strong id="business-heading">Authorized fulfilment iframe</strong>
+			<p id="business-secret">authorized-business-content</p>
+			<div class="controls">
+				<button id="business-button" type="button">Release shipment</button>
+				<label>
+					Approval note
+					<input
+						id="business-input"
+						aria-label="business approval note"
+						data-page-agent-policy="confirm"
+					/>
+				</label>
+				<button id="business-deny-button" type="button" data-page-agent-policy="deny">
+					Delete ledger
+				</button>
+			</div>
+			<p id="business-result">not released</p>
+		</main>
+
+		<script src="/controller-iife/page-agent-frame-host.iife.min.js"></script>
+		<script>
+			if (!window.PageAgentFrameHost) throw new Error('PageAgentFrameHost is unavailable')
+
+			var params = new URLSearchParams(location.search)
+			if (params.get('role') === 'unauthorized') {
+				document.querySelector('#business-heading').textContent = 'Unconfigured business iframe'
+				document.querySelector('#business-secret').textContent = 'UNAUTHORIZED_CHILD_SECRET'
+			}
+
+			window.businessFrameHostHandle = window.PageAgentFrameHost.startFrameBridge({
+				allowedParentOrigins: ['http://127.0.0.1:4173', 'http://127.0.0.1:4175'],
+				capabilities: ['observe', 'click', 'input', 'cleanup'],
+				controllerOptions: {
+					viewportExpansion: -1,
+					includeAttributes: ['id', 'aria-label'],
+				},
+			})
+			window.businessFrameBridgeHost = window.businessFrameHostHandle.host
+
+			document.querySelector('#business-button').addEventListener('click', function () {
+				document.querySelector('#business-result').textContent = 'shipment released'
+			})
+			document.querySelector('#business-deny-button').addEventListener('click', function () {
+				document.querySelector('#business-result').textContent = 'ledger deleted'
+			})
+			window.addEventListener('pagehide', function () {
+				window.businessFrameHostHandle.dispose()
+			})
+		</script>
+	</body>
+</html>

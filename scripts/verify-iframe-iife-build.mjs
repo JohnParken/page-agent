@@ -21,6 +21,10 @@ const bundles = [
 		globalName: 'PageAgentFrameHost',
 		prefix: 'page-agent-frame-host',
 		allowedOtherJavaScript: ['page-agent-parent-host.iife.min.js'],
+		requiredPatterns: [
+			[/prepare-action/, 'iframe bridge v2 prepare phase'],
+			[/commit-action/, 'iframe bridge v2 commit phase'],
+		],
 	},
 	{
 		label: 'parent-page host',
@@ -29,6 +33,12 @@ const bundles = [
 		globalName: 'PageAgentParentHost',
 		prefix: 'page-agent-parent-host',
 		allowedOtherJavaScript: ['page-agent-frame-host.iife.min.js'],
+		requiredPatterns: [
+			[/authorized-child-frames/, 'authorized child-frame observation marker'],
+			[/childFrames/, 'child-frame authorization configuration'],
+			[/prepare-action/, 'child-frame prepare phase'],
+			[/commit-action/, 'child-frame commit phase'],
+		],
 		forbiddenPatterns: [
 			[/\bPageAgentCore\b/, 'PageAgentCore'],
 			[/\bTlAiClient\b/, 'TlAiClient'],
@@ -109,6 +119,11 @@ for (const bundle of bundles) {
 	if (!source.includes(bundle.globalName)) {
 		throw new Error(`${bundle.label} does not declare ${bundle.globalName}`)
 	}
+	for (const [pattern, description] of bundle.requiredPatterns ?? []) {
+		if (!pattern.test(source)) {
+			throw new Error(`${bundle.label} is missing ${description}`)
+		}
+	}
 	for (const assetName of bundle.requiredAssets ?? []) {
 		const assetPath = resolve(bundle.directory, assetName)
 		if ((await stat(assetPath)).size === 0) {
@@ -120,10 +135,10 @@ for (const bundle of bundles) {
 				throw new Error(`${bundle.label} asset ${assetName} is missing ${description}`)
 			}
 		}
-	}
-	for (const [pattern, description] of bundle.forbiddenAssetPatterns ?? []) {
-		if (pattern.test(source)) {
-			throw new Error(`${bundle.label} contains ${description}`)
+		for (const [pattern, description] of bundle.forbiddenAssetPatterns ?? []) {
+			if (pattern.test(assetSource)) {
+				throw new Error(`${bundle.label} asset ${assetName} contains ${description}`)
+			}
 		}
 	}
 }
