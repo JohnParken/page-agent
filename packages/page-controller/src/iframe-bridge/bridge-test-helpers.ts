@@ -40,12 +40,12 @@ export interface BridgeHarness {
  * A small browser-like harness for parent tests. The child Window is only a
  * WindowProxy stand-in; all RPC still travels through a real MessageChannel.
  */
-export function createBridgeHarness(): BridgeHarness {
+export function createBridgeHarness(container: Element = globalThis.document.body): BridgeHarness {
 	const document = globalThis.document
 	const iframe = document.createElement('iframe')
 	iframe.setAttribute('src', `${CHILD_ORIGIN}/child.html`)
 	Object.defineProperty(iframe, 'contentDocument', { configurable: true, value: null })
-	document.body.append(iframe)
+	container.append(iframe)
 	const childWindow = iframe.contentWindow!
 
 	const ownerWindow = new EventTarget() as Window & {

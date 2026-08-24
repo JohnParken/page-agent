@@ -1,3 +1,4 @@
+import { FRAME_BRIDGE_CAPABILITIES, type FrameBridgeCapability } from '../iframe-bridge/protocol'
 import {
 	type IndexedBrowserState,
 	type IndexedPageControllerAdapter,
@@ -7,6 +8,11 @@ import {
 } from '../PageController'
 
 import { emitParentControllerLog, messageByteLength } from './logger'
+import {
+	ParentFrameProxyController,
+	type ParentFrameProxyGrant,
+	type ParentFrameProxyPreparedAction,
+} from './ParentFrameProxyController'
 import { ParentVisualCursor } from './ParentVisualCursor'
 import {
 	isCapability,
@@ -104,6 +110,8 @@ interface ActiveRequest {
 	timedOut?: boolean
 	timer?: ReturnType<typeof setTimeout>
 	responseSent: boolean
+	preparedAction?: ParentFrameProxyPreparedAction
+	approved?: boolean
 }
 
 interface ApprovalWaiter {
@@ -125,6 +133,7 @@ interface HostConnection {
 	readonly capabilities: readonly ParentControllerCapability[]
 	readonly expiresAt: number
 	readonly seenRequestIds: Set<string>
+	readonly childFrameGrants: readonly ParentFrameProxyGrant[]
 	treeRevision: number
 	state: IndexedBrowserState | null
 }
@@ -314,6 +323,7 @@ export class ParentPageControllerHost extends EventTarget {
 	private offer: ParentControllerOfferMessage | null = null
 	private offerFrameContext: ParentFrameContext | null = null
 	private offerExpiresAt = 0
+	private offerChildFrameGrants: readonly ParentFrameProxyGrant[] = []
 	private offerPublishPromise: Promise<void> | null = null
 	private offerGeneration = 0
 	private offerAbortController: AbortController | null = null
@@ -336,6 +346,7 @@ export class ParentPageControllerHost extends EventTarget {
 		this.resetConnection()
 		this.offer = null
 		this.offerFrameContext = null
+		this.offerChildFrameGrants = []
 		void this.publishOffer(true)
 	}
 	private readonly navigationListener = () => {
@@ -344,6 +355,7 @@ export class ParentPageControllerHost extends EventTarget {
 		this.resetConnection()
 		this.offer = null
 		this.offerFrameContext = null
+		this.offerChildFrameGrants = []
 		void this.publishOffer(true)
 	}
 	private readonly pagehideListener = () => {
@@ -389,12 +401,52 @@ export class ParentPageControllerHost extends EventTarget {
 		this.visualFeedback = options.visualFeedback ?? 'none'
 		this.validateRoot()
 		const controllerOptions = options.controllerOptions ?? {}
-		this.controller = new PageController({
+		const childFrames = options.childFrames
+		if (childFrames && (!Array.isArray(childFrames.targets) || childFrames.targets.length === 0))
+			throw new TypeError('childFrames.targets must contain at least one explicit target')
+		const childFrameBoundaries =
+			childFrames?.targets.map((target) => {
+				const iframeOrResolver = target.iframe
+				if (typeof iframeOrResolver !== 'function') return iframeOrResolver
+				return () => {
+					try {
+						return iframeOrResolver() ?? this.iframe
+					} catch {
+						return this.iframe
+					}
+				}
+			}) ?? []
+		const localController = new PageController({
 			...controllerOptions,
 			root: options.root,
 			viewportExpansion: controllerOptions.viewportExpansion ?? 0,
 			enableMask: false,
+			interactiveBlacklist: [
+				...(controllerOptions.interactiveBlacklist ?? []),
+				...childFrameBoundaries,
+			],
+			contentBlacklist: [...(controllerOptions.contentBlacklist ?? []), ...childFrameBoundaries],
 		})
+		this.controller = childFrames
+			? new ParentFrameProxyController({
+					localController,
+					root: options.root,
+					assistantIframe: this.iframe,
+					targets: childFrames.targets,
+					handshakeTimeoutMs: timeoutValue(
+						childFrames.handshakeTimeoutMs,
+						1_000,
+						'childFrames.handshakeTimeoutMs'
+					),
+					requestTimeoutMs: timeoutValue(
+						childFrames.requestTimeoutMs,
+						5_000,
+						'childFrames.requestTimeoutMs'
+					),
+					window: this.hostWindow as unknown as Window,
+					disposeLocalController: this.disposeController,
+				})
+			: localController
 		this.hostInstanceId = secureParentControllerId('host')
 		if (!this.iframe.hasAttribute('data-page-agent-not-interactive')) {
 			this.addedNotInteractive = true
@@ -646,6 +698,14 @@ export class ParentPageControllerHost extends EventTarget {
 			})
 			return
 		}
+		const childFrameGrants = this.validateChildFrameClaims(claims)
+		if (childFrameGrants === false) {
+			this.emitLog({
+				event: 'offer_denied',
+				code: ParentControllerErrorCode.EMBED_POLICY_DENIED,
+			})
+			return
+		}
 		const now = Math.floor(Date.now() / 1000)
 		for (const [policyId, expiresAt] of this.usedPolicyIds) {
 			if (expiresAt <= now) this.usedPolicyIds.delete(policyId)
@@ -676,6 +736,7 @@ export class ParentPageControllerHost extends EventTarget {
 		this.offer = offer
 		this.offerFrameContext = frameContext
 		this.offerExpiresAt = claims.exp
+		this.offerChildFrameGrants = childFrameGrants
 		try {
 			if (!this.isCurrentOfferGeneration(generation)) return
 			target.postMessage(offer, this.assistantOrigin)
@@ -730,6 +791,60 @@ export class ParentPageControllerHost extends EventTarget {
 		return true
 	}
 
+	private validateChildFrameClaims(
+		claims: VerifiedEmbedPolicyClaims
+	): readonly ParentFrameProxyGrant[] | false {
+		if (claims.childFrames === undefined) return []
+		if (!Array.isArray(claims.childFrames)) return false
+		const configured = this.options.childFrames?.targets ?? []
+		if (claims.childFrames.length > configured.length) return false
+		const configuredById = new Map(configured.map((target) => [target.id, target]))
+		const seen = new Set<string>()
+		const grants: ParentFrameProxyGrant[] = []
+		for (const value of claims.childFrames) {
+			if (
+				!value ||
+				typeof value !== 'object' ||
+				Object.keys(value).some((key) => !['id', 'origin', 'cap'].includes(key)) ||
+				!isSafeString(value.id, 256) ||
+				seen.has(value.id)
+			)
+				return false
+			const target = configuredById.get(value.id)
+			if (!target) return false
+			let origin: string
+			let configuredOrigin: string
+			try {
+				origin = normalizeParentControllerOrigin(value.origin)
+				configuredOrigin = normalizeParentControllerOrigin(target.origin)
+			} catch {
+				return false
+			}
+			if (origin !== configuredOrigin) return false
+			if (
+				!Array.isArray(value.cap) ||
+				value.cap.length === 0 ||
+				new Set(value.cap).size !== value.cap.length ||
+				value.cap.some(
+					(capability) =>
+						typeof capability !== 'string' ||
+						!(FRAME_BRIDGE_CAPABILITIES as readonly string[]).includes(capability) ||
+						!target.capabilities.includes(capability as FrameBridgeCapability) ||
+						!claims.cap.includes(capability) ||
+						!this.capabilities.includes(capability as ParentControllerCapability)
+				)
+			)
+				return false
+			seen.add(value.id)
+			grants.push({
+				id: value.id,
+				origin,
+				capabilities: value.cap as FrameBridgeCapability[],
+			})
+		}
+		return grants
+	}
+
 	private handleWindowMessage(event: MessageEvent<unknown>): void {
 		if (this.disposed || event.source !== this.frameWindow()) return
 		let origin: string
@@ -757,6 +872,7 @@ export class ParentPageControllerHost extends EventTarget {
 		if (this.offerExpiresAt <= Math.floor(Date.now() / 1000)) {
 			this.offer = null
 			this.offerFrameContext = null
+			this.offerChildFrameGrants = []
 			void this.publishOffer(true)
 			return
 		}
@@ -790,18 +906,27 @@ export class ParentPageControllerHost extends EventTarget {
 		} catch {
 			return
 		}
+		const acceptedCapabilities = [...event.data.capabilities]
 		this.connection = {
 			policyId: offer.policyId,
 			sessionId: offer.sessionId,
 			hostInstanceId: offer.hostInstanceId,
 			frameInstanceId: offer.frameInstanceId,
 			frameContext: offer.frameContext,
-			capabilities: [...event.data.capabilities],
+			capabilities: acceptedCapabilities,
+			childFrameGrants: this.offerChildFrameGrants.map((grant) => ({
+				...grant,
+				capabilities: grant.capabilities.filter((capability) =>
+					acceptedCapabilities.includes(capability as ParentControllerCapability)
+				),
+			})),
 			expiresAt: this.offerExpiresAt,
 			seenRequestIds: new Set(),
 			treeRevision: 0,
 			state: null,
 		}
+		if (this.controller instanceof ParentFrameProxyController)
+			this.controller.setAuthorizedFrames(this.connection.childFrameGrants)
 		this.connectionGeneration += 1
 		this.attachPort(channel.port2)
 		this.scheduleConnectionExpiry(this.connection)
@@ -836,6 +961,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.resetConnection()
 			this.offer = null
 			this.offerFrameContext = null
+			this.offerChildFrameGrants = []
 			void this.publishOffer(true)
 		}
 		if (port.addEventListener) {
@@ -856,6 +982,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.resetConnection()
 			this.offer = null
 			this.offerFrameContext = null
+			this.offerChildFrameGrants = []
 			void this.publishOffer(true)
 		}, delay)
 	}
@@ -916,6 +1043,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.resetConnection()
 			this.offer = null
 			this.offerFrameContext = null
+			this.offerChildFrameGrants = []
 			void this.publishOffer(true)
 			return
 		}
@@ -1006,6 +1134,12 @@ export class ParentPageControllerHost extends EventTarget {
 				(!connection.state || message.treeRevision !== connection.treeRevision)
 			)
 				throw asError(ParentControllerErrorCode.STALE_TREE, 'Indexed tree is stale')
+			if (isActionMethod(message.method) && this.controller instanceof ParentFrameProxyController)
+				active.preparedAction = await this.controller.prepareAction(
+					message.method as ParentFrameProxyPreparedAction['method'],
+					message.payload,
+					{ signal: active.abortController.signal }
+				)
 			const decision = isActionMethod(message.method)
 				? await this.evaluateActionPolicy(active)
 				: 'allow'
@@ -1027,6 +1161,7 @@ export class ParentPageControllerHost extends EventTarget {
 							: ParentControllerErrorCode.APPROVAL_DENIED,
 						'Action was not approved'
 					)
+				active.approved = true
 				const currentSnapshot = this.captureActionTarget(active)
 				if (
 					currentSnapshot.target !== active.approvalTarget ||
@@ -1065,20 +1200,7 @@ export class ParentPageControllerHost extends EventTarget {
 					message.treeRevision !== connection.treeRevision
 				)
 					throw asError(ParentControllerErrorCode.STALE_TREE, 'Indexed tree is stale')
-				const payload = message.payload as Record<string, unknown>
-				if (typeof payload.index === 'number') {
-					const resolver = (
-						this.controller as unknown as {
-							getIndexedElementForPolicy?: (index: number) => HTMLElement
-						}
-					).getIndexedElementForPolicy
-					if (!resolver)
-						throw asError(
-							ParentControllerErrorCode.ROOT_UNAVAILABLE,
-							'Indexed element validation is unavailable'
-						)
-					resolver.call(this.controller, payload.index)
-				}
+				this.resolveActionTarget(active)
 				active.started = true
 				this.postPort({
 					protocol: PARENT_CONTROLLER_PROTOCOL,
@@ -1101,7 +1223,8 @@ export class ParentPageControllerHost extends EventTarget {
 				message.method,
 				message.payload,
 				active.abortController.signal,
-				connection
+				connection,
+				active
 			)
 			if (active.abortController.signal.aborted && isActionMethod(message.method))
 				throw asError(ParentControllerErrorCode.OUTCOME_UNKNOWN, 'Outcome is unknown')
@@ -1147,16 +1270,27 @@ export class ParentPageControllerHost extends EventTarget {
 	private async evaluateActionPolicy(
 		active: ActiveRequest
 	): Promise<'allow' | 'deny' | 'approval_required'> {
-		const before = this.evaluateLocalActionPolicy(active)
+		const childDecision = active.preparedAction?.decision ?? 'allow'
+		if (active.preparedAction?.kind === 'child-frame' && active.preparedAction.reason)
+			active.policyReason = sanitizeParentControllerText(active.preparedAction.reason).slice(
+				0,
+				PARENT_CONTROLLER_MAX_REASON_LENGTH
+			)
+		const before = combinePolicyDecisions(this.evaluateLocalActionPolicy(active), childDecision)
 		if (!this.actionPolicy) return this.recordPolicyTarget(active, before)
 		const message = active.message
+		const targetContext = active.preparedAction?.targetContext ?? {
+			kind: 'local' as const,
+			target: this.resolveActionTarget(active),
+		}
 		const request: ParentControllerActionRequest = {
 			sessionId: message.sessionId,
 			requestId: message.requestId,
 			method: message.method,
 			capability: message.capability,
 			payload: message.payload,
-			target: this.resolveActionTarget(active),
+			target: targetContext.kind === 'local' ? targetContext.target : undefined,
+			targetContext,
 			origin: this.assistantOrigin,
 			iframe: this.iframe,
 			policyId: message.policyId,
@@ -1167,18 +1301,24 @@ export class ParentPageControllerHost extends EventTarget {
 			active.abortController.signal
 		)
 		const custom = normalizePolicyDecision(customValue)
-		active.policyReason =
+		const customReason =
 			typeof customValue === 'object' && customValue.reason
 				? sanitizeParentControllerText(customValue.reason).slice(
 						0,
 						PARENT_CONTROLLER_MAX_REASON_LENGTH
 					)
 				: undefined
+		if (customReason) active.policyReason = customReason
 		const after = this.evaluateLocalActionPolicy(active)
-		return this.recordPolicyTarget(active, combinePolicyDecisions(before, custom, after))
+		return this.recordPolicyTarget(
+			active,
+			combinePolicyDecisions(before, custom, after, childDecision)
+		)
 	}
 
 	private resolveActionTarget(active: ActiveRequest): Element | undefined {
+		if (active.preparedAction && this.controller instanceof ParentFrameProxyController)
+			return this.controller.resolvePreparedElement(active.preparedAction)
 		const payload = active.message.payload as Record<string, unknown>
 		if (typeof payload.index !== 'number') return undefined
 		const resolver = (
@@ -1277,6 +1417,15 @@ export class ParentPageControllerHost extends EventTarget {
 				formAction: submitTarget?.getAttribute('formaction'),
 				formMethod: submitTarget?.form?.method,
 				formTarget: submitTarget?.form?.target,
+				childFrame:
+					active.preparedAction?.kind === 'child-frame'
+						? {
+								id: active.preparedAction.targetContext.frameId,
+								origin: active.preparedAction.targetContext.origin,
+								src: active.preparedAction.targetContext.iframe.getAttribute('src'),
+								childTarget: active.preparedAction.targetContext.childTarget,
+							}
+						: undefined,
 			}),
 		}
 	}
@@ -1354,7 +1503,8 @@ export class ParentPageControllerHost extends EventTarget {
 				payload: this.approvalSummary(
 					active.message.method,
 					active.message.payload,
-					active.approvalTarget ?? undefined
+					active.approvalTarget ?? undefined,
+					active.preparedAction
 				),
 				reason: active.policyReason ?? 'Confirmation is required for this action.',
 			})
@@ -1369,24 +1519,35 @@ export class ParentPageControllerHost extends EventTarget {
 	private approvalSummary(
 		method: ParentControllerMethod,
 		payload: unknown,
-		target?: Element
+		target?: Element,
+		prepared?: ParentFrameProxyPreparedAction
 	): unknown {
 		if (!payload || typeof payload !== 'object') return undefined
 		const value = payload as Record<string, unknown>
-		const targetSummary = this.approvalTargetSummary(target)
+		const targetSummary =
+			prepared?.kind === 'child-frame'
+				? prepared.targetContext.childTarget
+				: this.approvalTargetSummary(target)
+		const frameSummary =
+			prepared?.kind === 'child-frame'
+				? { id: prepared.targetContext.frameId, origin: prepared.targetContext.origin }
+				: undefined
 		if (method === 'inputText')
 			return {
 				index: value.index,
 				textLength: typeof value.text === 'string' ? value.text.length : 0,
 				target: targetSummary,
+				frame: frameSummary,
 			}
 		if (method === 'selectOption')
 			return {
 				index: value.index,
 				optionLength: typeof value.optionText === 'string' ? value.optionText.length : 0,
 				target: targetSummary,
+				frame: frameSummary,
 			}
-		if (method === 'clickElement') return { index: value.index, target: targetSummary }
+		if (method === 'clickElement')
+			return { index: value.index, target: targetSummary, frame: frameSummary }
 		if (method === 'scroll' || method === 'scrollHorizontally')
 			return {
 				index: value.index,
@@ -1394,6 +1555,7 @@ export class ParentPageControllerHost extends EventTarget {
 				pixels: value.pixels,
 				numPages: value.numPages,
 				target: targetSummary,
+				frame: frameSummary,
 			}
 		return undefined
 	}
@@ -1460,20 +1622,11 @@ export class ParentPageControllerHost extends EventTarget {
 			waiter.resolve(false)
 			return
 		}
-		const payload = waiter.request.message.payload as Record<string, unknown>
-		const index = typeof payload.index === 'number' ? payload.index : undefined
-		if (index !== undefined) {
-			try {
-				const resolver = (
-					this.controller as unknown as {
-						getIndexedElementForPolicy?: (index: number) => HTMLElement
-					}
-				).getIndexedElementForPolicy
-				resolver?.call(this.controller, index)
-			} catch {
-				waiter.resolve(false)
-				return
-			}
+		try {
+			this.resolveActionTarget(waiter.request)
+		} catch {
+			waiter.resolve(false)
+			return
 		}
 		void payloadHash(waiter.request.message.payload)
 			.then((hash) => waiter.resolve(hash === waiter.hash))
@@ -1484,10 +1637,21 @@ export class ParentPageControllerHost extends EventTarget {
 		method: ParentControllerMethod,
 		payload: unknown,
 		signal: AbortSignal,
-		connection: HostConnection
+		connection: HostConnection,
+		active?: ActiveRequest
 	): Promise<unknown> {
 		const context: PageControllerCallContext = { signal }
 		const controller = this.controller
+		if (
+			active?.preparedAction &&
+			this.controller instanceof ParentFrameProxyController &&
+			isActionMethod(method)
+		)
+			return this.controller.commitPreparedAction(
+				active.preparedAction,
+				active.approved ?? false,
+				context
+			)
 		switch (method) {
 			case 'getCurrentUrl':
 				return sanitizeParentControllerUrl(await controller.getCurrentUrl(context))
@@ -1661,6 +1825,8 @@ export class ParentPageControllerHost extends EventTarget {
 	private resetConnection(): void {
 		const previousExecutionTail = this.executionTail
 		const immediateCleanup = this.cleanupVisualState()
+		if (this.controller instanceof ParentFrameProxyController)
+			this.controller.clearAuthorizedFrames()
 		// A request already executing may ignore its abort signal and finish after
 		// reset. Run a second cleanup after that request tail so late observation
 		// highlights cannot survive into the next session. Requests accepted by a
@@ -1719,7 +1885,8 @@ export class ParentPageControllerHost extends EventTarget {
 		this.offerAbortController?.abort()
 		this.offerAbortController = null
 		this.resetConnection()
-		if (this.disposeController) this.controller.dispose()
+		if (this.controller instanceof ParentFrameProxyController) this.controller.dispose()
+		else if (this.disposeController) this.controller.dispose()
 		this.visualCursor?.dispose()
 		this.visualCursor = null
 		if (this.feedback) {
@@ -1731,6 +1898,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.iframe.setAttribute('data-page-agent-not-interactive', this.previousNotInteractive)
 		this.offer = null
 		this.offerFrameContext = null
+		this.offerChildFrameGrants = []
 		this.usedPolicyIds.clear()
 		this.emitLog({ event: 'disposed' })
 		this.dispatchEvent(new Event('dispose'))

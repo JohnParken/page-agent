@@ -1,4 +1,5 @@
 import type { DomRoot } from '../dom'
+import type { FrameBridgeCapability, FrameBridgeTargetSummary } from '../iframe-bridge/protocol'
 import type {
 	BrowserState,
 	HorizontalScrollOptions,
@@ -140,11 +141,30 @@ export interface ParentControllerActionRequest {
 	readonly payload: unknown
 	/** Live parent-side target for trusted selector/business policy checks. */
 	readonly target?: Element
+	/** Distinguishes a parent DOM target from a cooperatively proxied child target. */
+	readonly targetContext: ParentControllerActionTargetContext
 	readonly origin: string
 	readonly iframe: HTMLIFrameElement
 	readonly policyId: string
 	readonly signal: AbortSignal
 }
+
+export interface ParentControllerLocalActionTargetContext {
+	readonly kind: 'local'
+	readonly target?: Element
+}
+
+export interface ParentControllerChildFrameActionTargetContext {
+	readonly kind: 'child-frame'
+	readonly frameId: string
+	readonly origin: string
+	readonly iframe: HTMLIFrameElement
+	readonly childTarget?: FrameBridgeTargetSummary
+}
+
+export type ParentControllerActionTargetContext =
+	| ParentControllerLocalActionTargetContext
+	| ParentControllerChildFrameActionTargetContext
 
 export interface ParentControllerActionPolicyDecisionDetail {
 	decision: 'allow' | 'deny' | 'approval_required'
@@ -184,6 +204,23 @@ export type ParentControllerVerifyEmbedPolicy = (
 	context: ParentControllerVerifyPolicyContext
 ) => VerifiedEmbedPolicyClaims | false | null | Promise<VerifiedEmbedPolicyClaims | false | null>
 
+export interface ParentControllerChildFrameTarget {
+	/** Stable identifier matched exactly against the signed childFrames claim. */
+	readonly id: string
+	/** Direct iframe element, or a resolver for applications that replace it on navigation. */
+	readonly iframe: HTMLIFrameElement | (() => HTMLIFrameElement | null)
+	/** Exact expected child origin. Wildcards and opaque origins are rejected. */
+	readonly origin: string
+	/** Maximum cooperative iframe-bridge capabilities this target may receive. */
+	readonly capabilities: readonly FrameBridgeCapability[]
+}
+
+export interface ParentControllerChildFramesOptions {
+	readonly targets: readonly ParentControllerChildFrameTarget[]
+	readonly handshakeTimeoutMs?: number
+	readonly requestTimeoutMs?: number
+}
+
 export interface ParentPageControllerHostOptions {
 	/** Exactly one assistant iframe is bound to a host instance. */
 	readonly iframe: HTMLIFrameElement
@@ -201,6 +238,8 @@ export interface ParentPageControllerHostOptions {
 	readonly verifyEmbedPolicy: ParentControllerVerifyEmbedPolicy
 	readonly transformState?: ParentControllerTransformState
 	readonly actionPolicy?: ParentControllerActionPolicy
+	/** Explicit parent-brokered child iframe targets. Claims remain authoritative. */
+	readonly childFrames?: ParentControllerChildFramesOptions
 	readonly approvalTimeoutMs?: number
 	readonly handshakeTimeoutMs?: number
 	readonly requestTimeoutMs?: number
