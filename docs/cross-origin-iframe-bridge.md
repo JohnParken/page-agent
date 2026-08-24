@@ -7,6 +7,14 @@ cooperative, direct child iframe served from another HTTP(S) origin. The parent 
 owns the agent and the local page controller; the child only exposes the controller
 operations that it explicitly opts into.
 
+> **Current iframe support boundary:** A regular `PageController` treats every iframe
+> child document as an opaque leaf. It does not read or operate the contents of a
+> same-origin iframe, and same-origin iframes are not routed through this cooperative
+> bridge. Cross-origin iframe contents remain supported only when the child page opts
+> into the bridge and runs a compatible `FrameBridgeHost`. This limitation applies to
+> iframe document traversal; the separate parent bridge, where a Page Agent runs inside
+> an iframe and operates an explicitly authorized parent root, is unaffected.
+
 ## Install and import
 
 The bridge keeps its NPM/ESM secondary entry points and also ships separate, self-contained
@@ -119,11 +127,12 @@ feedback for the parent visual mask. This is not a data-filtering boundary: any 
 attributes that the child controller includes in its browser state are visible to the
 parent, so do not expose sensitive content to an untrusted parent origin.
 
-The bridge handles direct, cooperative child frames only. Same-origin frames remain with
-the local DOM controller, nested frames are not recursively discovered, and a child that
-does not install a host (or is blocked by embedding policy) is reported as unavailable.
-One unavailable frame does not prevent usable cooperative frames from being observed or
-acted on.
+The bridge handles direct, cooperative cross-origin child frames only. Same-origin iframe
+documents are opaque leaves: they are not read or operated by the regular local
+`PageController`, and they do not enter this cooperative bridge. Nested frames are not
+recursively discovered, and a cross-origin child that does not install a host (or is
+blocked by embedding policy) is reported as unavailable. One unavailable frame does not
+prevent usable cooperative frames from being observed or acted on.
 
 ## Lifecycle and degraded operation
 

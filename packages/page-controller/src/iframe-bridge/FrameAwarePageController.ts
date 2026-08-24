@@ -1,4 +1,5 @@
 import {
+	type FrameBridgeApprovalHandler,
 	FrameBridgeClient,
 	type FrameBridgeClientOptions,
 	FrameBridgeError,
@@ -31,6 +32,8 @@ export interface FrameAwarePageControllerOptions {
 	window?: Window
 	/** Injected document is useful for unit tests and non-global browser contexts. */
 	document?: Document
+	/** Required for child targets whose local policy returns approval_required. */
+	onApprovalRequired?: FrameBridgeApprovalHandler
 }
 
 interface LocalState extends BrowserState {
@@ -127,6 +130,7 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 	readonly allowedChildOrigins: readonly string[]
 	readonly handshakeTimeoutMs: number
 	readonly requestTimeoutMs: number
+	readonly onApprovalRequired: FrameBridgeApprovalHandler | undefined
 
 	private readonly ownerWindow: Window
 	private readonly ownerDocument: Document
@@ -158,6 +162,7 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 		this.requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS)
 		this.ownerWindow = options.window ?? window
 		this.ownerDocument = options.document ?? this.ownerWindow.document
+		this.onApprovalRequired = options.onApprovalRequired
 	}
 
 	get frameClients(): readonly FrameBridgeClient[] {
@@ -456,6 +461,7 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 			handshakeTimeoutMs: this.handshakeTimeoutMs,
 			requestTimeoutMs: this.requestTimeoutMs,
 			window: this.ownerWindow,
+			onApprovalRequired: this.onApprovalRequired,
 		}
 		const client = new FrameBridgeClient(options)
 		const loadHandler = () => {

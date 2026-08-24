@@ -24,6 +24,8 @@ export interface BridgeHarness {
 	setResponseTreeRevision(revision: number): void
 	setDropStarted(drop: boolean): void
 	setDropResponses(drop: boolean): void
+	setPreparedDecision(decision: 'allow' | 'deny' | 'approval_required'): void
+	waitForCommit(): Promise<void>
 	setActionPointerFeedback(
 		pointers: ({ action: 'move'; x: number; y: number } | { action: 'click' })[]
 	): void
@@ -65,6 +67,12 @@ export function createBridgeHarness(): BridgeHarness {
 	let childPort: MessagePort | null = null
 	let activeSessionId = 'session-1'
 	let activeFrameInstanceId = 'frame-1'
+	let preparedSequence = 0
+	let preparedDecision: 'allow' | 'deny' | 'approval_required' = 'allow'
+	let resolveCommit!: () => void
+	const commitObserved = new Promise<void>((resolve) => {
+		resolveCommit = resolve
+	})
 	let actionPointerFeedback: ({ action: 'move'; x: number; y: number } | { action: 'click' })[] = []
 
 	const dispatchAvailable = (sessionId: string) => {
@@ -87,6 +95,28 @@ export function createBridgeHarness(): BridgeHarness {
 	const handleRequest = (request: Record<string, unknown>) => {
 		if (!childPort || disposed) return
 		const method = request.method as string
+		if (request.type === 'prepare-action') {
+			childPort.postMessage({
+				protocol: IFRAME_BRIDGE_PROTOCOL,
+				version: BRIDGE_PROTOCOL_VERSION,
+				type: 'response',
+				sessionId: request.sessionId,
+				frameInstanceId: request.frameInstanceId,
+				treeRevision,
+				requestId: request.requestId,
+				method,
+				ok: true,
+				result: {
+					preparedActionId: `prepared-${++preparedSequence}`,
+					method,
+					payloadHash: request.payloadHash,
+					decision: preparedDecision,
+					target: { tag: 'button', label: 'Remote' },
+				},
+			})
+			return
+		}
+		if (request.type === 'commit-action') resolveCommit()
 		// The host emits `started` for every queued request, including
 		// observations and cleanup. This lets the client distinguish an
 		// explicit abort from a request that was cancelled before execution.
@@ -192,6 +222,12 @@ export function createBridgeHarness(): BridgeHarness {
 		},
 		setDropResponses(drop) {
 			dropResponses = drop
+		},
+		setPreparedDecision(decision) {
+			preparedDecision = decision
+		},
+		waitForCommit() {
+			return commitObserved
 		},
 		setActionPointerFeedback(pointers) {
 			actionPointerFeedback = pointers

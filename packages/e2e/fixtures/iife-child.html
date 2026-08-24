@@ -4,13 +4,20 @@
 		<meta charset="UTF-8" />
 		<title>Iframe bridge IIFE child</title>
 		<style>
-			#child-scroll { height: 80px; overflow-y: auto; }
-			#child-scroll-content { height: 500px; }
-			body { min-height: 1400px; }
+			#child-scroll {
+				height: 80px;
+				overflow-y: auto;
+			}
+			#child-scroll-content {
+				height: 500px;
+			}
+			body {
+				min-height: 1400px;
+			}
 		</style>
 	</head>
 	<body>
-		<button id="child-button">Child button</button>
+		<button id="child-button" type="button">Child button</button>
 		<p id="child-click-result">Not clicked</p>
 		<label>Child input <input id="child-input" /></label>
 		<label>

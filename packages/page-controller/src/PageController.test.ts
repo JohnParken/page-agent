@@ -70,6 +70,42 @@ describe('PageController', () => {
 		})
 	})
 
+	describe('iframe boundary', () => {
+		it('treats same-origin iframe documents as opaque leaves', async () => {
+			document.body.innerHTML = `
+				<button id="parent-button" type="button">Parent action</button>
+				<iframe id="same-origin-frame" title="Same-origin frame"></iframe>
+			`
+			const parentButton = document.querySelector<HTMLElement>('#parent-button')!
+			const iframe = document.querySelector<HTMLIFrameElement>('#same-origin-frame')!
+			const iframeDocument = iframe.contentDocument!
+			iframeDocument.body.innerHTML = `
+				<button id="child-button" type="button">Same-origin child action</button>
+				<input id="child-input" aria-label="Same-origin child input" />
+			`
+			const childButton = iframeDocument.querySelector<HTMLElement>('#child-button')!
+			const childInput = iframeDocument.querySelector<HTMLElement>('#child-input')!
+			for (const element of [parentButton, iframe, childButton, childInput]) {
+				Object.defineProperties(element, {
+					offsetWidth: { configurable: true, value: 120 },
+					offsetHeight: { configurable: true, value: 32 },
+				})
+			}
+			const controller = new PageController()
+
+			const state = await controller.getBrowserState()
+
+			expect(state.content).toContain('Parent action')
+			expect(state.content).not.toContain('Same-origin child action')
+			expect(state.content).not.toContain('Same-origin child input')
+			expect(state.content).not.toContain('id=child-button')
+			expect(state.content).not.toContain('id=child-input')
+			for (const index of state.indices) {
+				expect(controller.getIndexedElementForPolicy(index).ownerDocument).toBe(document)
+			}
+		})
+	})
+
 	describe('scoped root boundary', () => {
 		const makeVisible = (element: HTMLElement) => {
 			Object.defineProperties(element, {

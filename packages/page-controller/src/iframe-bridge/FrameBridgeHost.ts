@@ -1,11 +1,19 @@
 import {
+	fingerprintFrameBridgeTarget,
+	hashFrameBridgePayload,
+	summarizeFrameBridgePayload,
+	summarizeFrameBridgeTarget,
+} from './action-security'
+import {
 	BRIDGE_PROTOCOL_VERSION,
 	BridgeErrorCode,
 	FRAME_BRIDGE_CAPABILITIES,
 	IFRAME_BRIDGE_PROTOCOL,
 	isBridgeCancelMessage,
+	isBridgeCommitActionMessage,
 	isBridgeConnectMessage,
 	isBridgeDiscoverMessage,
+	isBridgePrepareActionMessage,
 	isBridgeRequestMessage,
 	isBridgeWindowMessage,
 	isHorizontalScrollPayload,
@@ -16,19 +24,25 @@ import {
 } from './protocol'
 
 import type {
+	BridgeActionPayloadSummary,
 	BridgeAvailableMessage,
 	BridgeCancelMessage,
+	BridgeCommitActionMessage,
 	BridgeConnectedMessage,
 	BridgeConnectMessage,
 	BridgeErrorCode as BridgeErrorCodeType,
 	BridgePointerMessage,
 	BridgePortMessage,
+	BridgePrepareActionMessage,
 	BridgeRequestMessage,
 	BridgeResponseMessage,
 	BridgeStartedMessage,
 	BridgeSuccessResponseMessage,
+	FrameBridgeActionMethod,
 	FrameBridgeCapability,
 	FrameBridgeMethod,
+	FrameBridgePolicyDecision,
+	FrameBridgePreparedAction,
 	SerializedBridgeError,
 } from './protocol'
 import type {
@@ -38,6 +52,41 @@ import type {
 	PageActionResult,
 	ScrollOptions,
 } from '../PageController'
+
+export interface FrameBridgePolicyController extends IndexedPageControllerAdapter {
+	/** Resolve a current, root-contained target without exposing it over RPC. */
+	getIndexedElementForPolicy(index: number): HTMLElement
+}
+
+export interface FrameBridgeActionPolicyRequest {
+	readonly method: FrameBridgeActionMethod
+	readonly capability: FrameBridgeCapability
+	readonly summary: BridgeActionPayloadSummary
+	readonly target?: Element
+	readonly parentOrigin: string
+	readonly signal: AbortSignal
+}
+
+export interface FrameBridgeActionPolicyDecisionDetail {
+	decision: FrameBridgePolicyDecision
+	reason?: string
+}
+
+export type FrameBridgeActionPolicyDecision = boolean | FrameBridgeActionPolicyDecisionDetail
+
+export type FrameBridgeActionPolicy = (
+	request: FrameBridgeActionPolicyRequest
+) => FrameBridgeActionPolicyDecision | Promise<FrameBridgeActionPolicyDecision>
+
+export interface FrameBridgeTransformStateContext {
+	readonly parentOrigin: string
+	readonly signal: AbortSignal
+}
+
+export type FrameBridgeTransformState = (
+	state: IndexedBrowserState,
+	context: FrameBridgeTransformStateContext
+) => IndexedBrowserState | Promise<IndexedBrowserState>
 
 /** The subset of MessagePort used by the bridge. */
 export interface FrameBridgeMessagePort {
@@ -71,7 +120,7 @@ interface BridgePortMessageEvent {
 
 export interface FrameBridgeHostOptions {
 	/** Controller owned by the child iframe. */
-	controller: IndexedPageControllerAdapter
+	controller: FrameBridgePolicyController
 	/** Exact parent origins allowed to discover/connect to this host. */
 	allowedParentOrigins: readonly string[]
 	/** Capabilities exposed to a parent. Defaults to all safe bridge capabilities. */
@@ -84,13 +133,37 @@ export interface FrameBridgeHostOptions {
 	pointerEventTarget?: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 	/** Whether dispose() also disposes the supplied controller (default: true). */
 	disposeController?: boolean
+	/** Child-owned policy that can only narrow bridge action access. */
+	actionPolicy?: FrameBridgeActionPolicy
+	/** Redact browser state before it leaves the child origin. */
+	transformState?: FrameBridgeTransformState
+	/** Lifetime of a prepared, single-use action token (default: 60 seconds). */
+	preparedActionTtlMs?: number
 }
 
+type InboundRequestMessage =
+	| BridgeRequestMessage
+	| BridgePrepareActionMessage
+	| BridgeCommitActionMessage
+
 interface PendingRequest {
-	message: BridgeRequestMessage
+	message: InboundRequestMessage
 	method: FrameBridgeMethod
 	abortController: AbortController
 	state: 'queued' | 'running'
+}
+
+interface PreparedActionRecord {
+	readonly preparedActionId: string
+	readonly method: FrameBridgeActionMethod
+	readonly treeRevision: number
+	readonly payloadHash: string
+	readonly summary: BridgeActionPayloadSummary
+	readonly target: HTMLElement | undefined
+	readonly fingerprint: string
+	readonly decision: FrameBridgePolicyDecision
+	readonly reason?: string
+	readonly expiresAt: number
 }
 
 interface ActiveConnection {
@@ -103,6 +176,7 @@ interface ActiveConnection {
 	queue: PendingRequest[]
 	running: PendingRequest | null
 	processing: boolean
+	preparedActions: Map<string, PreparedActionRecord>
 }
 
 class BridgeHostError extends Error {
@@ -116,6 +190,7 @@ class BridgeHostError extends Error {
 }
 
 const DEFAULT_CAPABILITIES: readonly FrameBridgeCapability[] = FRAME_BRIDGE_CAPABILITIES
+const DEFAULT_PREPARED_ACTION_TTL_MS = 60_000
 
 const METHOD_CAPABILITY: Readonly<Record<FrameBridgeMethod, FrameBridgeCapability>> = {
 	getBrowserState: 'observe',
@@ -198,6 +273,55 @@ function isValidCapabilities(value: readonly FrameBridgeCapability[]): boolean {
 	)
 }
 
+function combinePolicyDecisions(
+	...decisions: FrameBridgePolicyDecision[]
+): FrameBridgePolicyDecision {
+	if (decisions.includes('deny')) return 'deny'
+	if (decisions.includes('approval_required')) return 'approval_required'
+	return 'allow'
+}
+
+function normalizeActionPolicyDecision(value: unknown): FrameBridgePolicyDecision {
+	return value === 'allow' || value === 'deny' || value === 'approval_required' ? value : 'deny'
+}
+
+function sanitizePolicyReason(value: string): string {
+	return Array.from(value, (character) => {
+		const code = character.charCodeAt(0)
+		return code <= 31 || code === 127 ? ' ' : character
+	})
+		.join('')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, 1024)
+}
+
+function connectionOrigin(target: Element): string {
+	try {
+		return target.ownerDocument.location.origin
+	} catch {
+		return ''
+	}
+}
+
+function sameActionSummary(
+	left: BridgeActionPayloadSummary,
+	right: BridgeActionPayloadSummary
+): boolean {
+	for (const key of [
+		'index',
+		'textLength',
+		'optionLength',
+		'down',
+		'right',
+		'numPages',
+		'pixels',
+	] as const) {
+		if (left[key] !== right[key]) return false
+	}
+	return true
+}
+
 function asWindowMessageEvent(
 	event: MessageEvent<unknown> | BridgeWindowMessageEvent
 ): BridgeWindowMessageEvent {
@@ -253,7 +377,7 @@ function isIndexedBrowserState(value: unknown): value is IndexedBrowserState {
  * is intentionally absent from the bridge method union and dispatch table.
  */
 export class FrameBridgeHost {
-	readonly controller: IndexedPageControllerAdapter
+	readonly controller: FrameBridgePolicyController
 	readonly frameInstanceId: string
 	readonly allowedParentOrigins: readonly string[]
 	readonly capabilities: readonly FrameBridgeCapability[]
@@ -261,6 +385,9 @@ export class FrameBridgeHost {
 	private readonly bridgeWindow: FrameBridgeHostWindow
 	private readonly pointerEventTarget: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
 	private readonly disposeController: boolean
+	private readonly actionPolicy: FrameBridgeActionPolicy | undefined
+	private readonly transformState: FrameBridgeTransformState | undefined
+	private readonly preparedActionTtlMs: number
 	private readonly discoveredSessions = new Map<string, string>()
 	/**
 	 * Serializes controller calls across connection replacements as well as
@@ -298,6 +425,9 @@ export class FrameBridgeHost {
 		if (!options || !options.controller)
 			throw new TypeError('FrameBridgeHost requires a controller')
 
+		if (typeof options.controller.getIndexedElementForPolicy !== 'function') {
+			throw new TypeError('FrameBridgeHost requires a policy-aware controller')
+		}
 		this.controller = options.controller
 		this.allowedParentOrigins = Object.freeze(
 			Array.from(new Set(options.allowedParentOrigins.map(normalizeOrigin)))
@@ -331,6 +461,14 @@ export class FrameBridgeHost {
 				'addEventListener' | 'removeEventListener'
 			>)
 		this.disposeController = options.disposeController ?? true
+		this.actionPolicy = options.actionPolicy
+		this.transformState = options.transformState
+		if (
+			options.preparedActionTtlMs !== undefined &&
+			(!Number.isFinite(options.preparedActionTtlMs) || options.preparedActionTtlMs <= 0)
+		)
+			throw new TypeError('preparedActionTtlMs must be a positive finite number')
+		this.preparedActionTtlMs = options.preparedActionTtlMs ?? DEFAULT_PREPARED_ACTION_TTL_MS
 	}
 
 	/** Register the global discover/connect listener. Calling start twice is safe. */
@@ -422,6 +560,7 @@ export class FrameBridgeHost {
 			queue: [],
 			running: null,
 			processing: false,
+			preparedActions: new Map(),
 		}
 		this.activeConnection = connection
 		port.onmessage = (portEvent: MessageEvent<unknown>) => {
@@ -498,6 +637,10 @@ export class FrameBridgeHost {
 			this.handleRequest(connection, message)
 			return
 		}
+		if (isBridgePrepareActionMessage(message) || isBridgeCommitActionMessage(message)) {
+			this.handleRequest(connection, message)
+			return
+		}
 		if (isBridgeCancelMessage(message)) {
 			this.handleCancel(connection, message)
 			return
@@ -509,7 +652,7 @@ export class FrameBridgeHost {
 		this.rejectUnknownRequest(connection, message)
 	}
 
-	private handleRequest(connection: ActiveConnection, message: BridgeRequestMessage): void {
+	private handleRequest(connection: ActiveConnection, message: InboundRequestMessage): void {
 		if (message.sessionId !== connection.sessionId) {
 			this.sendError(
 				connection,
@@ -545,7 +688,8 @@ export class FrameBridgeHost {
 			return
 		}
 
-		if (!this.validatePayload(message.method, message.payload)) {
+		const payload = 'payload' in message ? message.payload : undefined
+		if (message.type !== 'prepare-action' && !this.validatePayload(message.method, payload)) {
 			this.sendError(
 				connection,
 				message,
@@ -594,12 +738,12 @@ export class FrameBridgeHost {
 
 	private validateRevision(
 		connection: ActiveConnection,
-		message: BridgeRequestMessage
+		message: InboundRequestMessage
 	): { code: BridgeErrorCodeType; message: string } | null {
 		// Observation can intentionally refresh a stale tree. All index-based
 		// actions must use the revision returned by the latest observation.
-		if (message.method === 'getBrowserState') return null
-		if (message.method === 'cleanUpHighlights') return null
+		if (message.type === 'request' && message.method === 'getBrowserState') return null
+		if (message.type === 'request' && message.method === 'cleanUpHighlights') return null
 		if (!connection.hasObserved) {
 			return {
 				code: BridgeErrorCode.STALE_TREE,
@@ -689,25 +833,57 @@ export class FrameBridgeHost {
 
 			pending.state = 'running'
 			connection.running = pending
-			const started: BridgeStartedMessage = {
-				protocol: IFRAME_BRIDGE_PROTOCOL,
-				version: BRIDGE_PROTOCOL_VERSION,
-				type: 'started',
-				sessionId: connection.sessionId,
-				frameInstanceId: this.frameInstanceId,
-				treeRevision: connection.treeRevision,
-				requestId: message.requestId,
-				method: message.method,
+			if (message.type === 'prepare-action') {
+				const prepared = await this.prepareAction(
+					connection,
+					message,
+					pending.abortController.signal
+				)
+				this.sendSuccess(connection, message, prepared)
+				return
 			}
-			this.postToPort(connection, started)
+
+			let actionPayload: unknown
+			if (message.type === 'commit-action') {
+				actionPayload = await this.consumePreparedAction(
+					connection,
+					message,
+					pending.abortController.signal
+				)
+			} else if (message.method !== 'getBrowserState' && message.method !== 'cleanUpHighlights') {
+				const inline = await this.evaluateAction(
+					connection,
+					message.method,
+					message.payload,
+					pending.abortController.signal
+				)
+				if (inline.decision === 'deny')
+					throw new BridgeHostError(
+						BridgeErrorCode.CAPABILITY_DENIED,
+						inline.reason ?? 'Action denied by child policy.'
+					)
+				if (inline.decision === 'approval_required')
+					throw new BridgeHostError(
+						BridgeErrorCode.APPROVAL_REQUIRED,
+						inline.reason ?? 'Action requires approval.'
+					)
+				actionPayload = message.payload
+			}
+
+			this.sendStarted(connection, message)
 			if (this.activeConnection !== connection) return
 
-			const result = await this.dispatchRequest(message, pending.abortController.signal)
+			const result = await this.dispatchRequest(
+				message.method,
+				message.type === 'request' ? message.payload : actionPayload,
+				pending.abortController.signal,
+				connection
+			)
 			if (pending.abortController.signal.aborted) {
 				throw new BridgeHostError(BridgeErrorCode.ABORTED, 'Bridge request was cancelled.')
 			}
 
-			if (message.method === 'getBrowserState') {
+			if (message.type === 'request' && message.method === 'getBrowserState') {
 				if (!isIndexedBrowserState(result)) {
 					throw new BridgeHostError(
 						BridgeErrorCode.INTERNAL_ERROR,
@@ -741,6 +917,243 @@ export class FrameBridgeHost {
 		}
 	}
 
+	private sendStarted(connection: ActiveConnection, message: InboundRequestMessage): void {
+		const started: BridgeStartedMessage = {
+			protocol: IFRAME_BRIDGE_PROTOCOL,
+			version: BRIDGE_PROTOCOL_VERSION,
+			type: 'started',
+			sessionId: connection.sessionId,
+			frameInstanceId: this.frameInstanceId,
+			treeRevision: connection.treeRevision,
+			requestId: message.requestId,
+			method: message.method,
+		}
+		this.postToPort(connection, started)
+	}
+
+	private async prepareAction(
+		connection: ActiveConnection,
+		message: BridgePrepareActionMessage,
+		signal: AbortSignal
+	): Promise<FrameBridgePreparedAction> {
+		this.sweepPreparedActions(connection)
+		const evaluation = await this.evaluateActionFromSummary(
+			connection,
+			message.method,
+			message.summary,
+			signal
+		)
+		const preparedActionId = makeFrameInstanceId()
+		if (evaluation.decision !== 'deny') {
+			connection.preparedActions.set(preparedActionId, {
+				preparedActionId,
+				method: message.method,
+				treeRevision: message.treeRevision,
+				payloadHash: message.payloadHash,
+				summary: message.summary,
+				target: evaluation.target,
+				fingerprint: evaluation.fingerprint,
+				decision: evaluation.decision,
+				reason: evaluation.reason,
+				expiresAt: Date.now() + this.preparedActionTtlMs,
+			})
+		}
+		return {
+			preparedActionId,
+			method: message.method,
+			payloadHash: message.payloadHash,
+			decision: evaluation.decision,
+			reason: evaluation.reason,
+			target: summarizeFrameBridgeTarget(evaluation.target),
+		}
+	}
+
+	private async consumePreparedAction(
+		connection: ActiveConnection,
+		message: BridgeCommitActionMessage,
+		signal: AbortSignal
+	): Promise<unknown> {
+		this.sweepPreparedActions(connection)
+		const prepared = connection.preparedActions.get(message.preparedActionId)
+		connection.preparedActions.delete(message.preparedActionId)
+		if (!prepared || prepared.expiresAt <= Date.now())
+			throw new BridgeHostError(
+				BridgeErrorCode.APPROVAL_DENIED,
+				'Prepared action is missing, expired, or already consumed.'
+			)
+		if (
+			prepared.method !== message.method ||
+			prepared.treeRevision !== message.treeRevision ||
+			prepared.treeRevision !== connection.treeRevision
+		)
+			throw new BridgeHostError(BridgeErrorCode.STALE_TREE, 'Prepared action tree is stale.')
+		if ((await hashFrameBridgePayload(message.payload)) !== prepared.payloadHash)
+			throw new BridgeHostError(BridgeErrorCode.APPROVAL_DENIED, 'Prepared action payload changed.')
+		if (
+			!sameActionSummary(
+				prepared.summary,
+				summarizeFrameBridgePayload(message.method, message.payload)
+			)
+		)
+			throw new BridgeHostError(
+				BridgeErrorCode.APPROVAL_DENIED,
+				'Prepared action summary does not match the committed payload.'
+			)
+		const current = await this.evaluateActionFromSummary(
+			connection,
+			message.method,
+			prepared.summary,
+			signal
+		)
+		if (current.target !== prepared.target || current.fingerprint !== prepared.fingerprint)
+			throw new BridgeHostError(BridgeErrorCode.STALE_TREE, 'Prepared action target changed.')
+		if (current.decision === 'deny')
+			throw new BridgeHostError(
+				BridgeErrorCode.CAPABILITY_DENIED,
+				current.reason ?? 'Action denied by child policy.'
+			)
+		if (
+			(prepared.decision === 'approval_required' || current.decision === 'approval_required') &&
+			!message.approved
+		)
+			throw new BridgeHostError(
+				BridgeErrorCode.APPROVAL_REQUIRED,
+				current.reason ?? prepared.reason ?? 'Action requires approval.'
+			)
+		return message.payload
+	}
+
+	private async evaluateAction(
+		connection: ActiveConnection,
+		method: FrameBridgeActionMethod,
+		payload: unknown,
+		signal: AbortSignal
+	): Promise<{
+		target: HTMLElement | undefined
+		fingerprint: string
+		decision: FrameBridgePolicyDecision
+		reason?: string
+	}> {
+		return this.evaluateActionFromSummary(
+			connection,
+			method,
+			summarizeFrameBridgePayload(method, payload),
+			signal
+		)
+	}
+
+	private async evaluateActionFromSummary(
+		connection: ActiveConnection,
+		method: FrameBridgeActionMethod,
+		summary: BridgeActionPayloadSummary,
+		signal: AbortSignal
+	): Promise<{
+		target: HTMLElement | undefined
+		fingerprint: string
+		decision: FrameBridgePolicyDecision
+		reason?: string
+	}> {
+		if (signal.aborted)
+			throw new BridgeHostError(BridgeErrorCode.ABORTED, 'Bridge request was cancelled.')
+		let target: HTMLElement | undefined
+		try {
+			target =
+				typeof summary.index === 'number'
+					? this.controller.getIndexedElementForPolicy(summary.index)
+					: undefined
+		} catch {
+			throw new BridgeHostError(BridgeErrorCode.STALE_TREE, 'Action target is unavailable.')
+		}
+		const fingerprint = fingerprintFrameBridgeTarget(target)
+		const before = this.evaluateBuiltInPolicy(target, method)
+		let custom: FrameBridgePolicyDecision = 'allow'
+		let reason: string | undefined
+		if (this.actionPolicy) {
+			const value = await this.actionPolicy({
+				method,
+				capability: METHOD_CAPABILITY[method],
+				summary,
+				target,
+				parentOrigin: connection.origin,
+				signal,
+			})
+			if (typeof value === 'boolean') custom = value ? 'allow' : 'deny'
+			else {
+				custom = normalizeActionPolicyDecision(value.decision)
+				reason = value.reason ? sanitizePolicyReason(value.reason) : undefined
+			}
+		}
+		if (signal.aborted)
+			throw new BridgeHostError(BridgeErrorCode.ABORTED, 'Bridge request was cancelled.')
+		let currentTarget: HTMLElement | undefined
+		try {
+			currentTarget =
+				typeof summary.index === 'number'
+					? this.controller.getIndexedElementForPolicy(summary.index)
+					: undefined
+		} catch {
+			throw new BridgeHostError(BridgeErrorCode.STALE_TREE, 'Action target is unavailable.')
+		}
+		if (currentTarget !== target || fingerprintFrameBridgeTarget(currentTarget) !== fingerprint)
+			throw new BridgeHostError(
+				BridgeErrorCode.STALE_TREE,
+				'Action target changed during child policy evaluation.'
+			)
+		const after = this.evaluateBuiltInPolicy(currentTarget, method)
+		return {
+			target,
+			fingerprint,
+			decision: combinePolicyDecisions(before, custom, after),
+			reason,
+		}
+	}
+
+	private evaluateBuiltInPolicy(
+		target: Element | undefined,
+		method: FrameBridgeActionMethod
+	): FrameBridgePolicyDecision {
+		if (!target) return 'allow'
+		let decision: FrameBridgePolicyDecision = 'allow'
+		let cursor: Element | null = target
+		while (cursor) {
+			const marker = cursor.getAttribute('data-page-agent-policy')
+			if (marker && marker !== 'allow' && marker !== 'confirm' && marker !== 'deny')
+				decision = 'deny'
+			else if (marker === 'deny') decision = 'deny'
+			else if (marker === 'confirm' && decision !== 'deny') decision = 'approval_required'
+			cursor = cursor.parentElement
+		}
+		if (method !== 'clickElement') return decision
+
+		const submitTarget = target.closest('button, input, form')
+		const submitTag = submitTarget?.tagName.toLowerCase()
+		const submitType = submitTarget?.getAttribute('type')?.toLowerCase()
+		if (
+			submitTag === 'form' ||
+			(submitTag === 'button' && (submitType === undefined || submitType === 'submit')) ||
+			(submitTag === 'input' && (submitType === 'submit' || submitType === 'image'))
+		)
+			decision = combinePolicyDecisions(decision, 'approval_required')
+
+		const anchor = target.closest('a[href]') as HTMLAnchorElement | null
+		if (anchor?.href) {
+			try {
+				if (new URL(anchor.href, target.ownerDocument.baseURI).origin !== connectionOrigin(target))
+					decision = combinePolicyDecisions(decision, 'approval_required')
+			} catch {
+				decision = 'deny'
+			}
+		}
+		return decision
+	}
+
+	private sweepPreparedActions(connection: ActiveConnection): void {
+		const now = Date.now()
+		for (const [id, prepared] of connection.preparedActions) {
+			if (prepared.expiresAt <= now) connection.preparedActions.delete(id)
+		}
+	}
+
 	private acquireExecutionSlot(): Promise<() => void> {
 		const previous = this.executionTail
 		let release!: () => void
@@ -751,34 +1164,58 @@ export class FrameBridgeHost {
 	}
 
 	private async dispatchRequest(
-		message: BridgeRequestMessage,
-		signal: AbortSignal
+		method: FrameBridgeMethod,
+		payload: unknown,
+		signal: AbortSignal,
+		connection: ActiveConnection
 	): Promise<IndexedBrowserState | PageActionResult | undefined> {
 		if (signal.aborted) {
 			throw new BridgeHostError(BridgeErrorCode.ABORTED, 'Bridge request was cancelled.')
 		}
-		switch (message.method) {
-			case 'getBrowserState':
-				return this.controller.getBrowserState({ signal: signal })
+		switch (method) {
+			case 'getBrowserState': {
+				const raw = await this.controller.getBrowserState({ signal })
+				if (!isIndexedBrowserState(raw))
+					throw new BridgeHostError(
+						BridgeErrorCode.INTERNAL_ERROR,
+						'Controller returned an invalid indexed browser state.'
+					)
+				const rawTreeRevision = raw.treeRevision
+				const rawIndices = [...raw.indices]
+				const transformed = this.transformState
+					? await this.transformState(raw, { parentOrigin: connection.origin, signal })
+					: raw
+				if (
+					!isIndexedBrowserState(transformed) ||
+					transformed.treeRevision !== rawTreeRevision ||
+					transformed.indices.length !== rawIndices.length ||
+					!transformed.indices.every((index, position) => index === rawIndices[position])
+				)
+					throw new BridgeHostError(
+						BridgeErrorCode.INTERNAL_ERROR,
+						'Transformed iframe state metadata is invalid.'
+					)
+				return transformed
+			}
 			case 'cleanUpHighlights':
 				await this.controller.cleanUpHighlights()
 				return undefined
 			case 'clickElement':
-				return this.controller.clickElement((message.payload as { index: number }).index, {
+				return this.controller.clickElement((payload as { index: number }).index, {
 					signal,
 				})
 			case 'inputText': {
-				const payload = message.payload as { index: number; text: string }
-				return this.controller.inputText(payload.index, payload.text, { signal })
+				const value = payload as { index: number; text: string }
+				return this.controller.inputText(value.index, value.text, { signal })
 			}
 			case 'selectOption': {
-				const payload = message.payload as { index: number; optionText: string }
-				return this.controller.selectOption(payload.index, payload.optionText, { signal })
+				const value = payload as { index: number; optionText: string }
+				return this.controller.selectOption(value.index, value.optionText, { signal })
 			}
 			case 'scroll':
-				return this.controller.scroll(message.payload as ScrollOptions, { signal })
+				return this.controller.scroll(payload as ScrollOptions, { signal })
 			case 'scrollHorizontally':
-				return this.controller.scrollHorizontally(message.payload as HorizontalScrollOptions, {
+				return this.controller.scrollHorizontally(payload as HorizontalScrollOptions, {
 					signal,
 				})
 		}
@@ -801,7 +1238,7 @@ export class FrameBridgeHost {
 
 	private sendSuccess(
 		connection: ActiveConnection,
-		request: BridgeRequestMessage,
+		request: InboundRequestMessage,
 		result: unknown
 	): void {
 		const response: BridgeSuccessResponseMessage = {
@@ -821,7 +1258,7 @@ export class FrameBridgeHost {
 
 	private sendError(
 		connection: ActiveConnection,
-		request: Pick<BridgeRequestMessage, 'requestId' | 'method'>,
+		request: Pick<InboundRequestMessage, 'requestId' | 'method'>,
 		code: BridgeErrorCodeType,
 		message: string
 	): void {
@@ -886,6 +1323,7 @@ export class FrameBridgeHost {
 		connection.pending.clear()
 		connection.queue.length = 0
 		connection.running = null
+		connection.preparedActions.clear()
 		connection.port.onmessage = null
 		if (connection.port.onmessageerror !== undefined) connection.port.onmessageerror = null
 		try {

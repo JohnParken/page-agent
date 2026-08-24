@@ -29,6 +29,8 @@ export {
 } from './FrameBridgeClient'
 export type {
 	FrameBridgeClientOptions,
+	FrameBridgeApprovalHandler,
+	FrameBridgeApprovalRequest,
 	FrameBridgeConnection,
 	FrameBridgePointerDetail,
 } from './FrameBridgeClient'
@@ -37,5 +39,11 @@ export type {
 	FrameBridgeHostOptions,
 	FrameBridgeHostWindow,
 	FrameBridgeMessagePort,
+	FrameBridgePolicyController,
+	FrameBridgeActionPolicy,
+	FrameBridgeActionPolicyDecision,
+	FrameBridgeActionPolicyRequest,
+	FrameBridgeTransformState,
+	FrameBridgeTransformStateContext,
 } from './FrameBridgeHost'
 export * from './protocol'

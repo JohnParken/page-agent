@@ -6,6 +6,8 @@ Page Agent 的可选 iframe bridge 允许父页面上的 Page Agent 观察并操
 
 这不是跨域 DOM 访问的绕过方案，也不是把任意 JavaScript 暴露给另一方的 RPC。父页面仍然拥有 Agent、LLM 和本地 controller；子页面只提供自己明确允许的 PageController 能力。
 
+> **当前 iframe 支持边界：** 普通 `PageController` 会把所有 iframe 的子文档视为不透明叶节点（opaque leaf），不会读取或操作同源 iframe 的内部内容，同源 iframe 也不会进入本协作 bridge。跨域 iframe 只有在子页面主动接入并运行兼容的 `FrameBridgeHost` 时才支持读取和操作。这个限制针对 iframe 子文档遍历；独立的 parent bridge（由 iframe 内的 Page Agent 操作父页面中明确授权的 root）不受影响。
+
 ## 1. 双方职责与消息流程
 
 | 参与方                 | 负责什么                                                                                                                                                                           | 不负责什么                                                                        |
@@ -177,7 +179,7 @@ bridge 的 origin 校验和能力白名单解决的是“谁能连接、能做�
 ### 只支持 direct frame，不递归 nested frame
 
 -   只处理父文档中 `frameSelector` 匹配的**直接子 iframe**。
--   同源 iframe 留给本地 DOM controller，不会通过 bridge 重复发现。
+-   同源 iframe 的子文档是 opaque leaf：普通本地 DOM controller 不会读取或操作其内部内容，同源 iframe 也不会通过本 bridge 处理。
 -   子 iframe 内嵌的孙 iframe（nested frame）不会被递归发现或自动聚合；如果业务确实需要，必须由各层分别设计并明确授权连接。
 -   iframe 文档节点在父页面的聚合状态中是 scroll-only 目标；click、input、select 必须指向子页面观察中具体元素的索引。
 
@@ -185,7 +187,7 @@ bridge 的 origin 校验和能力白名单解决的是“谁能连接、能做�
 
 -   `FrameBridgeHost.start()` 注册全局握手监听；同一 host 重复调用是幂等的。页面卸载、文档替换或应用销毁时调用 `dispose()`，以关闭端口、取消请求、移除监听器并（默认）释放传入的 controller。
 -   每次 iframe 导航都会使父侧 client 的连接和待处理请求失效；下一次观察时会重新握手。新文档应创建新的 `FrameBridgeHost` 实例，不要复用旧文档的 host 状态。
--   `FrameAwarePageController` 会发现后来动态加入且匹配 selector 的 iframe；被移除的 iframe 会被 dispose。导航到同源文档的 iframe 会退出 bridge，交给本地 controller 处理。
+-   `FrameAwarePageController` 会发现后来动态加入且匹配 selector 的跨域 iframe；被移除的 iframe 会被 dispose。导航到同源文档的 iframe 不会建立或继续 bridge 连接，且其子文档保持 opaque leaf，不交给本地 controller 遍历。
 -   元素索引和 `treeRevision` 只对最近一次观察有效。调用 `getBrowserState()`/`updateTree()` 刷新状态后，再把最新索引交给 Agent 或 action；不要缓存跨导航的索引。
 -   某个子 frame 未安装 host、被 CSP/X-Frame-Options 阻止、origin 不在白名单、握手/请求超时或端口断开时，该 frame 会标记为 unavailable；本地页面和其他可用协作 frame 仍可继续工作。
 -   如果应用需要区分降级原因，可监听 `bridgeerror`/`invalidate` 事件或检查稳定的 `FrameBridgeError.code`（如 `TIMEOUT`、`CONNECTION_CLOSED`、`STALE_TREE`、`CAPABILITY_DENIED`），记录错误码而不是把敏感状态写入日志。
@@ -347,7 +349,7 @@ TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt
 | `CONNECTION_CLOSED`、`FRAME_MISMATCH` 或导航后请求失败   | iframe 导航、被替换/移除，旧 `frameInstanceId` 或端口已失效                                                                      | 等待下一次观察自动重连；必要时销毁旧 host 并为新文档创建实例；不要复用旧 client                                                                                                 |
 | `STALE_TREE`                                             | 使用了旧观察中的元素索引或 `treeRevision`                                                                                        | 先 `await pageController.getBrowserState()`（或让 Agent 更新树），再使用返回内容中的新索引                                                                                      |
 | `INVALID_PAYLOAD`                                        | 索引不是非负整数；select/scroll 参数形状错误；把 frame document 索引用于 click/input/select                                      | 按 PageController API 传参；frame document 节点只用于 scroll，具体控件使用其子元素索引                                                                                          |
-| 子页面没有出现在聚合内容中                               | iframe 不是直接子节点；未匹配 `frameSelector`；是同源 frame；实际嵌套在另一个 frame 中                                           | 给目标 iframe 加专用 data 属性，使用显式 selector；确认它是跨域 direct child。nested frame 不会自动递归                                                                         |
+| 子页面没有出现在聚合内容中                               | iframe 不是直接子节点；未匹配 `frameSelector`；是同源 frame；实际嵌套在另一个 frame 中                                           | 同源 iframe 子文档暂不支持读取或操作，这是预期行为；跨域目标应加专用 data 属性，使用显式 selector，并确认它是跨域 direct child。nested frame 不会自动递归                       |
 | origin 显示为 `null`                                     | sandbox 缺少 `allow-same-origin`，或使用了 data/file/其他 opaque URL                                                             | 使用稳定的 HTTP(S) URL，并在确有需要时同时设置 `allow-scripts allow-same-origin`；不要把 `null` 加入白名单                                                                      |
 | “需要配置 CORS”或把 API key 放到 child                   | 把 postMessage bridge 与 fetch/CORS、LLM 配置混淆                                                                                | bridge 不需要 CORS；LLM 只在父页面配置。只有子页面自己发起跨域 API 请求时，才按该 API 的要求配置 CORS                                                                           |
 | `ERR_MODULE_NOT_FOUND`、`exports` 或 script tag 加载失败 | 使用了非 ESM 入口、深度导入 `src/` 或包版本不匹配                                                                                | 使用 NPM 安装和文档中的次级 ESM import；父子依赖版本保持兼容，重新构建后再验证                                                                                                  |
