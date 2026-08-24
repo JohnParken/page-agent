@@ -745,36 +745,56 @@ function isApprovalTargetSummary(value: unknown): boolean {
 	)
 }
 
+function isApprovalFrameSummary(value: unknown): boolean {
+	if (value === undefined) return true
+	if (
+		!isRecord(value) ||
+		!hasOnlyKeys(value, ['id', 'origin']) ||
+		!isIdentifier(value.id) ||
+		!isIdentifier(value.origin)
+	)
+		return false
+	try {
+		const url = new URL(value.origin)
+		return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value.origin
+	} catch {
+		return false
+	}
+}
+
 function isApprovalSummary(method: ParentControllerMethod, value: unknown): boolean {
 	if (!isRecord(value) || !isSafePayload(value)) return false
 	if (method === 'clickElement') {
 		return (
-			hasOnlyKeys(value, ['index', 'target']) &&
+			hasOnlyKeys(value, ['index', 'target', 'frame']) &&
 			isNonNegativeSafeInteger(value.index) &&
-			isApprovalTargetSummary(value.target)
+			isApprovalTargetSummary(value.target) &&
+			isApprovalFrameSummary(value.frame)
 		)
 	}
 	if (method === 'inputText') {
 		return (
-			hasOnlyKeys(value, ['index', 'textLength', 'target']) &&
+			hasOnlyKeys(value, ['index', 'textLength', 'target', 'frame']) &&
 			isNonNegativeSafeInteger(value.index) &&
 			isNonNegativeSafeInteger(value.textLength) &&
 			value.textLength <= PARENT_CONTROLLER_MAX_TEXT_LENGTH &&
-			isApprovalTargetSummary(value.target)
+			isApprovalTargetSummary(value.target) &&
+			isApprovalFrameSummary(value.frame)
 		)
 	}
 	if (method === 'selectOption') {
 		return (
-			hasOnlyKeys(value, ['index', 'optionLength', 'target']) &&
+			hasOnlyKeys(value, ['index', 'optionLength', 'target', 'frame']) &&
 			isNonNegativeSafeInteger(value.index) &&
 			isNonNegativeSafeInteger(value.optionLength) &&
 			value.optionLength <= PARENT_CONTROLLER_MAX_TEXT_LENGTH &&
-			isApprovalTargetSummary(value.target)
+			isApprovalTargetSummary(value.target) &&
+			isApprovalFrameSummary(value.frame)
 		)
 	}
 	if (method === 'scroll' || method === 'scrollHorizontally') {
 		return (
-			hasOnlyKeys(value, ['index', 'direction', 'pixels', 'numPages', 'target']) &&
+			hasOnlyKeys(value, ['index', 'direction', 'pixels', 'numPages', 'target', 'frame']) &&
 			(value.index === undefined || isNonNegativeSafeInteger(value.index)) &&
 			(value.direction === undefined || typeof value.direction === 'boolean') &&
 			(value.pixels === undefined ||
@@ -787,7 +807,8 @@ function isApprovalSummary(method: ParentControllerMethod, value: unknown): bool
 					Number.isFinite(value.numPages) &&
 					value.numPages >= 0 &&
 					value.numPages <= 100)) &&
-			isApprovalTargetSummary(value.target)
+			isApprovalTargetSummary(value.target) &&
+			isApprovalFrameSummary(value.frame)
 		)
 	}
 	return false

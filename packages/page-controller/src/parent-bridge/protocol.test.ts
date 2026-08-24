@@ -165,6 +165,35 @@ describe('parent-controller protocol guards', () => {
 		expect(
 			isParentControllerPortMessage({
 				...approvalBase,
+				method: 'inputText',
+				capability: 'input',
+				payload: {
+					index: 1,
+					textLength: 11,
+					target: { tag: 'input', label: 'Approval note' },
+					frame: { id: 'fulfilment-app', origin: 'https://fulfilment.example.test' },
+				},
+			})
+		).toBe(true)
+		expect(
+			isParentControllerPortMessage({
+				...approvalBase,
+				method: 'inputText',
+				capability: 'input',
+				payload: {
+					index: 1,
+					textLength: 11,
+					target: { tag: 'input' },
+					frame: {
+						id: 'fulfilment-app',
+						origin: 'https://fulfilment.example.test/path',
+					},
+				},
+			})
+		).toBe(false)
+		expect(
+			isParentControllerPortMessage({
+				...approvalBase,
 				method: 'selectOption',
 				capability: 'select',
 				payload: {
