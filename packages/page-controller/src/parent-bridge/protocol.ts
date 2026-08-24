@@ -109,7 +109,15 @@ export interface VerifiedEmbedPolicyClaims {
 	protocolVersionMax: number
 	nbf: number
 	exp: number
+	/** Optional, signed grants for explicitly configured child iframe proxies. */
+	childFrames?: VerifiedEmbedPolicyChildFrameGrant[]
 	[key: string]: unknown
+}
+
+export interface VerifiedEmbedPolicyChildFrameGrant {
+	id: string
+	origin: string
+	cap: string[]
 }
 
 /** Parent sends this offer before the child sends any bridge message. */

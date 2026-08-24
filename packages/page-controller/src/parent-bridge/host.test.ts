@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { CHILD_ORIGIN, createBridgeHarness } from '../iframe-bridge/bridge-test-helpers'
+
 import { ParentPageControllerHost } from './host'
+import { ParentFrameProxyController } from './ParentFrameProxyController'
 import {
 	PARENT_CONTROLLER_PROTOCOL,
 	PARENT_CONTROLLER_PROTOCOL_VERSION,
@@ -8,6 +11,7 @@ import {
 	ParentControllerErrorCode,
 } from './protocol'
 
+import type { VerifiedEmbedPolicyClaims } from './protocol'
 import type { ParentControllerMessagePort, ParentPageControllerHostOptions } from './types'
 
 class TestPort implements ParentControllerMessagePort {
@@ -168,6 +172,260 @@ function deferred<T>(): {
 }
 
 describe('ParentPageControllerHost lifecycle', () => {
+	it('chains child prepare policy with parent approval before committing a remote action', async () => {
+		const root = document.createElement('main')
+		const assistant = document.createElement('iframe')
+		document.body.append(root, assistant)
+		const harness = createBridgeHarness(root)
+		harness.setPreparedDecision('approval_required')
+		const actionPolicy = vi.fn(
+			async (
+				request: Parameters<NonNullable<ParentPageControllerHostOptions['actionPolicy']>>[0]
+			) => {
+				expect(request.target).toBeUndefined()
+				expect(request.targetContext).toMatchObject({
+					kind: 'child-frame',
+					frameId: 'child-1',
+					origin: CHILD_ORIGIN,
+					childTarget: { tag: 'button', label: 'Remote' },
+				})
+				return { decision: 'allow' as const }
+			}
+		)
+		const host = new ParentPageControllerHost({
+			...options(assistant, root),
+			capabilities: ['observe', 'click'],
+			actionPolicy,
+			window: harness.ownerWindow,
+			childFrames: {
+				targets: [
+					{
+						id: 'child-1',
+						iframe: harness.iframe,
+						origin: CHILD_ORIGIN,
+						capabilities: ['observe', 'click'],
+					},
+				],
+			},
+			requestTimeoutMs: 1_000,
+		})
+		const controller = host.controller as ParentFrameProxyController
+		controller.setAuthorizedFrames([
+			{
+				id: 'child-1',
+				origin: CHILD_ORIGIN,
+				capabilities: ['observe', 'click'],
+			},
+		])
+		vi.spyOn(controller.localController, 'getBrowserState').mockResolvedValue({
+			url: window.location.href,
+			title: 'Parent',
+			header: '',
+			content: '',
+			footer: '',
+			treeRevision: 1,
+			indices: [],
+		})
+		const state = await controller.getBrowserState()
+		expect(state.indices).toEqual([0, 1, 2])
+
+		const port = new TestPort()
+		const connection = {
+			policyId: 'policy-1',
+			sessionId: 'session-1',
+			hostInstanceId: 'host-1',
+			frameInstanceId: 'frame-1',
+			frameContext: {
+				parentOrigin: window.location.origin,
+				assistantOrigin: 'https://assistant.example.test',
+				directChild: true,
+				sandbox: [],
+				allowScripts: true,
+				allowSameOrigin: true,
+			},
+			capabilities: ['observe' as const, 'click' as const],
+			childFrameGrants: [
+				{
+					id: 'child-1',
+					origin: CHILD_ORIGIN,
+					capabilities: ['observe' as const, 'click' as const],
+				},
+			],
+			expiresAt: Math.floor(Date.now() / 1000) + 60,
+			seenRequestIds: new Set<string>(),
+			treeRevision: state.treeRevision,
+			state,
+		}
+		;(host as unknown as { connection: typeof connection }).connection = connection
+		;(host as unknown as { connectionGeneration: number }).connectionGeneration = 1
+		;(host as unknown as { port: TestPort }).port = port
+		const request = {
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'request' as const,
+			policyId: connection.policyId,
+			sessionId: connection.sessionId,
+			hostInstanceId: connection.hostInstanceId,
+			frameInstanceId: connection.frameInstanceId,
+			treeRevision: connection.treeRevision,
+			requestId: 'remote-click',
+			method: 'clickElement',
+			capability: 'click',
+			payload: { index: 0 },
+		}
+		;(
+			host as unknown as {
+				acceptRequest(message: typeof request): void
+			}
+		).acceptRequest(request)
+		await waitUntil(() =>
+			port.messages.some((message) => (message as { type?: string }).type === 'approval-required')
+		)
+		const approval = port.messages.find(
+			(message) => (message as { type?: string }).type === 'approval-required'
+		) as {
+			approvalId: string
+			payload: { frame: { id: string; origin: string }; target: { label: string } }
+		}
+		expect(approval.payload).toMatchObject({
+			frame: { id: 'child-1', origin: CHILD_ORIGIN },
+			target: { label: 'Remote' },
+		})
+		;(
+			host as unknown as {
+				handleApprovalResponse(message: Record<string, unknown>): void
+			}
+		).handleApprovalResponse({
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'approval-response',
+			policyId: connection.policyId,
+			sessionId: connection.sessionId,
+			hostInstanceId: connection.hostInstanceId,
+			frameInstanceId: connection.frameInstanceId,
+			treeRevision: connection.treeRevision,
+			requestId: request.requestId,
+			approvalId: approval.approvalId,
+			approved: true,
+		})
+		await waitUntil(() =>
+			port.messages.some(
+				(message) =>
+					(message as { type?: string; requestId?: string; ok?: boolean }).type === 'response' &&
+					(message as { requestId?: string }).requestId === request.requestId
+			)
+		)
+		expect(
+			port.messages.find(
+				(message) =>
+					(message as { type?: string; requestId?: string }).type === 'response' &&
+					(message as { requestId?: string }).requestId === request.requestId
+			)
+		).toMatchObject({ ok: true, result: { success: true } })
+		expect(actionPolicy).toHaveBeenCalledTimes(2)
+
+		harness.setPreparedDecision('deny')
+		const deniedRequest = { ...request, requestId: 'remote-click-denied' }
+		;(
+			host as unknown as {
+				acceptRequest(message: typeof deniedRequest): void
+			}
+		).acceptRequest(deniedRequest)
+		await waitUntil(() =>
+			port.messages.some(
+				(message) =>
+					(message as { type?: string; requestId?: string }).type === 'response' &&
+					(message as { requestId?: string }).requestId === deniedRequest.requestId
+			)
+		)
+		expect(
+			port.messages.find(
+				(message) =>
+					(message as { type?: string; requestId?: string }).type === 'response' &&
+					(message as { requestId?: string }).requestId === deniedRequest.requestId
+			)
+		).toMatchObject({
+			ok: false,
+			error: { code: ParentControllerErrorCode.CAPABILITY_DENIED },
+		})
+		expect(actionPolicy).toHaveBeenCalledTimes(3)
+		host.dispose()
+		harness.dispose()
+	})
+
+	it('accepts only configured exact-origin child frame grants from verified claims', () => {
+		const root = document.createElement('main')
+		const child = document.createElement('iframe')
+		child.src = 'https://child.example.test/app'
+		const assistant = document.createElement('iframe')
+		root.append(child)
+		document.body.append(root, assistant)
+		const host = new ParentPageControllerHost({
+			...options(assistant, root),
+			capabilities: ['observe', 'click'],
+			childFrames: {
+				targets: [
+					{
+						id: 'child-1',
+						iframe: child,
+						origin: 'https://child.example.test',
+						capabilities: ['observe', 'click'],
+					},
+				],
+			},
+		})
+		const claims: VerifiedEmbedPolicyClaims = {
+			jti: 'policy-1',
+			tenant: 'tenant-1',
+			user: 'user-1',
+			targetId: 'assistant-1',
+			scopeId: 'scope-1',
+			parentOrigin: window.location.origin,
+			assistantOrigin: 'https://assistant.example.test',
+			cap: ['observe', 'click'],
+			protocolVersionMin: 1,
+			protocolVersionMax: 1,
+			nbf: Math.floor(Date.now() / 1000) - 1,
+			exp: Math.floor(Date.now() / 1000) + 60,
+		}
+		const validate = (
+			host as unknown as {
+				validateChildFrameClaims(
+					value: VerifiedEmbedPolicyClaims
+				): readonly { id: string; origin: string; capabilities: readonly string[] }[] | false
+			}
+		).validateChildFrameClaims.bind(host)
+
+		expect(validate(claims)).toEqual([])
+		expect(
+			validate({
+				...claims,
+				childFrames: [
+					{ id: 'child-1', origin: 'https://child.example.test', cap: ['observe', 'click'] },
+				],
+			})
+		).toEqual([
+			{
+				id: 'child-1',
+				origin: 'https://child.example.test',
+				capabilities: ['observe', 'click'],
+			},
+		])
+		expect(
+			validate({
+				...claims,
+				childFrames: [{ id: 'child-1', origin: 'https://evil.example.test', cap: ['observe'] }],
+			})
+		).toBe(false)
+		expect(
+			validate({
+				...claims,
+				childFrames: [{ id: 'child-1', origin: 'https://child.example.test', cap: ['input'] }],
+			})
+		).toBe(false)
+		host.dispose()
+	})
+
 	it('keeps visual feedback disabled when visualFeedback is none', () => {
 		const root = document.createElement('div')
 		const iframe = document.createElement('iframe')
