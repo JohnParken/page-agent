@@ -208,6 +208,8 @@
 			const agentStatus = document.querySelector('#assistant-agent-status')
 			const agentResult = document.querySelector('#assistant-agent-result')
 			let pageAgent = null
+			const approvalRequests = []
+			window.reverseApprovalRequests = approvalRequests
 			const setStatus = (value) => {
 				if (status) status.textContent = value
 			}
@@ -284,7 +286,17 @@
 					'cleanup',
 					'visual',
 				],
-				onApprovalRequired: async () => true,
+				onApprovalRequired: async (request) => {
+					approvalRequests.push({
+						approvalId: request.approvalId,
+						requestId: request.requestId,
+						method: request.method,
+						capability: request.capability,
+						payload: request.payload,
+						reason: request.reason,
+					})
+					return true
+				},
 				authorizeOffer: async (offer, actualParentOrigin, signal) => {
 					if (
 						signal.aborted ||

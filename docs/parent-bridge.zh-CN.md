@@ -22,7 +22,8 @@ npm run demo:parent-bridge
 如果已经完成构建，只需启动 workspace server，可以执行
 `npm run demo:parent-bridge --workspace=@page-agent/e2e`。该命令启动现有的
 `packages/e2e/server.mjs`：父页面 origin 为 `127.0.0.1:4173` 和 `127.0.0.1:4175`，
-共享的助手 iframe origin 为 `127.0.0.1:4174`。在浏览器中打开任一父页面：
+共享的助手 iframe origin 为 `127.0.0.1:4174`，另有独立的协作业务 iframe origin
+`127.0.0.1:4176`。在浏览器中打开任一父页面：
 
 -   [http://127.0.0.1:4173/reverse-parent.html](http://127.0.0.1:4173/reverse-parent.html)
 -   [http://127.0.0.1:4175/reverse-parent.html](http://127.0.0.1:4175/reverse-parent.html)
@@ -31,7 +32,9 @@ npm run demo:parent-bridge
 固定显示，桌面端宽度约占视口 25%、高度约占 80%。iframe 连接成功后，点击 **Run
 PageAgent**，即可执行固定任务：点击父页面按钮，在 **Parent value** 输入 `PageAgent
 Demo`，并把 **Parent plan** 选择为 `Pro`。iframe 仍保留观察、点击、输入、选择、滚动和
-JavaScript 拒绝等低层手动控件，可直接练习 bridge。
+JavaScript 拒绝等低层手动控件，可直接练习 bridge。观察状态还会包含明确授权的业务
+iframe，因此可以完整验证助手（A）→ 父页代理（P）→ 业务 iframe（B）的路由，但 A 不会
+获得直接访问 B 的权限。
 
 助手中的 PageAgent IIFE 调用同源地址 `http://127.0.0.1:4174/api/tl`。fixture server
 把 `/api/tl/chatbbc/init_session` 和 `/api/tl/chatbbc/chat` 反向代理到
@@ -157,6 +160,72 @@ origin、`scopeId`、协议版本和能力。不要接受 URL 查询参数中的
 
 该 IIFE 只包含 `ParentPageControllerHost`、helper 和 `PageController`，不包含
 PageAgent Core、LLM 或 UI。
+
+## 代理明确授权的同级业务 iframe
+
+父页 host 可以选择把助手 iframe（A）的操作代理到一个主动协作的跨域业务 iframe（B）。
+父页面（P）始终是唯一代理：A 不能直接寻址同级 iframe，B 也不信任 A 的 origin。每个 B
+都必须显式配置，并要求应用自己的策略校验器返回完全匹配的签名授权：
+
+```ts
+const host = new ParentPageControllerHost({
+    // ...常规 iframe、origin、root、capability 和策略配置...
+    childFrames: {
+        targets: [
+            {
+                id: 'fulfilment-app',
+                iframe: () => document.querySelector<HTMLIFrameElement>('#fulfilment-frame'),
+                origin: 'https://fulfilment.example.com',
+                capabilities: ['observe', 'click', 'input', 'cleanup'],
+            },
+        ],
+    },
+    // 校验器必须原样返回签名覆盖的 claims，其中包括 childFrames；
+    // 禁止在验签完成后追加授权。
+    verifyEmbedPolicy: (policy, context) => verifySignedPolicy(policy, context),
+    actionPolicy: ({ target, targetContext }) => {
+        if (targetContext.kind === 'child-frame') {
+            return targetContext.frameId === 'fulfilment-app'
+                ? { decision: 'approval_required', reason: '操作履约应用' }
+                : { decision: 'deny' }
+        }
+        return target?.matches('[data-permission-change]')
+            ? { decision: 'approval_required' }
+            : { decision: 'allow' }
+    },
+})
+```
+
+对于上述配置，应用签发的 claims 应在执行 `verifySignedPolicy` 前就包含以下签名授权：
+
+```json
+{
+    "childFrames": [
+        {
+            "id": "fulfilment-app",
+            "origin": "https://fulfilment.example.com",
+            "cap": ["observe", "click", "input", "cleanup"]
+        }
+    ]
+}
+```
+
+B 必须运行兼容的 iframe bridge v2 `FrameBridgeHost`，只允许 P 的精确 origin，并仅声明
+它愿意接受的 capability。配置目标只有在 ID、精确 origin 和 capability 同时匹配已验证的
+`childFrames` claim、parent host capability 与 B 声明的 capability 时才可用。验签后再追加或
+修改 grant 会绕过业务授权，审查时必须拒绝。签名 claim
+未包含 `childFrames` 时会明确降级为仅操作父页本地 root。已配置但未获签名授权的 B 内容
+不会暴露；已授权但暂时不可连接的 B 只显示 unavailable 标记；未配置的 iframe 永不发现。
+
+操作 B 前，P 先用脱敏摘要请求 B prepare。B 的策略、父页元素策略与父页自定义
+`actionPolicy` 按 `deny` > `approval_required` > `allow` 合并；助手只为合并后的结果展示至多
+一次审批，然后 P commit B 的一次性 action token。A 和 P 都不能覆盖 B 的 deny，B 的
+prepare 策略通过前也不会收到原始输入。B reload 或替换后，连接、tree revision 与旧全局
+索引都会失效，必须重新观察后再操作。
+
+该代理只支持 trusted root 内明确配置的直接跨域 iframe；不会读取同源 iframe 子文档，不会
+递归发现任意 nested frame，也不会把助手变成通用 frame router。父页 CSP 的 `frame-src`
+需要同时允许 A 与 B；A、B 分别在 `frame-ancestors` 中允许 P。
 
 ## 子页面 adapter
 
@@ -367,7 +436,8 @@ helper 原样返回 `Response`，JSON 可调用 `response.json()`，SSE 可消�
     路径、查询串和凭证。
 -   双方校验 `event.origin`、`event.source`、协议版本、session/frame ID、challenge/
     nonce、payload schema 和 capability。
--   子页面响应设置 CSP `frame-ancestors`，父页面 CSP `frame-src` 只允许助手 origin；
+-   子页面响应设置 CSP `frame-ancestors`，父页面 CSP `frame-src` 只允许助手 origin 与每个
+    明确授权的业务 iframe origin；
     冲突的 `X-Frame-Options` 会在脚本运行前阻止嵌入。
 -   host 要求跨源助手 iframe 显式设置 `sandbox="allow-scripts allow-same-origin"`；
     未设置 sandbox 或增加其他 sandbox 权限都会被拒绝；同源 iframe 同时开启这两个 token
@@ -395,8 +465,9 @@ helper 原样返回 `Response`，JSON 可调用 `response.json()`，SSE 可消�
 
 父侧 `verifyEmbedPolicy` 至少应验证短期签名 token 的以下 claim：`jti`、精确的
 `parentOrigin`、`assistantOrigin`、`scopeId`、允许的 `cap` 列表、
-`protocolVersionMin`/`protocolVersionMax` 以及 `nbf`/`exp`。影响授权时再绑定 `tenant`、
-`user`、`targetId`。子侧执行 `authorizeOffer` 时，应把完整且已验证的 offer 交给可信后端；
+`protocolVersionMin`/`protocolVersionMax` 以及 `nbf`/`exp`。启用子 iframe 代理时，签名还
+必须绑定每个 `childFrames` 的 ID、精确 origin 与 capability 列表。影响授权时再绑定
+`tenant`、`user`、`targetId`。子侧执行 `authorizeOffer` 时，应把完整且已验证的 offer 交给可信后端；
 后端必须原子地一次性消费 `jti`，并把交换绑定到实际父 Origin 以及 offer 中的 `sessionId`、
 `challenge` 和 `frameInstanceId`。重复使用、过期、audience/origin 不符都应拒绝。Bearer
 凭证不要放进策略文本、iframe URL 或 postMessage payload，只把短期 authorization context

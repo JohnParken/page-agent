@@ -26,8 +26,9 @@ npm run demo:parent-bridge
 To start only the workspace server after an existing build, run
 `npm run demo:parent-bridge --workspace=@page-agent/e2e`. The server uses the
 existing `packages/e2e/server.mjs`, which listens on the parent origins
-`127.0.0.1:4173` and `127.0.0.1:4175` and the shared assistant iframe origin
-`127.0.0.1:4174`. Open either parent deployment in a browser:
+`127.0.0.1:4173` and `127.0.0.1:4175`, the shared assistant iframe origin
+`127.0.0.1:4174`, and a separate cooperative business iframe origin
+`127.0.0.1:4176`. Open either parent deployment in a browser:
 
 -   [http://127.0.0.1:4173/reverse-parent.html](http://127.0.0.1:4173/reverse-parent.html)
 -   [http://127.0.0.1:4175/reverse-parent.html](http://127.0.0.1:4175/reverse-parent.html)
@@ -39,7 +40,10 @@ viewport wide and 80% high. After the iframe connects, click **Run PageAgent**
 to execute the fixed task: click the parent button, enter `PageAgent Demo` in
 **Parent value**, and select `Pro` for **Parent plan**. The assistant also keeps
 the manual low-level observe, click, input, select, scroll, and
-JavaScript-denied controls for exercising the bridge directly.
+JavaScript-denied controls for exercising the bridge directly. The observed
+state also includes the explicitly authorized business iframe, so the demo can
+exercise the complete assistant (A) → parent broker (P) → business iframe (B)
+route without granting A direct access to B.
 
 The assistant's PageAgent IIFE calls the same-origin endpoint
 `http://127.0.0.1:4174/api/tl`. The fixture server reverse-proxies
@@ -182,6 +186,83 @@ intentionally limited to `ParentPageControllerHost`, the helper, and
     host.start()
 </script>
 ```
+
+## Broker an explicitly authorized sibling iframe
+
+The parent host can optionally broker operations from the assistant iframe (A)
+to a cooperative cross-origin business iframe (B). The parent page (P) remains
+the only broker: A cannot address a sibling iframe directly, and B never trusts
+A's origin. Configure each B iframe explicitly and require the application-owned
+policy verifier to return an exact signed grant:
+
+```ts
+const host = new ParentPageControllerHost({
+    // ...the regular iframe, origin, root, capability, and policy options...
+    childFrames: {
+        targets: [
+            {
+                id: 'fulfilment-app',
+                iframe: () => document.querySelector<HTMLIFrameElement>('#fulfilment-frame'),
+                origin: 'https://fulfilment.example.com',
+                capabilities: ['observe', 'click', 'input', 'cleanup'],
+            },
+        ],
+    },
+    // This verifier must return the exact claims covered by the signature,
+    // including childFrames. Never append grants after verification.
+    verifyEmbedPolicy: (policy, context) => verifySignedPolicy(policy, context),
+    actionPolicy: ({ target, targetContext }) => {
+        if (targetContext.kind === 'child-frame') {
+            return targetContext.frameId === 'fulfilment-app'
+                ? { decision: 'approval_required', reason: 'Operate fulfilment application' }
+                : { decision: 'deny' }
+        }
+        return target?.matches('[data-permission-change]')
+            ? { decision: 'approval_required' }
+            : { decision: 'allow' }
+    },
+})
+```
+
+For this configuration, the application-issued signed claims include this
+grant before `verifySignedPolicy` runs:
+
+```json
+{
+    "childFrames": [
+        {
+            "id": "fulfilment-app",
+            "origin": "https://fulfilment.example.com",
+            "cap": ["observe", "click", "input", "cleanup"]
+        }
+    ]
+}
+```
+
+B must run a compatible iframe bridge v2 `FrameBridgeHost`, allow P's exact
+origin, and advertise only the capabilities it accepts. A configured target is
+usable only when its ID, exact origin, and capabilities also match the verified
+`childFrames` claim, the parent host capabilities, and B's advertised
+capabilities. Appending or modifying grants after signature verification would
+bypass business authorization and must fail review. Omitting `childFrames` from verified claims is deliberately
+local-only. Configured-but-unauthorized B content is hidden; an authorized but
+temporarily unavailable B appears only as an unavailable marker. Unconfigured
+iframes are never discovered.
+
+Before a B mutation, P asks B to prepare the action with a sanitized summary.
+B's policy, the parent element policy, and the parent's `actionPolicy` are
+combined in the order `deny` > `approval_required` > `allow`. The assistant
+shows at most one approval for the combined decision, then P commits B's
+single-use action token. Neither A nor P can override B's deny, and raw input is
+not sent to B during its prepare policy evaluation. Reloading or replacing B
+invalidates its connection, tree revision, and old global indices; observe
+again before retrying.
+
+This proxy supports only explicitly configured direct cross-origin iframes
+inside the trusted root. It does not read same-origin iframe documents, recurse
+through arbitrary nested frames, or turn the assistant into a general-purpose
+frame router. The parent CSP must allow both A and B in `frame-src`; A and B
+must independently allow P in `frame-ancestors`.
 
 ## Child adapter
 
@@ -425,7 +506,8 @@ iframe URLs. The helper is optional and does not change the requirement that
     session/frame IDs, challenge/nonce, payload schema, and capability before
     every request. The child performs the symmetric checks.
 -   Set the child response's CSP `frame-ancestors` to the allowed parent
-    origin(s). Set the parent CSP `frame-src` to the assistant origin. A
+    origin(s). Set the parent CSP `frame-src` to the assistant origin and every
+    explicitly authorized business iframe origin. A
     conflicting `X-Frame-Options` header blocks the bridge before JavaScript
     runs.
 -   The host requires a cross-origin assistant iframe to carry a `sandbox`
@@ -467,8 +549,10 @@ iframe URLs. The helper is optional and does not change the requirement that
 The parent-side `verifyEmbedPolicy` callback should verify a short-lived signed
 token with at least these claims: `jti`, exact `parentOrigin`, exact
 `assistantOrigin`, `scopeId`, the allowed `cap` list,
-`protocolVersionMin`/`protocolVersionMax`, and `nbf`/`exp`. Bind `tenant`,
-`user`, and `targetId` when they affect authorization. During the child-side
+`protocolVersionMin`/`protocolVersionMax`, and `nbf`/`exp`. If child proxies are
+enabled, the signed token must also bind each `childFrames` ID, exact origin,
+and capability list. Bind `tenant`, `user`, and `targetId` when they affect
+authorization. During the child-side
 `authorizeOffer` callback, send the complete verified offer to the trusted
 backend. That backend should atomically consume `jti` once and bind the exchange
 to the actual parent origin plus the offer's `sessionId`, `challenge`, and
