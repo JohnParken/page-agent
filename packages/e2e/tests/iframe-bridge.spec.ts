@@ -621,9 +621,16 @@ test.describe('standalone iframe bridge IIFE bundles', () => {
 		expect((await controller(page)).content).toContain('id=child-button')
 		const frame = await cooperativeIifeFrame(page)
 		await frame.evaluate(() => window.location.reload())
-		const reloadedFrame = await cooperativeIifeFrame(page)
 		await expect
-			.poll(() => reloadedFrame.evaluate(() => Boolean((window as DemoWindow).frameBridgeHost)))
+			.poll(async () => {
+				const reloadedFrame = page
+					.frames()
+					.find((candidate) => candidate.url() === `${childOrigin}/iife-child.html`)
+				if (!reloadedFrame) return false
+				return reloadedFrame
+					.evaluate(() => Boolean((window as DemoWindow).frameBridgeHost))
+					.catch(() => false)
+			})
 			.toBe(true)
 		await expect.poll(async () => (await controller(page)).content).toContain('id=child-button')
 	})

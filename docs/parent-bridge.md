@@ -38,7 +38,9 @@ parent origins. The fixture presents a realistic operations dashboard, with the
 assistant fixed on the right as a floating panel approximately 25% of the
 viewport wide and 80% high. After the iframe connects, click **Run PageAgent**
 to execute the fixed task: click the parent button, enter `PageAgent Demo` in
-**Parent value**, and select `Pro` for **Parent plan**. The assistant also keeps
+**Parent value**, select `Pro` for **Parent plan**, then click **Release
+shipment** in the authorized business iframe and fill **Approval note** after a
+one-use approval. The assistant also keeps
 the manual low-level observe, click, input, select, scroll, and
 JavaScript-denied controls for exercising the bridge directly. The observed
 state also includes the explicitly authorized business iframe, so the demo can
@@ -54,7 +56,11 @@ proxy before running the demo, or override the upstream explicitly, for example
 uses native `fetch`, leaves `customFetch` unset, and needs no CORS because it
 never contacts the upstream directly.
 
-Automated tests set `PARENT_BRIDGE_DEMO_MOCK_TL=1` to replace the live upstream
+The fixture's bridge authorization uses a PageAgent-managed one-time opaque
+token, a same-origin P issuance route, and a same-origin A online-redemption
+route. Its static demo identity and in-memory token store are single-process
+test substitutes, not production storage. Automated tests set
+`PARENT_BRIDGE_DEMO_MOCK_TL=1` to replace the live upstream
 with deterministic click/input/select responses. The same flag can be used for
 an offline bridge-only demonstration, but it is test behavior rather than a
 model integration. Stop the server with `Ctrl-C` when finished, and do not
@@ -72,6 +78,7 @@ Use the narrow runtime entries in bundled applications:
 import { PageController } from '@page-agent/page-controller'
 import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bridge/host'
 import { ParentPageControllerAdapter } from '@page-agent/page-controller/parent-bridge/adapter'
+import { createManagedEmbedAuthClient } from '@page-agent/page-controller/parent-bridge/managed-auth'
 import '@page-agent/page-controller/parent-bridge/host.css'
 ```
 
@@ -93,6 +100,14 @@ import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bri
 const iframe = document.querySelector<HTMLIFrameElement>('iframe[data-page-agent-parent-bridge]')
 if (!iframe) throw new Error('Parent bridge iframe was not found')
 
+const managedAuth = createManagedEmbedAuthClient({
+    endpoint: '/api/parent-bridge/embed-policy',
+    expectedParentOrigin: window.location.origin,
+    expectedAssistantOrigin: 'https://assistant.example.com',
+    expectedScopeId: 'checkout',
+    allowedCapabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup', 'visual'],
+})
+
 const host = new ParentPageControllerHost({
     iframe,
     assistantOrigin: 'https://assistant.example.com',
@@ -105,17 +120,8 @@ const host = new ParentPageControllerHost({
         target?.matches('[data-checkout-payment], [data-permission-change]')
             ? { decision: 'approval_required', reason: 'Sensitive business action' }
             : { decision: 'allow' },
-    // Return a short-lived, application-issued embed policy token.
-    getEmbedPolicy: async () =>
-        await fetch('/api/parent-bridge/embed-policy', { credentials: 'same-origin' }).then(
-            (response) => {
-                if (!response.ok) throw new Error(`Policy request failed (${response.status})`)
-                return response.text()
-            }
-        ),
-    // Verify signature, audience, expiry, origin, scope, and capabilities on
-    // the server/application policy. Do not accept an arbitrary query string.
-    verifyEmbedPolicy: async (policy, context) => verifySignedPolicy(policy, context),
+    getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+    verifyEmbedPolicy: (policy, context) => managedAuth.verifyEmbedPolicy(policy, context),
 })
 
 host.start()
@@ -134,7 +140,7 @@ the cursor. Use `visualFeedback: 'none'` when the parent must add no feedback
 DOM.
 
 `PageAgentCore` integrations must preserve `observe` and `cleanup` through every
-capability gate: the Host options, the signed Policy claims, the child Adapter
+capability gate: the Host options, the verified Policy claims, the child Adapter
 request, and the capabilities returned by `authorizeOffer`. `cleanup` is
 separate from `observe`; without it, the Core's final cleanup request is denied
 and index highlights remain on the parent page. Add `visual` when using
@@ -161,18 +167,36 @@ click ripple. Target systems can brand it without changing runtime code:
 The arrow tip and ripple center both use the exact action coordinate. Avoid
 positive cursor offsets unless a custom shape has a different hotspot.
 
-`verifySignedPolicy` is application code. A typical policy binds `jti`, parent
-and assistant origins, `scopeId`, requested capabilities, protocol version, and
-`nbf`/`exp` to a short-lived signature. The bridge's origin/source/nonce checks
-are necessary but are not a substitute for your application authorization.
+By default, the managed-auth client accepts only the exact `{ policy, claims }`
+pair returned by its same-origin HTTPS endpoint, validates lifetime, parent/assistant origins,
+scope, protocol, and capabilities, and requires `verifyEmbedPolicy` to receive
+the same token and browser context. P's backend still performs user/business
+authorization at that endpoint, and A's backend must redeem the token online.
+For ES256/JWKS, replace these callbacks with the application signature verifier.
+The bridge's origin/source/nonce checks do not replace application authorization.
+
+For a controlled private-network HTTP deployment, both the Auth-side
+`OpaqueEmbedAuthorizationService` and the P-side `createManagedEmbedAuthClient`
+must explicitly set `allowInsecureHttp: true`; the default is `false`. This
+allows exact `http:` origins but does not encrypt transport or protect against
+an on-path attacker.
 
 The host may also be started from the standalone browser bundle. The bundle is
 intentionally limited to `ParentPageControllerHost`, the helper, and
-`PageController`; it does not contain PageAgent Core, an LLM client, or UI:
+`PageController`; it does not contain PageAgent Core, an LLM client, or UI. The
+managed-auth helper remains a separate version-pinned ESM entry:
 
 ```html
 <script src="/assets/page-agent-parent-host.iife.min.js"></script>
-<script>
+<script type="module">
+    import { createManagedEmbedAuthClient } from '/assets/parent-bridge/managed-auth.js'
+    const managedAuth = createManagedEmbedAuthClient({
+        endpoint: '/api/parent-bridge/embed-policy',
+        expectedParentOrigin: window.location.origin,
+        expectedAssistantOrigin: 'https://assistant.example.com',
+        expectedScopeId: 'checkout',
+        allowedCapabilities: ['observe', 'click', 'input', 'cleanup'],
+    })
     const iframe = document.querySelector('iframe[data-page-agent-parent-bridge]')
     const host = new PageAgentParentHost.ParentPageControllerHost({
         iframe,
@@ -180,8 +204,8 @@ intentionally limited to `ParentPageControllerHost`, the helper, and
         root: () => document.querySelector('#checkout-root'),
         scopeId: 'checkout',
         capabilities: ['observe', 'click', 'input', 'cleanup'],
-        getEmbedPolicy: async () => fetch('/api/parent-bridge/embed-policy').then((r) => r.text()),
-        verifyEmbedPolicy: (policy, context) => verifySignedPolicy(policy, context),
+        getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+        verifyEmbedPolicy: (policy, context) => managedAuth.verifyEmbedPolicy(policy, context),
     })
     host.start()
 </script>
@@ -193,7 +217,7 @@ The parent host can optionally broker operations from the assistant iframe (A)
 to a cooperative cross-origin business iframe (B). The parent page (P) remains
 the only broker: A cannot address a sibling iframe directly, and B never trusts
 A's origin. Configure each B iframe explicitly and require the application-owned
-policy verifier to return an exact signed grant:
+policy verifier to return an exact verified grant:
 
 ```ts
 const host = new ParentPageControllerHost({
@@ -208,9 +232,9 @@ const host = new ParentPageControllerHost({
             },
         ],
     },
-    // This verifier must return the exact claims covered by the signature,
+    // This verifier must return the exact claims covered by the authorization,
     // including childFrames. Never append grants after verification.
-    verifyEmbedPolicy: (policy, context) => verifySignedPolicy(policy, context),
+    verifyEmbedPolicy: (policy, context) => managedAuth.verifyEmbedPolicy(policy, context),
     actionPolicy: ({ target, targetContext }) => {
         if (targetContext.kind === 'child-frame') {
             return targetContext.frameId === 'fulfilment-app'
@@ -224,8 +248,8 @@ const host = new ParentPageControllerHost({
 })
 ```
 
-For this configuration, the application-issued signed claims include this
-grant before `verifySignedPolicy` runs:
+For this configuration, the authorization service's verified claims include this
+grant before `verifyEmbedPolicy` runs:
 
 ```json
 {
@@ -243,7 +267,7 @@ B must run a compatible iframe bridge v2 `FrameBridgeHost`, allow P's exact
 origin, and advertise only the capabilities it accepts. A configured target is
 usable only when its ID, exact origin, and capabilities also match the verified
 `childFrames` claim, the parent host capabilities, and B's advertised
-capabilities. Appending or modifying grants after signature verification would
+capabilities. Appending or modifying grants after policy verification would
 bypass business authorization and must fail review. Omitting `childFrames` from verified claims is deliberately
 local-only. Configured-but-unauthorized B content is hidden; an authorized but
 temporarily unavailable B appears only as an unavailable marker. Unconfigured
@@ -278,18 +302,46 @@ const adapter = new ParentPageControllerAdapter({
     requestedCapabilities: ['observe', 'click', 'input', 'cleanup', 'visual'],
     authorizeOffer: async (offer, actualParentOrigin, signal) => {
         if (signal.aborted || actualParentOrigin !== expectedParentOrigin) return undefined
-        // Verify the signed offer/policy with the assistant application's
-        // policy service, then return its AuthorizedParent value.
+        const response = await fetch('/api/parent-bridge/authorize-offer', {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            signal,
+            body: JSON.stringify({
+                policy: offer.policy,
+                actualParentOrigin,
+                offer: {
+                    policyId: offer.policyId,
+                    sessionId: offer.sessionId,
+                    challenge: offer.challenge,
+                    frameInstanceId: offer.frameInstanceId,
+                    hostInstanceId: offer.hostInstanceId,
+                    capabilities: offer.capabilities,
+                },
+            }),
+        })
+        if (!response.ok) return undefined
+        const { authorizationContext } = await response.json()
+        if (
+            authorizationContext.policyId !== offer.policyId ||
+            authorizationContext.parentOrigin !== actualParentOrigin ||
+            authorizationContext.assistantOrigin !== window.location.origin ||
+            authorizationContext.sessionId !== offer.sessionId ||
+            authorizationContext.challenge !== offer.challenge ||
+            authorizationContext.frameInstanceId !== offer.frameInstanceId ||
+            authorizationContext.hostInstanceId !== offer.hostInstanceId ||
+            authorizationContext.capabilities.length !== offer.capabilities.length ||
+            authorizationContext.capabilities.some(
+                (capability: string, index: number) => capability !== offer.capabilities[index]
+            )
+        )
+            return undefined
         return {
             parentOrigin: actualParentOrigin,
             policyId: offer.policyId,
             capabilities: offer.capabilities,
-            authorizationContext: {
-                // The Tl backend is served by the assistant origin. Keep this URL
-                // absolute so the endpoint origin is explicit and auditable.
-                tlEndpoint: new URL('/api/tl', window.location.origin).toString(),
-                model: 'assistant-model',
-            },
+            authorizationContext,
         }
     },
     onApprovalRequired: async (request) => {
@@ -321,16 +373,16 @@ instance, and challenge are valid.
 
 ### Policy, rules, and one-use approvals
 
-Treat `verifyEmbedPolicy` and the signed policy as the authority. An optional
+Treat `verifyEmbedPolicy` and the verified policy as the authority. An optional
 `data-page-agent-policy="deny|confirm|allow"` attribute is a local business-risk
 marker: map `confirm` to `approval_required`, and apply `deny > confirm >
 allow`. It must never carry a `policyId`, origin, bearer token, or capability
-grant. The signed policy's `jti` is a separate replay-control value. Configure
+grant. The policy's `jti` is a separate replay-control value. Configure
 delete/payment/permission-changing targets explicitly with selectors and
 `actionPolicy`; never infer risk from a button's visible label.
 
 Apply checks in this order for every request: authenticated session and exact
-origin/source; protocol/session/frame/challenge and policy freshness; signed
+origin/source; protocol/session/frame/challenge and policy freshness; verified
 capabilities and the requested method; root containment and current tree
 revision; then the host `actionPolicy`. The policy may only narrow access:
 `deny` wins over `approval_required`, which wins over `allow`; a child approval
@@ -500,8 +552,9 @@ iframe URLs. The helper is optional and does not change the requirement that
 
 ## Deployment and security checklist
 
--   Serve both pages over HTTPS. Use exact scheme/host/port origins; reject
-    `*`, `null`, paths, query strings, and credentials in allow-lists.
+-   Use HTTPS on public or untrusted networks. Controlled private-network HTTP
+    requires the explicit `allowInsecureHttp` opt-in. Use exact scheme/host/port
+    origins; reject `*`, `null`, paths, query strings, and credentials in allow-lists.
 -   The parent host validates `event.origin`, `event.source`, protocol version,
     session/frame IDs, challenge/nonce, payload schema, and capability before
     every request. The child performs the symmetric checks.
@@ -544,22 +597,115 @@ iframe URLs. The helper is optional and does not change the requirement that
     dispose the old host/adapter and reject old sessions. Never retry a
     mutating action after `OUTCOME_UNKNOWN` without re-observing the page.
 
-### Signed policy and backend exchange
+### Recommended: PageAgent-managed one-time opaque tokens
 
-The parent-side `verifyEmbedPolicy` callback should verify a short-lived signed
-token with at least these claims: `jti`, exact `parentOrigin`, exact
-`assistantOrigin`, `scopeId`, the allowed `cap` list,
-`protocolVersionMin`/`protocolVersionMax`, and `nbf`/`exp`. If child proxies are
-enabled, the signed token must also bind each `childFrames` ID, exact origin,
-and capability list. Bind `tenant`, `user`, and `targetId` when they affect
-authorization. During the child-side
-`authorizeOffer` callback, send the complete verified offer to the trusted
-backend. That backend should atomically consume `jti` once and bind the exchange
-to the actual parent origin plus the offer's `sessionId`, `challenge`, and
-`frameInstanceId`; a second use, expiry, audience mismatch, or origin mismatch
-must fail closed. Keep bearer credentials out of policy text, iframe URLs, and
-postMessage payloads; return only short-lived authorization context to the
-application callback.
+When P (the parent), A (the PageAgent assistant), and B (a cooperative business
+iframe) belong to one company or security domain, prefer a PageAgent-managed
+authorization service that issues a one-use opaque token and redeems it online
+from A's backend. The token is an unstructured high-entropy random value, not a
+JWT. The service stores only its SHA-256 digest, short-lived claims, and expiry.
+The full token reaches P through a same-origin HTTPS endpoint and is carried in
+the existing bridge offer as `policy`. Never place it in an iframe URL, log,
+localStorage, analytics event, or error message.
+
+The responsibility split is deliberate:
+
+-   P's backend authenticates its user and applies tenant/business ACLs before
+    asking the PageAgent authorization service for `{ policy, claims }`.
+    PageAgent cannot decide P's order, workflow, or user permissions.
+-   P's frontend only calls that same-origin endpoint and wires the managed-auth
+    helper's `getEmbedPolicy` and `verifyEmbedPolicy` into the Host. It does not
+    hold a private key, implement JOSE, or maintain JWKS.
+-   The authorization service generates at least 256 random bits, persists only
+    the digest, and records `jti`, exact parent/assistant origins, scope,
+    capabilities, protocol range, `nbf`/`exp`, tenant, user, target, and any
+    approved `childFrames` grants.
+-   A's `authorizeOffer` sends the token, the browser-observed parent origin,
+    and the complete offer to A's same-origin backend. That backend atomically
+    consumes the token, checks claims against `policyId`, origin, and
+    capabilities, and binds `sessionId`, `challenge`, `frameInstanceId`, and
+    `hostInstanceId` into a short-lived authorization context. Replay, expiry,
+    tampering, and capability escalation fail closed.
+-   B never sees the token. P brokers only the B targets present in verified
+    claims and continues enforcing B's origin, capability, action-policy, and
+    approval gates.
+
+The PageAgent authorization service can use the reusable issuer/exchange entry
+directly. The in-memory store below demonstrates the API only:
+
+```ts
+import {
+    InMemoryOpaqueEmbedAuthorizationStore,
+    OpaqueEmbedAuthorizationService,
+} from '@page-agent/page-controller/parent-bridge/managed-auth'
+
+const authority = new OpaqueEmbedAuthorizationService({
+    store: new InMemoryOpaqueEmbedAuthorizationStore(), // replace in production
+    assistantOrigin: 'https://assistant.example.com',
+    allowedParentOrigins: ['https://p.example.com'],
+    scopeId: 'checkout',
+    allowedCapabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
+    ttlSeconds: 120,
+})
+
+// P's same-origin POST route: authenticate and apply P's ACL first.
+const grant = await authority.issue({
+    tenant: currentTenant.id,
+    user: currentUser.id,
+    targetId: checkout.id,
+    scopeId: 'checkout',
+    parentOrigin: 'https://p.example.com',
+    assistantOrigin: 'https://assistant.example.com',
+    capabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
+})
+// Return JSON `{ policy, claims }` with Cache-Control: no-store.
+
+// A's same-origin POST route receives the browser-observed origin and full offer.
+const authorizationContext = await authority.exchange({ policy, actualParentOrigin, offer })
+```
+
+A's `authorizeOffer` frontend maps only the returned context into
+`AuthorizedParent` and rechecks exact policy ID, parent/assistant origins,
+session, challenge, frame/host instances, and capabilities. HTTP 200 alone is
+not sufficient binding.
+
+P therefore needs only a small same-origin backend route and frontend wiring.
+Production token storage must use Redis, a transactional database, or an
+equivalent shared store with atomic get-and-delete/compare-and-delete semantics.
+The library's in-memory store is for single-process development/tests only and
+does not prevent replay across replicas. Return `Cache-Control: no-store`, use
+HTTPS plus controlled CORS/CSRF, cap request sizes, and do not expose raw
+authorization context to the LLM or UI.
+
+This scheme authorizes a temporary, precisely scoped delegation from P to A and
+limits replay after token theft. It does not replace P login, business ACLs, XSS
+defenses, CSP/sandbox, bridge origin/source validation, or approval for
+sensitive actions. Script execution already trusted by P remains inside the
+trust boundary, so Host roots, capabilities, and `actionPolicy` must still be
+minimal.
+
+### Comparison with ES256/JWKS and upgrade path
+
+| Dimension      | One-time opaque token (current recommendation)             | ES256/JWKS (cross-system upgrade)                                         |
+| -------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Trust model    | P/A/B share a company and online authorization service     | P/A belong to independent systems or organizations                        |
+| P integration  | Same-origin route + managed-auth helper; no cryptography   | JWT/JWS verification, issuer/audience, JWKS cache/rotation                |
+| A verification | Online redemption with atomic consume per handshake        | Local signature verification; shared `jti` store still recommended        |
+| Revocation     | Server record can be rejected immediately                  | Issued tokens usually survive until expiry; use short TTL/revocation      |
+| Availability   | Depends on the service and shared store                    | Can verify offline with cached JWKS; scales across regions                |
+| Key operations | No asymmetric distribution; protect store/service identity | Protect private keys, publish JWKS, constrain algorithms and rotate `kid` |
+| Token contents | Opaque; still a bearer secret if leaked                    | Claims are readable and signed; still a bearer secret if leaked           |
+| Audit          | Issue and redemption naturally pass through one service    | Correlate issuer and verifier logs by `jti`                               |
+
+An ES256/JWKS migration keeps the Host/Adapter protocol, claims schema, exact
+origin/capability checks, and `authorizeOffer` contract. Replace only the issuer
+and verifier: P's backend issues a short-lived ES256 JWS, and P/A verify a pinned
+issuer/audience through HTTPS JWKS. Reject `alg=none`, algorithm confusion,
+unknown `kid`, and oversized key sets. If strict one-use authorization remains a
+requirement, atomically consume `jti` in Redis/a database after signature
+verification: a signature does not prevent replay. During migration, route by
+an explicit version or issuer rather than accepting an ambiguous arbitrary
+token, and set an observable retirement date for the opaque path.
 
 ### Versioned IIFE deployment and CSS
 

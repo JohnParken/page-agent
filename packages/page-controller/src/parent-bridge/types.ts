@@ -205,7 +205,7 @@ export type ParentControllerVerifyEmbedPolicy = (
 ) => VerifiedEmbedPolicyClaims | false | null | Promise<VerifiedEmbedPolicyClaims | false | null>
 
 export interface ParentControllerChildFrameTarget {
-	/** Stable identifier matched exactly against the signed childFrames claim. */
+	/** Stable identifier matched exactly against the verified childFrames claim. */
 	readonly id: string
 	/** Direct iframe element, or a resolver for applications that replace it on navigation. */
 	readonly iframe: HTMLIFrameElement | (() => HTMLIFrameElement | null)

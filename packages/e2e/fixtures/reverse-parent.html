@@ -23,6 +23,9 @@
 				--panel: #ffffff;
 				--brand: #315efb;
 				--success: #14956a;
+				--origin-parent: #2563eb;
+				--origin-assistant: #7c3aed;
+				--origin-business: #059669;
 			}
 
 			* {
@@ -36,6 +39,72 @@
 				padding: clamp(1rem, 2.5vw, 2.5rem);
 				background: radial-gradient(circle at 10% 0%, rgba(49, 94, 251, 0.08), transparent 28rem),
 					#f4f7fb;
+				box-shadow: inset 0 0 0 5px rgb(37 99 235 / 72%);
+			}
+
+			.origin-legend {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.55rem;
+				margin-bottom: 1rem;
+			}
+
+			.origin-chip {
+				--origin-color: #667085;
+				display: inline-flex;
+				align-items: center;
+				gap: 0.55rem;
+				min-width: 0;
+				padding: 0.5rem 0.7rem;
+				border: 1px solid var(--origin-color);
+				border-radius: 0.7rem;
+				font-size: 0.72rem;
+				line-height: 1.25;
+				color: var(--origin-color);
+			}
+
+			.origin-chip strong,
+			.origin-chip small {
+				display: block;
+			}
+
+			.origin-chip small {
+				margin-top: 0.12rem;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				font-size: 0.66rem;
+				opacity: 0.82;
+			}
+
+			.origin-key {
+				display: grid;
+				width: 1.65rem;
+				height: 1.65rem;
+				flex: 0 0 auto;
+				place-items: center;
+				border-radius: 0.5rem;
+				background: var(--origin-color);
+				color: #ffffff;
+				font-size: 0.78rem;
+				font-weight: 800;
+			}
+
+			.origin-chip--parent {
+				--origin-color: var(--origin-parent);
+				background: #eff6ff;
+			}
+
+			.origin-chip--assistant {
+				--origin-color: var(--origin-assistant);
+				background: #f5f3ff;
+			}
+
+			.origin-chip--business {
+				--origin-color: var(--origin-business);
+				background: #ecfdf5;
+			}
+
+			.origin-chip--compact {
+				padding: 0.38rem 0.55rem;
 			}
 
 			button,
@@ -51,7 +120,6 @@
 			.page-shell {
 				width: min(100%, 1320px);
 				margin: 0 auto;
-				padding-right: clamp(19rem, 27vw, 25rem);
 			}
 
 			.page-header,
@@ -388,6 +456,8 @@
 			.business-frame-panel {
 				display: grid;
 				gap: 0.65rem;
+				border-color: rgb(5 150 105 / 38%);
+				box-shadow: inset 4px 0 0 rgb(5 150 105 / 78%);
 			}
 
 			.business-frame-panel h3,
@@ -397,28 +467,28 @@
 
 			.business-frame {
 				width: 100%;
-				height: 210px;
-				border: 1px solid #ccd8eb;
+				height: 255px;
+				border: 3px solid rgb(5 150 105 / 78%);
 				border-radius: 0.75rem;
-				background: #f4f8ff;
+				background: #ecfdf5;
 			}
 
 			#assistant-frame {
 				position: fixed;
-				top: 50%;
+				top: auto;
 				right: clamp(0.8rem, 2vw, 2rem);
+				bottom: clamp(0.8rem, 2vw, 2rem);
 				z-index: 1000;
 				display: block;
-				width: clamp(300px, 25vw, 430px);
-				height: min(80vh, calc(100vh - 2rem));
+				width: min(420px, calc(100vw - 2rem));
+				height: min(80vh, 720px);
 				min-height: 420px;
-				border: 1px solid #d7deec;
+				border: 3px solid rgb(124 58 237 / 82%);
 				border-radius: 1.1rem;
-				background: #ffffff;
+				background: #f5f3ff;
 				box-shadow:
-					0 1.5rem 4rem rgba(25, 39, 67, 0.24),
+					0 1.5rem 4rem rgb(76 29 149 / 24%),
 					0 0.3rem 1rem rgba(25, 39, 67, 0.08);
-				transform: translateY(-50%);
 			}
 
 			.probe-frame {
@@ -434,10 +504,6 @@
 			}
 
 			@media (max-width: 980px) {
-				.page-shell {
-					padding-right: clamp(19rem, 31vw, 22rem);
-				}
-
 				.metric-grid {
 					grid-template-columns: repeat(2, minmax(0, 1fr));
 				}
@@ -445,17 +511,9 @@
 				.workspace-grid {
 					grid-template-columns: 1fr;
 				}
-
-				#assistant-frame {
-					width: min(31vw, 340px);
-				}
 			}
 
 			@media (max-width: 700px) {
-				.page-shell {
-					padding-right: 0;
-				}
-
 				.page-header,
 				.root-heading {
 					flex-direction: column;
@@ -467,13 +525,11 @@
 				}
 
 				#assistant-frame {
-					top: auto;
 					right: 4vw;
 					bottom: 1rem;
 					width: 92vw;
 					height: min(80vh, calc(100vh - 2rem));
 					min-height: 360px;
-					transform: none;
 				}
 
 				.control-grid {
@@ -500,6 +556,29 @@
 	</head>
 	<body>
 		<div class="page-shell" data-testid="parent-demo-dashboard">
+			<div class="origin-legend" aria-label="Cross-origin demo map">
+				<div class="origin-chip origin-chip--parent" data-testid="parent-origin-marker">
+					<span class="origin-key">P</span>
+					<span>
+						<strong>Parent host page</strong>
+						<small id="parent-origin-value">current parent origin</small>
+					</span>
+				</div>
+				<div class="origin-chip origin-chip--assistant">
+					<span class="origin-key">A</span>
+					<span>
+						<strong>Assistant iframe</strong>
+						<small>http://127.0.0.1:4174</small>
+					</span>
+				</div>
+				<div class="origin-chip origin-chip--business">
+					<span class="origin-key">B</span>
+					<span>
+						<strong>Business iframe</strong>
+						<small>http://127.0.0.1:4176</small>
+					</span>
+				</div>
+			</div>
 			<header class="page-header">
 				<div>
 					<span class="eyebrow">Northstar Commerce</span>
@@ -660,9 +739,21 @@
 					</section>
 
 					<section class="panel business-frame-panel" aria-labelledby="business-frame-title">
-						<div>
-							<h3 id="business-frame-title">Brokered fulfilment application</h3>
-							<p>Served from a third origin and reachable only through the parent host.</p>
+						<div class="panel-heading">
+							<div>
+								<h3 id="business-frame-title">Brokered fulfilment application</h3>
+								<p>Served from a third origin and reachable only through the parent host.</p>
+							</div>
+							<div
+								class="origin-chip origin-chip--business origin-chip--compact"
+								data-testid="business-origin-summary"
+							>
+								<span class="origin-key">B</span>
+								<span>
+									<strong>Brokered child</strong>
+									<small>127.0.0.1:4176</small>
+								</span>
+							</div>
 						</div>
 						<iframe
 							id="business-frame"
@@ -705,23 +796,26 @@
 
 		<script src="/controller-iife/page-agent-parent-host.iife.min.js"></script>
 		<script type="module">
+			import { createManagedEmbedAuthClient } from '/lib/parent-bridge/managed-auth.js'
+
 			if (!window.PageAgentParentHost) throw new Error('PageAgentParentHost is unavailable')
 			const { ParentPageControllerHost } = window.PageAgentParentHost
 
 			const params = new URLSearchParams(location.search)
 			const childOrigin = 'http://127.0.0.1:4174'
 			const businessOrigin = 'http://127.0.0.1:4176'
+			document.querySelector('#parent-origin-value').textContent = location.origin
 			const authorizeBusiness = params.get('authorizeBusiness') !== 'false'
 			const childExpectedParentOrigin = params.get('childExpectedParentOrigin') || location.origin
 			const childPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
 				childExpectedParentOrigin
-			)}&role=target&policy=reverse-e2e-policy`
+			)}&role=target`
 			const siblingPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
 				location.origin
-			)}&role=sibling&policy=reverse-e2e-policy`
+			)}&role=sibling`
 			const wrongPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
 				location.origin
-			)}&role=wrong-source&policy=reverse-e2e-policy`
+			)}&role=wrong-source`
 			document.querySelector('#assistant-frame').src = `${childOrigin}${childPath}`
 			document.querySelector('#sibling-frame').src = `${childOrigin}${siblingPath}`
 			document.querySelector('#wrong-origin-frame').src = `${childOrigin}${wrongPath}`
@@ -729,7 +823,23 @@
 				`${businessOrigin}/reverse-business-child.html?role=authorized`
 			document.querySelector('#unconfigured-business-frame').src =
 				`${businessOrigin}/reverse-business-child.html?role=unauthorized`
-			let policySequence = 0
+			const managedAuth = createManagedEmbedAuthClient({
+				endpoint: `/api/parent-bridge/embed-policy?authorizeBusiness=${authorizeBusiness}`,
+				allowInsecureHttp: true,
+				expectedParentOrigin: location.origin,
+				expectedAssistantOrigin: childOrigin,
+				expectedScopeId: 'reverse-e2e-root',
+				allowedCapabilities: [
+					'observe',
+					'click',
+					'input',
+					'select',
+					'scroll',
+					'scrollHorizontally',
+					'cleanup',
+					'visual',
+				],
+			})
 
 			const host = new ParentPageControllerHost({
 				iframe: document.querySelector('#assistant-frame'),
@@ -764,45 +874,12 @@
 					requestTimeoutMs: 2_000,
 				},
 				visualFeedback: 'non-blocking',
-				getEmbedPolicy: async () => 'reverse-e2e-policy',
-				verifyEmbedPolicy: (policy, context) => {
-					if (policy !== 'reverse-e2e-policy') return false
-					const now = Math.floor(Date.now() / 1_000)
-					return {
-						jti: `reverse-e2e-policy-jti-${++policySequence}`,
-						tenant: 'e2e-tenant',
-						user: 'e2e-user',
-						targetId: 'reverse-e2e-target',
+				getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+				verifyEmbedPolicy: (policy, context) =>
+					managedAuth.verifyEmbedPolicy(policy, {
+						...context,
 						scopeId: 'reverse-e2e-root',
-						parentOrigin: context.actualParentOrigin,
-						assistantOrigin: context.frameContext.assistantOrigin,
-						cap: [
-							'observe',
-							'click',
-							'input',
-							'select',
-							'scroll',
-							'scrollHorizontally',
-							'cleanup',
-							'visual',
-						],
-						protocolVersionMin: 1,
-						protocolVersionMax: 1,
-						nbf: now - 30,
-						exp: now + 300,
-						...(authorizeBusiness
-							? {
-									childFrames: [
-										{
-											id: 'fulfilment-app',
-											origin: businessOrigin,
-											cap: ['observe', 'click', 'input', 'cleanup'],
-										},
-									],
-								}
-							: {}),
-					}
-				},
+					}),
 			})
 			host.start()
 

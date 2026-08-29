@@ -39,7 +39,7 @@ function assertPageAgentCapabilities(options: ParentAdapterOptions): void {
 	if (missing.length > 0) {
 		throw new TypeError(
 			`PageAgent parent adapter requires capabilities: ${missing.join(', ')}. ` +
-				'The parent host and signed policy must grant the same capabilities.'
+				'The parent host and verified policy must grant the same capabilities.'
 		)
 	}
 }

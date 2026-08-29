@@ -25,6 +25,10 @@
             "types": "./src/parent-bridge/adapter.ts",
             "default": "./src/parent-bridge/adapter.ts"
         },
+        "./parent-bridge/managed-auth": {
+            "types": "./src/parent-bridge/managed-auth.ts",
+            "default": "./src/parent-bridge/managed-auth.ts"
+        },
         "./parent-bridge/host.css": {
             "default": "./src/browser/parent-host.css"
         }
@@ -58,6 +62,11 @@
                 "types": "./dist/lib/parent-bridge/adapter.d.ts",
                 "import": "./dist/lib/parent-bridge/adapter.js",
                 "default": "./dist/lib/parent-bridge/adapter.js"
+            },
+            "./parent-bridge/managed-auth": {
+                "types": "./dist/lib/parent-bridge/managed-auth.d.ts",
+                "import": "./dist/lib/parent-bridge/managed-auth.js",
+                "default": "./dist/lib/parent-bridge/managed-auth.js"
             },
             "./parent-bridge/host.css": {
                 "default": "./dist/iife/page-agent-parent-host.css"

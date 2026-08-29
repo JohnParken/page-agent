@@ -162,7 +162,7 @@ function isFrameCapability(value: string): value is FrameBridgeCapability {
 }
 
 /**
- * Parent-owned composite controller for explicitly configured and signed child
+ * Parent-owned composite controller for explicitly configured and verified child
  * iframe grants. It never discovers arbitrary frames and never reads a child DOM.
  */
 export class ParentFrameProxyController implements IndexedPageControllerAdapter {
@@ -514,7 +514,7 @@ export class ParentFrameProxyController implements IndexedPageControllerAdapter 
 		)
 			throw new FrameBridgeError(
 				BridgeErrorCode.CAPABILITY_DENIED,
-				'One child iframe cannot satisfy multiple signed target grants'
+				'One child iframe cannot satisfy multiple verified target grants'
 			)
 		const existing = this.records.get(grant.id)
 		if (existing?.iframe === iframe) {

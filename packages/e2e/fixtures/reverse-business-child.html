@@ -8,7 +8,8 @@
 			:root {
 				font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 				color: #23324d;
-				background: #f4f8ff;
+				background: #ecfdf5;
+				--origin-business: #059669;
 			}
 			* {
 				box-sizing: border-box;
@@ -16,10 +17,63 @@
 			body {
 				margin: 0;
 				padding: 0.9rem;
+				border: 5px solid rgb(5 150 105 / 78%);
+				background: radial-gradient(circle at 100% 0, rgb(167 243 208 / 72%), transparent 38%),
+					#ecfdf5;
 			}
 			main {
 				display: grid;
 				gap: 0.7rem;
+			}
+			.origin-marker {
+				display: flex;
+				align-items: center;
+				gap: 0.6rem;
+				padding: 0.5rem 0.6rem;
+				border: 1px solid rgb(5 150 105 / 48%);
+				border-radius: 0.7rem;
+				background: rgb(255 255 255 / 82%);
+				color: #047857;
+			}
+			.origin-key {
+				display: grid;
+				width: 1.7rem;
+				height: 1.7rem;
+				flex: 0 0 auto;
+				place-items: center;
+				border-radius: 0.5rem;
+				background: var(--origin-business);
+				color: #ffffff;
+				font-size: 0.78rem;
+				font-weight: 800;
+			}
+			.origin-copy {
+				min-width: 0;
+				flex: 1;
+			}
+			.origin-copy strong,
+			.origin-copy small {
+				display: block;
+			}
+			.origin-copy strong {
+				font-size: 0.76rem;
+			}
+			.origin-copy small {
+				margin-top: 0.12rem;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				font-size: 0.64rem;
+			}
+			.origin-role {
+				padding: 0.2rem 0.38rem;
+				border-radius: 999px;
+				background: #d1fae5;
+				font-size: 0.62rem;
+				font-weight: 750;
+				white-space: nowrap;
+			}
+			body[data-role='unconfigured'] .origin-role {
+				background: #fef3c7;
+				color: #92400e;
 			}
 			.controls {
 				display: grid;
@@ -66,6 +120,14 @@
 	</head>
 	<body>
 		<main>
+			<div class="origin-marker" data-testid="business-origin-marker">
+				<span class="origin-key">B</span>
+				<span class="origin-copy">
+					<strong>Business iframe</strong>
+					<small id="business-origin-value">current business origin</small>
+				</span>
+				<span class="origin-role" id="business-origin-role">authorized target</span>
+			</div>
 			<strong id="business-heading">Authorized fulfilment iframe</strong>
 			<p id="business-secret">authorized-business-content</p>
 			<div class="controls">
@@ -90,7 +152,12 @@
 			if (!window.PageAgentFrameHost) throw new Error('PageAgentFrameHost is unavailable')
 
 			var params = new URLSearchParams(location.search)
-			if (params.get('role') === 'unauthorized') {
+			var role = params.get('role') === 'unauthorized' ? 'unconfigured' : 'authorized'
+			document.body.dataset.role = role
+			document.querySelector('#business-origin-value').textContent = location.origin
+			document.querySelector('#business-origin-role').textContent =
+				role === 'authorized' ? 'authorized target' : 'unconfigured sibling'
+			if (role === 'unconfigured') {
 				document.querySelector('#business-heading').textContent = 'Unconfigured business iframe'
 				document.querySelector('#business-secret').textContent = 'UNAUTHORIZED_CHILD_SECRET'
 			}

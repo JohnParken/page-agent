@@ -166,6 +166,7 @@ const SENSITIVE_QUERY_KEY =
 	/(?:^|[?&\s])(token|access[_-]?token|refresh[_-]?token|authorization|password|passwd|secret|api[_-]?key)=([^&#\s]+)/gi
 const BEARER_TOKEN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi
 const JWT_TOKEN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
+const MANAGED_OPAQUE_POLICY = /\bpao_[A-Za-z0-9_-]{43,}\b/g
 const URL_CREDENTIALS = /([a-z][a-z0-9+.-]*:\/\/)[^/@\s:]+:[^@\s]*@/gi
 
 function stripControlCharacters(value: string): string {
@@ -191,6 +192,7 @@ export function sanitizeParentControllerText(value: string): string {
 		.replace(SENSITIVE_QUERY_KEY, (_match, key: string) => `${key}=[REDACTED]`)
 		.replace(BEARER_TOKEN, 'Bearer [REDACTED]')
 		.replace(JWT_TOKEN, '[REDACTED]')
+		.replace(MANAGED_OPAQUE_POLICY, '[REDACTED]')
 }
 
 export function sanitizeParentControllerUrl(value: string): string {

@@ -45,13 +45,14 @@ describe('parent-controller security helpers', () => {
 		expect(queryOnly).not.toContain('secret')
 	})
 
-	it('redacts bearer and JWT tokens in text fields', () => {
+	it('redacts bearer, JWT, and managed opaque tokens in text fields', () => {
 		const sanitized = sanitizeParentControllerText(
-			'Bearer abc.def-ghi https://example.test/?token=secret eyJhbGciOiJIUzI1NiJ9.payload.signature'
+			'Bearer abc.def-ghi https://example.test/?token=secret eyJhbGciOiJIUzI1NiJ9.payload.signature pao_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 		)
 		expect(sanitized).toContain('Bearer [REDACTED]')
 		expect(sanitized).toContain('token=[REDACTED]')
 		expect(sanitized).toContain('[REDACTED]')
 		expect(sanitized).not.toContain('secret')
+		expect(sanitized).not.toContain('pao_')
 	})
 })

@@ -14,7 +14,7 @@ does not add Vue or an authentication dependency to the repository.
     approval state, and an explicit host-unavailable degraded mode. Runtime
     modules are loaded from `onMounted` for SSR safety; its teardown awaits
     `agent.stop()` before `agent.dispose()`. It fails fast unless the child
-    requests both `observe` and `cleanup`; the Host, signed Policy, and
+    requests both `observe` and `cleanup`; the Host, verified Policy, and
     `authorizeOffer` result must preserve the same capabilities so final DOM
     highlights can be removed.
 -   `authenticated-tl-fetch.ts` is an optional, framework-agnostic
@@ -40,12 +40,19 @@ does not add Vue or an authentication dependency to the repository.
     -   `http://127.0.0.1:4173/reverse-parent.html`
     -   `http://127.0.0.1:4175/reverse-parent.html`
 
+    The page uses consistent origin markers to make the cross-origin boundary
+    visible: blue `P` for the parent host, purple `A` for the assistant iframe,
+    and green `B` for the business iframe. Each marker also prints its current
+    origin and role; authorized and unconfigured frames on the same origin keep
+    the same origin color but use different role labels.
+
     The parent is a realistic operations dashboard, while the assistant is a
     fixed right-side panel approximately `25vw × 80vh`. In the assistant iframe,
     **Run PageAgent** submits the fixed task (click the parent button, enter
-    `PageAgent Demo`, and select `Pro`); the low-level
+    `PageAgent Demo`, select `Pro`, then click `Release shipment` and enter
+    `PageAgent business approval` in the authorized business iframe); the low-level
     observe/click/input/select/scroll/JavaScript controls remain available. The
-    state includes an explicitly signed business iframe so the fixture also
+    state includes an explicitly authorized business iframe so the fixture also
     demonstrates assistant → parent broker → business iframe observation,
     actions, approval, denial, and reload invalidation. An unconfigured sibling
     iframe is never exposed. The
@@ -57,7 +64,15 @@ does not add Vue or an authentication dependency to the repository.
     The fixture server reverse-proxies that path to
     `TL_ENDPOINT_AGENT`, defaulting to `http://localhost:8089`. Set
     `PARENT_BRIDGE_DEMO_MOCK_TL=1` only for the deterministic offline/test
-    response sequence.
+    response sequence. The fixture's authorization path uses a PageAgent-managed
+    one-time opaque token and online redemption; its static demo identity and
+    in-memory token store are production-shaped test substitutes, not deployment
+    defaults. The loopback fixture explicitly sets `allowInsecureHttp: true` on
+    the managed authorization service and client; managed auth remains
+    HTTPS-only by default. A controlled intranet HTTP deployment must make the
+    same explicit opt-in and satisfy the network and cookie constraints in the
+    production guide. See the security section in the main guide before
+    replacing the store or migrating to ES256/JWKS.
 
 -   See [`docs/parent-bridge.md`](../../docs/parent-bridge.md) for the parent
     host, child adapter, Vue 3 composable, CSP, sandbox, and policy examples.

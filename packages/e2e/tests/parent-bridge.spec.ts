@@ -16,6 +16,16 @@ interface ActionResult {
 }
 
 interface ReverseChildWindow extends Window {
+	reverseAuthorizationContext?: {
+		policyId: string
+		parentOrigin: string
+		assistantOrigin: string
+		tenant: string
+		user: string
+		targetId: string
+		scopeId: string
+		capabilities: string[]
+	}
 	reverseParentController?: {
 		getBrowserState(): Promise<BrowserState>
 		clickElement(index: number): Promise<ActionResult>
@@ -154,6 +164,34 @@ async function expectNoVisibleParentHighlights(page: Page): Promise<void> {
 	await expect.poll(() => visibleParentHighlightCount(page)).toBe(0)
 }
 
+async function parentFeedbackBecameVisible(page: Page): Promise<boolean> {
+	return page.evaluate(
+		() =>
+			new Promise<boolean>((resolve) => {
+				const feedback = document.querySelector<HTMLElement>('[data-page-agent-parent-feedback]')
+				if (!feedback) {
+					resolve(false)
+					return
+				}
+				let settled = false
+				const observer = new MutationObserver(() => check())
+				const finish = (value: boolean) => {
+					if (settled) return
+					settled = true
+					observer.disconnect()
+					window.clearTimeout(timeout)
+					resolve(value)
+				}
+				const check = () => {
+					if (!feedback.hidden && feedback.dataset.state === 'running') finish(true)
+				}
+				observer.observe(feedback, { attributes: true, attributeFilter: ['data-state', 'hidden'] })
+				const timeout = window.setTimeout(() => finish(false), 5_000)
+				check()
+			})
+	)
+}
+
 test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 	test('observes only the trusted parent root and excludes outside/assistant DOM', async ({
 		page,
@@ -179,6 +217,78 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		expect(new URL(business.url()).origin).toBe(businessOrigin)
 		expect(new URL(page.url()).origin).not.toBe(new URL(business.url()).origin)
 		expect(new URL(frame.url()).origin).not.toBe(new URL(business.url()).origin)
+		expect(
+			await frame.evaluate(() => (window as ReverseChildWindow).reverseAuthorizationContext)
+		).toMatchObject({
+			parentOrigin: parentOrigins[0],
+			assistantOrigin: childOrigin,
+			tenant: 'e2e-tenant',
+			user: 'e2e-user',
+			targetId: 'reverse-e2e-target',
+			scopeId: 'reverse-e2e-root',
+			capabilities: [
+				'observe',
+				'click',
+				'input',
+				'select',
+				'scroll',
+				'scrollHorizontally',
+				'cleanup',
+				'visual',
+			],
+		})
+	})
+
+	test('redeems a managed opaque policy once and rejects tampering without burning the valid token', async ({
+		page,
+	}) => {
+		const issue = await page.request.post(`${parentOrigins[0]}/api/parent-bridge/embed-policy`, {
+			headers: { Origin: parentOrigins[0] },
+			data: {},
+		})
+		expect(issue.ok()).toBe(true)
+		const grant = (await issue.json()) as {
+			policy: string
+			claims: { jti: string; cap: string[] }
+		}
+		expect(grant.policy).toMatch(/^pao_[A-Za-z0-9_-]{43}$/)
+		expect(grant.policy).not.toContain('.')
+
+		const offer = {
+			policyId: grant.claims.jti,
+			sessionId: 'e2e-session',
+			challenge: 'e2e-challenge',
+			frameInstanceId: 'e2e-frame',
+			hostInstanceId: 'e2e-host',
+			capabilities: grant.claims.cap,
+		}
+		const authorize = (policy: string, actualParentOrigin = parentOrigins[0]) =>
+			page.request.post(`${childOrigin}/api/parent-bridge/authorize-offer`, {
+				headers: { Origin: childOrigin },
+				data: { policy, actualParentOrigin, offer },
+			})
+		const lastCharacter = grant.policy.at(-1)
+		const tampered = `${grant.policy.slice(0, -1)}${lastCharacter === 'A' ? 'B' : 'A'}`
+		expect((await authorize(tampered)).status()).toBe(403)
+
+		const accepted = await authorize(grant.policy)
+		expect(accepted.ok()).toBe(true)
+		expect(await accepted.json()).toMatchObject({
+			authorized: true,
+			authorizationContext: {
+				policyId: grant.claims.jti,
+				parentOrigin: parentOrigins[0],
+				assistantOrigin: childOrigin,
+				sessionId: offer.sessionId,
+				challenge: offer.challenge,
+				frameInstanceId: offer.frameInstanceId,
+				hostInstanceId: offer.hostInstanceId,
+				capabilities: offer.capabilities,
+			},
+		})
+		const replay = await authorize(grant.policy)
+		expect(replay.status()).toBe(403)
+		expect(await replay.json()).toEqual({ error: 'POLICY_NOT_FOUND_OR_REPLAYED' })
 	})
 
 	test('routes allowed and confirmed actions through the parent into the business iframe', async ({
@@ -212,6 +322,8 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 				frame.evaluate(() => (window as ReverseChildWindow).reverseApprovalRequests?.length ?? 0)
 			)
 			.toBe(1)
+		await expect(frame.locator('#assistant-approval')).toBeVisible()
+		await frame.locator('#assistant-approval-allow').click()
 		const inputResult = await frame.evaluate(async () => {
 			const result = (window as ReverseChildWindow).brokeredInputResult
 			if (!result) throw new Error('Brokered input result promise is missing')
@@ -258,6 +370,33 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		).toBe(0)
 	})
 
+	test('fails a sensitive business input closed when the user denies the one-use approval', async ({
+		page,
+	}) => {
+		const frame = await openParent(page)
+		const business = await businessFrame(page)
+		const browserState = await state(frame)
+		const inputIndex = markerIndex(browserState.content, /<input[^>]*id=business-input/)
+
+		await frame.evaluate((index) => {
+			;(window as ReverseChildWindow).brokeredInputResult = (
+				window as ReverseChildWindow
+			).reverseParentController!.inputText(index, 'must not be written')
+		}, inputIndex)
+		await expect(frame.locator('#assistant-approval')).toBeVisible()
+		await frame.locator('#assistant-approval-deny').click()
+
+		const result = await frame.evaluate(async () => {
+			const pending = (window as ReverseChildWindow).brokeredInputResult
+			if (!pending) throw new Error('Brokered input result promise is missing')
+			return pending
+		})
+		expect(result.success).toBe(false)
+		expect(result.message).toContain('APPROVAL_DENIED')
+		await expect(business.locator('#business-input')).toHaveValue('')
+		await expect(frame.locator('#assistant-approval')).toBeHidden()
+	})
+
 	test('invalidates a brokered child index on reload and reconnects after observation', async ({
 		page,
 	}) => {
@@ -277,7 +416,7 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 			staleIndex
 		)
 		expect(staleResult.success).toBe(false)
-		expect(staleResult.message).toMatch(/stale|reload|connected/i)
+		expect(staleResult.message).toMatch(/stale|reload|connected|CONNECTION_CLOSED/i)
 
 		const refreshedState = await state(frame)
 		expect(refreshedState.treeRevision).toBeGreaterThan(firstState.treeRevision)
@@ -289,7 +428,7 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		expect(refreshedResult.success).toBe(true)
 	})
 
-	test('keeps configured business-frame contents hidden when signed claims omit the grant', async ({
+	test('keeps configured business-frame contents hidden when verified claims omit the grant', async ({
 		page,
 	}) => {
 		const parentOrigin = parentOrigins[0]
@@ -302,7 +441,54 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		expect(browserState.content).not.toContain('UNAUTHORIZED_CHILD_SECRET')
 	})
 
-	test('renders the assistant as a right-side floating panel beside the rich parent page', async ({
+	test('labels each demo origin with a distinct color and role', async ({ page }) => {
+		const assistant = await openParent(page)
+		const business = await businessFrame(page)
+		await expect
+			.poll(() =>
+				page
+					.frames()
+					.some(
+						(frame) =>
+							frame.url().startsWith(`${businessOrigin}/reverse-business-child.html`) &&
+							frame.url().includes('role=unauthorized')
+					)
+			)
+			.toBe(true)
+		const unconfiguredBusiness = page
+			.frames()
+			.find(
+				(frame) =>
+					frame.url().startsWith(`${businessOrigin}/reverse-business-child.html`) &&
+					frame.url().includes('role=unauthorized')
+			)!
+
+		const parentMarker = page.locator('[data-testid="parent-origin-marker"]')
+		const assistantMarker = assistant.locator('[data-testid="assistant-origin-marker"]')
+		const businessMarker = business.locator('[data-testid="business-origin-marker"]')
+		const unconfiguredMarker = unconfiguredBusiness.locator(
+			'[data-testid="business-origin-marker"]'
+		)
+
+		await expect(parentMarker).toContainText('Parent host page')
+		await expect(parentMarker).toContainText(parentOrigins[0])
+		await expect(assistantMarker).toContainText('Assistant iframe')
+		await expect(assistantMarker).toContainText(childOrigin)
+		await expect(assistantMarker).toContainText('connected target')
+		await expect(businessMarker).toContainText('Business iframe')
+		await expect(businessMarker).toContainText(businessOrigin)
+		await expect(businessMarker).toContainText('authorized target')
+		await expect(unconfiguredMarker).toContainText('unconfigured sibling')
+
+		const markerColors = await Promise.all(
+			[parentMarker, assistantMarker, businessMarker].map((marker) =>
+				marker.evaluate((element) => getComputedStyle(element).color)
+			)
+		)
+		expect(new Set(markerColors).size).toBe(3)
+	})
+
+	test('renders the assistant as a right-side floating panel over the rich parent page', async ({
 		page,
 	}) => {
 		await openParent(page)
@@ -409,7 +595,28 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		await expect(frame.locator('#assistant-status')).toHaveText('script:false')
 	})
 
-	test('runs PageAgent in the child against a same-origin Tl service and controls the parent', async ({
+	test('presents the assistant as a floating window with an editable instruction', async ({
+		page,
+	}) => {
+		const frame = await openParent(page)
+		const assistant = page.locator('#assistant-frame')
+		const position = await assistant.evaluate((element) => {
+			const style = getComputedStyle(element)
+			return { position: style.position, bottom: style.bottom, zIndex: style.zIndex }
+		})
+		expect(position.position).toBe('fixed')
+		expect(position.bottom).not.toBe('auto')
+		expect(Number(position.zIndex)).toBeGreaterThan(0)
+
+		const task = frame.locator('#assistant-agent-task')
+		await expect(task).toBeEditable()
+		await expect(task).toHaveValue(/父页面/)
+		await expect(task).toHaveValue(/业务 iframe/)
+		await task.fill('只观察当前页面，不执行修改。')
+		await expect(task).toHaveValue('只观察当前页面，不执行修改。')
+	})
+
+	test('runs PageAgent against a same-origin Tl service and controls the parent and business iframe', async ({
 		page,
 	}) => {
 		const tlResponses: { url: string; allowOrigin: string | null }[] = []
@@ -428,8 +635,16 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		await expect(page.locator('#parent-click-result')).toHaveText('clicked')
 		await expect(page.locator('#parent-input')).toHaveValue('PageAgent Demo')
 		await expect(page.locator('#parent-select')).toHaveValue('Pro')
+		const business = await businessFrame(page)
+		await expect(business.locator('#business-result')).toHaveText('shipment released')
+		await expect(frame.locator('#assistant-approval')).toBeVisible()
+		await expect(frame.locator('#assistant-approval-summary')).toContainText('inputText (input)')
+		await frame.locator('#assistant-approval-allow').click()
+		await expect(business.locator('#business-input')).toHaveValue('PageAgent business approval')
 		await expect(frame.locator('#assistant-agent-status')).toHaveText('agent:completed:true')
-		await expect(frame.locator('#assistant-agent-result')).toContainText('父页面操作已完成')
+		await expect(frame.locator('#assistant-agent-result')).toContainText(
+			'父页面及业务子 iframe 操作已完成'
+		)
 		await expectNoVisibleParentHighlights(page)
 
 		const actions = await frame.evaluate(
@@ -442,20 +657,26 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 			'click_element_by_index',
 			'input_text',
 			'select_dropdown_option',
+			'click_element_by_index',
+			'input_text',
 			'done',
 		])
 
-		await expect.poll(() => tlResponses.length).toBe(8)
+		await expect.poll(() => tlResponses.length).toBe(12)
 		for (const response of tlResponses) {
 			expect(new URL(response.url).origin).toBe(childOrigin)
 			expect(response.allowOrigin).toBeNull()
 		}
 	})
 
-	test('cleans parent highlights after every manual bridge operation', async ({ page }) => {
+	test('shows and clears feedback after every manual bridge operation', async ({ page }) => {
 		const frame = await openParent(page)
+		const feedback = page.locator('[data-page-agent-parent-feedback]')
+		await frame.locator('#assistant-run-observe').click()
+		await expect(frame.locator('#assistant-status')).toHaveText(/observed:/)
+		await expectNoVisibleParentHighlights(page)
+
 		const operations = [
-			{ control: '#assistant-run-observe', status: /observed:/ },
 			{ control: '#assistant-run-click', status: 'click:true' },
 			{ control: '#assistant-run-input', status: 'input:true' },
 			{ control: '#assistant-run-select', status: 'select:true' },
@@ -463,12 +684,11 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		] as const
 
 		for (const operation of operations) {
+			const feedbackVisible = parentFeedbackBecameVisible(page)
 			await frame.locator(operation.control).click()
-			if (typeof operation.status === 'string') {
-				await expect(frame.locator('#assistant-status')).toHaveText(operation.status)
-			} else {
-				await expect(frame.locator('#assistant-status')).toHaveText(operation.status)
-			}
+			expect(await feedbackVisible).toBe(true)
+			await expect(frame.locator('#assistant-status')).toHaveText(operation.status)
+			await expect(feedback).toBeHidden()
 			await expectNoVisibleParentHighlights(page)
 		}
 	})
@@ -536,6 +756,29 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		await expect(frame.locator('#assistant-status')).toContainText(parentOrigins[1])
 	})
 
+	test('issues and redeems a fresh opaque policy after the assistant iframe reloads', async ({
+		page,
+	}) => {
+		const firstFrame = await openParent(page)
+		const firstPolicyId = await firstFrame.evaluate(
+			() => (window as ReverseChildWindow).reverseAuthorizationContext?.policyId
+		)
+		expect(firstPolicyId).toMatch(/^pao_id_/)
+
+		await page.locator('#assistant-frame').evaluate((element: HTMLIFrameElement) => {
+			const source = element.getAttribute('src')
+			if (!source) throw new Error('Assistant iframe source is missing')
+			element.setAttribute('src', source)
+		})
+		const reloadedFrame = await connectedChildFrame(page, parentOrigins[0])
+		const secondPolicyId = await reloadedFrame.evaluate(
+			() => (window as ReverseChildWindow).reverseAuthorizationContext?.policyId
+		)
+		expect(secondPolicyId).toMatch(/^pao_id_/)
+		expect(secondPolicyId).not.toBe(firstPolicyId)
+		expect((await state(reloadedFrame)).content).toContain('parent-button')
+	})
+
 	test('rejects an offer when the child expects a different parent origin', async ({ page }) => {
 		await page.goto(
 			`${parentOrigins[1]}/reverse-parent.html?childExpectedParentOrigin=${encodeURIComponent(
@@ -585,13 +828,27 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		const feedback = page.locator('[data-page-agent-parent-feedback]')
 		expect(await feedback.count()).toBeGreaterThan(0)
 		await expect(feedback.first()).toHaveCSS('pointer-events', 'none')
+		await expect(page.locator('#page-agent-runtime_simulator-mask')).toHaveCount(0)
+		const assistantFrameHit = await page.evaluate(() => {
+			const iframe = document.querySelector('#assistant-frame')
+			if (!(iframe instanceof HTMLIFrameElement)) return false
+			const rect = iframe.getBoundingClientRect()
+			const target = document.elementFromPoint(
+				rect.left + rect.width / 2,
+				rect.top + rect.height / 2
+			)
+			return target === iframe
+		})
+		expect(assistantFrameHit).toBe(true)
 
+		const cursor = page.locator('[data-page-agent-parent-cursor]')
 		await frame.locator('#assistant-run-click').click()
+		await Promise.all([expect(feedback.first()).toBeVisible(), expect(cursor).toBeVisible()])
 		await expect(page.locator('#parent-click-result')).toHaveText('clicked')
 		await expectNoVisibleParentHighlights(page)
-		const cursor = page.locator('[data-page-agent-parent-cursor]')
 		await expect(cursor).toHaveCount(1)
 		await expect(cursor).toBeHidden()
+		await expect(feedback.first()).toBeHidden()
 
 		await frame.evaluate(async () => {
 			await (window as ReverseChildWindow).reverseParentController?.showMask?.()

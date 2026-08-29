@@ -17,6 +17,7 @@
 					sans-serif;
 				background: #f6f7fb;
 				color: #172033;
+				--origin-assistant: #7c3aed;
 			}
 			* {
 				box-sizing: border-box;
@@ -25,8 +26,11 @@
 			body {
 				margin: 0;
 				min-height: 100%;
-				background: radial-gradient(circle at 100% 0, rgb(219 234 254 / 70%), transparent 34%),
-					#f6f7fb;
+				background: radial-gradient(circle at 100% 0, rgb(221 214 254 / 88%), transparent 34%),
+					#f5f3ff;
+			}
+			body {
+				border: 5px solid rgb(124 58 237 / 78%);
 			}
 			#assistant-root {
 				display: flex;
@@ -36,12 +40,54 @@
 				padding: 1rem;
 				overflow: auto;
 			}
-			#assistant-root > strong:first-child {
-				font-size: 0.78rem;
-				font-weight: 750;
-				letter-spacing: 0.08em;
-				text-transform: uppercase;
+			.origin-marker {
+				display: flex;
+				align-items: center;
+				gap: 0.6rem;
+				padding: 0.58rem 0.65rem;
+				border: 1px solid rgb(124 58 237 / 52%);
+				border-radius: 0.8rem;
+				background: rgb(245 243 255 / 92%);
 				color: #5b21b6;
+			}
+			.origin-key {
+				display: grid;
+				width: 1.8rem;
+				height: 1.8rem;
+				flex: 0 0 auto;
+				place-items: center;
+				border-radius: 0.55rem;
+				background: var(--origin-assistant);
+				color: #ffffff;
+				font-size: 0.82rem;
+				font-weight: 800;
+			}
+			.origin-copy {
+				min-width: 0;
+				flex: 1;
+			}
+			.origin-copy strong,
+			.origin-copy small {
+				display: block;
+			}
+			.origin-copy strong {
+				font-size: 0.78rem;
+			}
+			.origin-copy small {
+				margin-top: 0.15rem;
+				overflow: hidden;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				font-size: 0.65rem;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.origin-role {
+				padding: 0.22rem 0.4rem;
+				border-radius: 999px;
+				background: #ede9fe;
+				font-size: 0.62rem;
+				font-weight: 750;
+				white-space: nowrap;
 			}
 			#assistant-status,
 			#assistant-agent-status {
@@ -82,7 +128,8 @@
 				gap: 0.5rem;
 			}
 			button,
-			input {
+			input,
+			textarea {
 				font: inherit;
 			}
 			button {
@@ -114,14 +161,35 @@
 			#assistant-stop-agent {
 				color: #b42318;
 			}
+			.agent-task-label {
+				display: grid;
+				gap: 0.4rem;
+				font-size: 0.75rem;
+				font-weight: 700;
+				color: #6d28d9;
+			}
 			.agent-task {
+				width: 100%;
+				min-height: 8rem;
+				resize: vertical;
 				margin: 0;
 				padding: 0.7rem;
 				border: 1px solid #ddd6fe;
 				border-radius: 0.7rem;
 				background: #faf9ff;
+				color: #172033;
 				font-size: 0.82rem;
 				line-height: 1.55;
+			}
+			.agent-task:focus {
+				border-color: #7c3aed;
+				outline: 3px solid rgb(124 58 237 / 14%);
+			}
+			.agent-task-hint {
+				color: #7c8495;
+				font-size: 0.68rem;
+				font-weight: 500;
+				line-height: 1.4;
 			}
 			button:disabled {
 				cursor: not-allowed;
@@ -153,6 +221,40 @@
 				background: #111827;
 				color: #d1fae5;
 			}
+			.approval-prompt {
+				display: grid;
+				gap: 0.55rem;
+				padding: 0.75rem;
+				border: 1px solid #f59e0b;
+				border-radius: 0.8rem;
+				background: #fffbeb;
+				color: #78350f;
+			}
+			.approval-prompt[hidden] {
+				display: none;
+			}
+			.approval-prompt strong,
+			.approval-prompt p {
+				margin: 0;
+			}
+			.approval-prompt p {
+				font-size: 0.75rem;
+				line-height: 1.45;
+			}
+			.approval-actions {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 0.45rem;
+			}
+			#assistant-approval-allow {
+				border-color: #16a34a;
+				background: #16a34a;
+				color: #fff;
+			}
+			#assistant-approval-deny {
+				border-color: #dc2626;
+				color: #b91c1c;
+			}
 			@media (max-width: 360px) {
 				#assistant-root {
 					padding: 0.75rem;
@@ -165,21 +267,44 @@
 	</head>
 	<body>
 		<div id="assistant-root" data-v-app>
-			<strong>Cross-origin assistant iframe</strong>
+			<div class="origin-marker" data-testid="assistant-origin-marker">
+				<span class="origin-key">A</span>
+				<span class="origin-copy">
+					<strong>Assistant iframe</strong>
+					<small id="assistant-origin-value">current assistant origin</small>
+				</span>
+				<span class="origin-role" id="assistant-origin-role">target</span>
+			</div>
 			<p id="assistant-status">Waiting for parent controller…</p>
 			<section class="agent-demo" aria-labelledby="page-agent-demo-title">
-				<h2 id="page-agent-demo-title">PageAgent controls the parent page</h2>
-				<strong>Fixed local demo task</strong>
-				<p id="assistant-agent-task" class="agent-task">
-					请依次点击父页面按钮，在 Parent value 输入框中输入 PageAgent Demo，并将 Parent plan 选择为
-					Pro。
-				</p>
+				<h2 id="page-agent-demo-title">PageAgent controls the parent and business iframe</h2>
+				<label class="agent-task-label" for="assistant-agent-task">
+					User instruction
+					<textarea
+						id="assistant-agent-task"
+						class="agent-task"
+						rows="5"
+						maxlength="2000"
+						placeholder="请输入希望 PageAgent 完成的任务"
+					>
+请依次点击父页面按钮，在 Parent value 输入框中输入 PageAgent Demo，将 Parent plan 选择为 Pro；然后在父页面内已授权的跨域业务 iframe 中点击 Release shipment，并在 Approval note 输入框中输入 PageAgent business approval。</textarea
+					>
+					<small class="agent-task-hint">可修改默认示例；按 Ctrl/⌘ + Enter 运行。</small>
+				</label>
 				<div class="agent-actions">
-					<button id="assistant-run-agent" type="button" disabled>Run PageAgent</button>
+					<button id="assistant-run-agent" type="button" disabled>Run instruction</button>
 					<button id="assistant-stop-agent" type="button" disabled>Stop</button>
 				</div>
 				<p id="assistant-agent-status">Agent waits for the parent bridge.</p>
 				<pre id="assistant-agent-result"></pre>
+			</section>
+			<section id="assistant-approval" class="approval-prompt" aria-live="assertive" hidden>
+				<strong>Approval required</strong>
+				<p id="assistant-approval-summary">A sensitive parent action is waiting.</p>
+				<div class="approval-actions">
+					<button id="assistant-approval-allow" type="button">Allow once</button>
+					<button id="assistant-approval-deny" type="button">Deny</button>
+				</div>
 			</section>
 			<div class="manual-controls" aria-label="Low-level bridge controls">
 				<button id="assistant-run-observe" type="button">Observe parent root</button>
@@ -198,8 +323,14 @@
 
 			const params = new URLSearchParams(location.search)
 			const expectedParentOrigin = params.get('expectedParentOrigin') || 'http://127.0.0.1:4173'
-			const expectedPolicy = params.get('policy') || 'reverse-e2e-policy'
 			const role = params.get('role') || 'target'
+			const roleLabels = {
+				target: 'connected target',
+				sibling: 'untrusted sibling',
+				'wrong-source': 'wrong source',
+			}
+			document.querySelector('#assistant-origin-value').textContent = location.origin
+			document.querySelector('#assistant-origin-role').textContent = roleLabels[role] || role
 			const status = document.querySelector('#assistant-status')
 			const stateOutput = document.querySelector('#assistant-state')
 			const agentTask = document.querySelector('#assistant-agent-task')
@@ -207,7 +338,13 @@
 			const agentStop = document.querySelector('#assistant-stop-agent')
 			const agentStatus = document.querySelector('#assistant-agent-status')
 			const agentResult = document.querySelector('#assistant-agent-result')
+			const approvalPanel = document.querySelector('#assistant-approval')
+			const approvalSummary = document.querySelector('#assistant-approval-summary')
+			const approvalAllow = document.querySelector('#assistant-approval-allow')
+			const approvalDeny = document.querySelector('#assistant-approval-deny')
+			if (agentTask) agentTask.value = agentTask.value.trim()
 			let pageAgent = null
+			let pendingApproval = null
 			const approvalRequests = []
 			window.reverseApprovalRequests = approvalRequests
 			const setStatus = (value) => {
@@ -228,6 +365,32 @@
 			const writeAgentResult = (value) => {
 				if (agentResult) agentResult.textContent = JSON.stringify(value, null, 2)
 			}
+			const settleApproval = (approved, reason) => {
+				if (!pendingApproval) return
+				const { request, resolve, onAbort } = pendingApproval
+				pendingApproval = null
+				request.signal.removeEventListener('abort', onAbort)
+				if (approvalPanel) approvalPanel.hidden = true
+				resolve({ approved, reason })
+			}
+			const requestApproval = (request) =>
+				new Promise((resolve) => {
+					if (pendingApproval) {
+						resolve({ approved: false, reason: 'Another approval is already pending' })
+						return
+					}
+					const onAbort = () => settleApproval(false, 'Approval request was cancelled')
+					pendingApproval = { request, resolve, onAbort }
+					request.signal.addEventListener('abort', onAbort, { once: true })
+					if (approvalSummary) {
+						approvalSummary.textContent = `${request.method} (${request.capability}): ${
+							request.reason || 'Sensitive action'
+						}`
+					}
+					if (approvalPanel) approvalPanel.hidden = false
+				})
+			approvalAllow?.addEventListener('click', () => settleApproval(true, 'Approved once'))
+			approvalDeny?.addEventListener('click', () => settleApproval(false, 'Denied by user'))
 			const cleanParentPresentation = async ({ hideMask = false } = {}) => {
 				try {
 					await adapter.cleanUpHighlights()
@@ -240,6 +403,14 @@
 					} catch (error) {
 						setStatus(`mask-error:${error?.code || error?.name || String(error)}`)
 					}
+				}
+			}
+			const runManualParentAction = async (action) => {
+				try {
+					await adapter.showMask()
+					return await action()
+				} finally {
+					await cleanParentPresentation({ hideMask: true })
 				}
 			}
 			const createPageAgent = () => {
@@ -256,13 +427,13 @@
 					toolCallingMode: 'system_prompt',
 					tlSystemPromptVariableName: 'system_prompt',
 					maxRetries: 0,
-					maxSteps: 4,
+					maxSteps: 6,
 					stepDelay: 0,
 					language: 'zh-CN',
 					promptForNextTask: false,
 					experimentalScriptExecutionTool: false,
 					experimentalLlmsTxt: false,
-					debug: false,
+					debug: true,
 					includeRawHistory: false,
 				})
 				pageAgent.addEventListener('statuschange', () => {
@@ -295,14 +466,57 @@
 						payload: request.payload,
 						reason: request.reason,
 					})
-					return true
+					return requestApproval(request)
 				},
 				authorizeOffer: async (offer, actualParentOrigin, signal) => {
 					if (
 						signal.aborted ||
 						role === 'wrong-source' ||
-						actualParentOrigin !== expectedParentOrigin ||
-						offer.policy !== expectedPolicy
+						actualParentOrigin !== expectedParentOrigin
+					) {
+						return undefined
+					}
+					let response
+					try {
+						response = await fetch('/api/parent-bridge/authorize-offer', {
+							method: 'POST',
+							credentials: 'same-origin',
+							cache: 'no-store',
+							headers: { 'Content-Type': 'application/json' },
+							signal,
+							body: JSON.stringify({
+								policy: offer.policy,
+								actualParentOrigin,
+								offer: {
+									policyId: offer.policyId,
+									sessionId: offer.sessionId,
+									challenge: offer.challenge,
+									frameInstanceId: offer.frameInstanceId,
+									hostInstanceId: offer.hostInstanceId,
+									capabilities: offer.capabilities,
+								},
+							}),
+						})
+					} catch {
+						return undefined
+					}
+					if (!response.ok || signal.aborted) return undefined
+					const payload = await response.json().catch(() => null)
+					const authorizationContext = payload?.authorizationContext
+					if (
+						!authorizationContext ||
+						authorizationContext.policyId !== offer.policyId ||
+						authorizationContext.parentOrigin !== actualParentOrigin ||
+						authorizationContext.assistantOrigin !== location.origin ||
+						authorizationContext.sessionId !== offer.sessionId ||
+						authorizationContext.challenge !== offer.challenge ||
+						authorizationContext.frameInstanceId !== offer.frameInstanceId ||
+						authorizationContext.hostInstanceId !== offer.hostInstanceId ||
+						!Array.isArray(authorizationContext.capabilities) ||
+						authorizationContext.capabilities.length !== offer.capabilities.length ||
+						authorizationContext.capabilities.some(
+							(capability, index) => capability !== offer.capabilities[index]
+						)
 					) {
 						return undefined
 					}
@@ -310,6 +524,7 @@
 						parentOrigin: actualParentOrigin,
 						policyId: offer.policyId,
 						capabilities: offer.capabilities,
+						authorizationContext,
 					}
 				},
 			})
@@ -319,7 +534,8 @@
 			window.reverseParentConnection = adapter
 				.connect()
 				.then(async (connection) => {
-					setStatus(`connected:${connection.parentOrigin}`)
+					window.reverseAuthorizationContext = connection.authorizedParent.authorizationContext
+					setStatus(`connected:${connection.parentOrigin}:opaque-online`)
 					try {
 						const state = await adapter.getBrowserState()
 						writeState(state)
@@ -338,15 +554,20 @@
 			)
 
 			agentRun?.addEventListener('click', async () => {
+				const task = agentTask?.value?.trim()
+				if (!task) {
+					setAgentStatus('agent:input-required')
+					agentTask?.focus()
+					return
+				}
 				try {
 					const agent = await window.reversePageAgentReady
 					if (!agent) throw new Error('Parent PageAgent is unavailable')
 					if (agentRun) agentRun.disabled = true
 					if (agentStop) agentStop.disabled = false
+					if (agentTask) agentTask.disabled = true
 					writeAgentResult({})
-					const result = await agent.execute(
-						agentTask?.textContent?.trim() || 'Run the parent demo task'
-					)
+					const result = await agent.execute(task)
 					writeAgentResult(result)
 					setAgentStatus(`agent:${agent.status}:${result.success}`)
 				} catch (error) {
@@ -355,7 +576,14 @@
 					await cleanParentPresentation({ hideMask: true })
 					if (agentRun) agentRun.disabled = false
 					if (agentStop) agentStop.disabled = true
+					if (agentTask) agentTask.disabled = false
 				}
+			})
+			agentTask?.addEventListener('keydown', (event) => {
+				if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey) || agentRun?.disabled)
+					return
+				event.preventDefault()
+				agentRun.click()
 			})
 			agentStop?.addEventListener('click', async () => {
 				if (!pageAgent) return
@@ -369,6 +597,7 @@
 			window.addEventListener(
 				'pagehide',
 				() => {
+					settleApproval(false, 'Assistant page unloaded')
 					pageAgent?.dispose()
 				},
 				{ once: true }
@@ -387,60 +616,54 @@
 			})
 			document.querySelector('#assistant-run-click')?.addEventListener('click', async () => {
 				try {
-					const state = await adapter.getBrowserState()
-					const result = await adapter.clickElement(markerIndex(state.content, 'parent-button'))
+					const result = await runManualParentAction(async () => {
+						const state = await adapter.getBrowserState()
+						return adapter.clickElement(markerIndex(state.content, 'parent-button'))
+					})
 					writeState(result)
 					setStatus(`click:${result.success}`)
 				} catch (error) {
 					setStatus(`error:${error?.code || error?.name || String(error)}`)
-				} finally {
-					await cleanParentPresentation({ hideMask: true })
 				}
 			})
 			document.querySelector('#assistant-run-input')?.addEventListener('click', async () => {
 				try {
-					const state = await adapter.getBrowserState()
-					const result = await adapter.inputText(
-						markerIndex(state.content, 'parent-input'),
-						'bridge-input'
-					)
+					const result = await runManualParentAction(async () => {
+						const state = await adapter.getBrowserState()
+						return adapter.inputText(markerIndex(state.content, 'parent-input'), 'bridge-input')
+					})
 					writeState(result)
 					setStatus(`input:${result.success}`)
 				} catch (error) {
 					setStatus(`error:${error?.code || error?.name || String(error)}`)
-				} finally {
-					await cleanParentPresentation({ hideMask: true })
 				}
 			})
 			document.querySelector('#assistant-run-select')?.addEventListener('click', async () => {
 				try {
-					const state = await adapter.getBrowserState()
-					const result = await adapter.selectOption(
-						markerIndex(state.content, 'parent-select'),
-						'Pro'
-					)
+					const result = await runManualParentAction(async () => {
+						const state = await adapter.getBrowserState()
+						return adapter.selectOption(markerIndex(state.content, 'parent-select'), 'Pro')
+					})
 					writeState(result)
 					setStatus(`select:${result.success}`)
 				} catch (error) {
 					setStatus(`error:${error?.code || error?.name || String(error)}`)
-				} finally {
-					await cleanParentPresentation({ hideMask: true })
 				}
 			})
 			document.querySelector('#assistant-run-scroll')?.addEventListener('click', async () => {
 				try {
-					const state = await adapter.getBrowserState()
-					const result = await adapter.scroll({
-						down: true,
-						numPages: 1,
-						index: markerIndex(state.content, 'parent-scroll'),
+					const result = await runManualParentAction(async () => {
+						const state = await adapter.getBrowserState()
+						return adapter.scroll({
+							down: true,
+							numPages: 1,
+							index: markerIndex(state.content, 'parent-scroll'),
+						})
 					})
 					writeState(result)
 					setStatus(`scroll:${result.success}`)
 				} catch (error) {
 					setStatus(`error:${error?.code || error?.name || String(error)}`)
-				} finally {
-					await cleanParentPresentation({ hideMask: true })
 				}
 			})
 			document.querySelector('#assistant-run-script')?.addEventListener('click', async () => {

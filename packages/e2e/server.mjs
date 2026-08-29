@@ -5,6 +5,11 @@ import { request as httpsRequest } from 'node:https'
 import { dirname, extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config as dotenvConfig } from 'dotenv'
+import {
+	InMemoryOpaqueEmbedAuthorizationStore,
+	ManagedEmbedAuthorizationError,
+	OpaqueEmbedAuthorizationService,
+} from '../page-controller/dist/lib/parent-bridge/managed-auth.js'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(currentDirectory, '../..')
@@ -58,6 +63,35 @@ const contentTypes = {
 const MAX_DEMO_REQUEST_BYTES = 1_000_000
 let mockTlSessionSequence = 0
 
+const PARENT_BRIDGE_POLICY_PATH = '/api/parent-bridge/embed-policy'
+const PARENT_BRIDGE_AUTHORIZE_PATH = '/api/parent-bridge/authorize-offer'
+const PARENT_BRIDGE_ASSISTANT_ORIGIN = 'http://127.0.0.1:4174'
+const PARENT_BRIDGE_BUSINESS_ORIGIN = 'http://127.0.0.1:4176'
+const PARENT_BRIDGE_PARENT_ORIGINS = ['http://127.0.0.1:4173', 'http://127.0.0.1:4175']
+const PARENT_BRIDGE_CAPABILITIES = [
+	'observe',
+	'click',
+	'input',
+	'select',
+	'scroll',
+	'scrollHorizontally',
+	'cleanup',
+	'visual',
+]
+
+// This shared in-memory authority intentionally models the PageAgent-operated
+// service boundary. Production must replace the store with an atomic shared
+// Redis/database implementation and derive identity/ACLs from P's backend.
+const parentBridgeAuthorizationService = new OpaqueEmbedAuthorizationService({
+	store: new InMemoryOpaqueEmbedAuthorizationStore(),
+	allowInsecureHttp: true,
+	assistantOrigin: PARENT_BRIDGE_ASSISTANT_ORIGIN,
+	allowedParentOrigins: PARENT_BRIDGE_PARENT_ORIGINS,
+	scopeId: 'reverse-e2e-root',
+	allowedCapabilities: PARENT_BRIDGE_CAPABILITIES,
+	ttlSeconds: 120,
+})
+
 async function readJsonRequest(request) {
 	let body = ''
 	for await (const chunk of request) {
@@ -89,17 +123,23 @@ function demoAgentOutput(prompt) {
 			name: 'select_dropdown_option',
 			input: { text: 'Pro' },
 		},
+		{ id: 'business-button', name: 'click_element_by_index', input: {} },
+		{
+			id: 'business-input',
+			name: 'input_text',
+			input: { text: 'PageAgent business approval' },
+		},
 	]
 
 	const action = actions[completedSteps]
 	if (!action) {
 		return {
-			evaluation_previous_goal: 'The requested parent-page changes are visible.',
-			memory: 'The button, input, and plan selection were updated.',
+			evaluation_previous_goal: 'The requested parent-page and business-frame changes are visible.',
+			memory: 'The parent controls and authorized business iframe controls were updated.',
 			next_goal: 'Finish the task.',
 			action: {
 				done: {
-					text: '父页面操作已完成。',
+					text: '父页面及业务子 iframe 操作已完成。',
 					success: true,
 				},
 			},
@@ -109,12 +149,12 @@ function demoAgentOutput(prompt) {
 	const index = indexedElement(prompt, action.id)
 	if (index === undefined) {
 		return {
-			evaluation_previous_goal: 'The required parent element was not available.',
+			evaluation_previous_goal: 'The required scoped element was not available.',
 			memory: 'The scoped parent state did not expose the requested element.',
 			next_goal: 'Stop without guessing an index.',
 			action: {
 				done: {
-					text: `未找到父页面元素 ${action.id}。`,
+					text: `未找到任务元素 ${action.id}。`,
 					success: false,
 				},
 			},
@@ -124,7 +164,7 @@ function demoAgentOutput(prompt) {
 	return {
 		evaluation_previous_goal:
 			completedSteps === 0 ? 'The task has started.' : 'The previous action completed.',
-		memory: `Completed ${completedSteps} parent-page action(s).`,
+		memory: `Completed ${completedSteps} scoped task action(s).`,
 		next_goal: `Operate ${action.id}.`,
 		action: {
 			[action.name]: {
@@ -142,6 +182,74 @@ function writeJson(response, status, value) {
 			'Content-Type': 'application/json; charset=utf-8',
 		})
 		.end(JSON.stringify(value))
+}
+
+function requestOrigin(request, fallbackOrigin) {
+	const origin = request.headers.origin
+	return typeof origin === 'string' && origin.length > 0 ? origin : fallbackOrigin
+}
+
+function managedAuthorizationError(response, error) {
+	writeJson(response, 403, {
+		error:
+			error instanceof ManagedEmbedAuthorizationError ? error.code : 'MANAGED_AUTHORIZATION_DENIED',
+	})
+}
+
+async function serveManagedEmbedPolicy(request, response, requestURL) {
+	if (request.method !== 'POST' || !PARENT_BRIDGE_PARENT_ORIGINS.includes(requestURL.origin)) {
+		response.writeHead(404).end('Not found')
+		return
+	}
+	try {
+		await readJsonRequest(request)
+		if (requestOrigin(request, requestURL.origin) !== requestURL.origin) {
+			throw new Error('Parent origin mismatch')
+		}
+		// This query flag simulates the result of P's server-side business ACL.
+		// A real route must derive it from the authenticated user and tenant.
+		const authorizeBusiness = requestURL.searchParams.get('authorizeBusiness') !== 'false'
+		const grant = await parentBridgeAuthorizationService.issue({
+			tenant: 'e2e-tenant',
+			user: 'e2e-user',
+			targetId: 'reverse-e2e-target',
+			scopeId: 'reverse-e2e-root',
+			parentOrigin: requestURL.origin,
+			assistantOrigin: PARENT_BRIDGE_ASSISTANT_ORIGIN,
+			capabilities: PARENT_BRIDGE_CAPABILITIES,
+			...(authorizeBusiness
+				? {
+						childFrames: [
+							{
+								id: 'fulfilment-app',
+								origin: PARENT_BRIDGE_BUSINESS_ORIGIN,
+								cap: ['observe', 'click', 'input', 'cleanup'],
+							},
+						],
+					}
+				: {}),
+		})
+		writeJson(response, 200, grant)
+	} catch (error) {
+		managedAuthorizationError(response, error)
+	}
+}
+
+async function serveManagedOfferAuthorization(request, response, requestURL) {
+	if (request.method !== 'POST' || requestURL.origin !== PARENT_BRIDGE_ASSISTANT_ORIGIN) {
+		response.writeHead(404).end('Not found')
+		return
+	}
+	try {
+		if (requestOrigin(request, requestURL.origin) !== PARENT_BRIDGE_ASSISTANT_ORIGIN) {
+			throw new Error('Assistant origin mismatch')
+		}
+		const body = await readJsonRequest(request)
+		const authorizationContext = await parentBridgeAuthorizationService.exchange(body)
+		writeJson(response, 200, { authorized: true, authorizationContext })
+	} catch (error) {
+		managedAuthorizationError(response, error)
+	}
 }
 
 function headerTokens(value) {
@@ -315,6 +423,16 @@ function createFixtureServer(port) {
 			const requestURL = new URL(request.url || '/', `http://127.0.0.1:${port}`)
 			if (requestURL.pathname === '/health') {
 				response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end('ok')
+				return
+			}
+
+			if (requestURL.pathname === PARENT_BRIDGE_POLICY_PATH) {
+				await serveManagedEmbedPolicy(request, response, requestURL)
+				return
+			}
+
+			if (requestURL.pathname === PARENT_BRIDGE_AUTHORIZE_PATH) {
+				await serveManagedOfferAuthorization(request, response, requestURL)
 				return
 			}
 

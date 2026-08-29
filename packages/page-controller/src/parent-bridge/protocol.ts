@@ -95,7 +95,7 @@ export interface ParentFrameContext {
 	allowSameOrigin: boolean
 }
 
-/** Claims returned by an application-owned ES256/JWKS policy verifier. */
+/** Claims returned by an application-owned policy verifier. */
 export interface VerifiedEmbedPolicyClaims {
 	jti: string
 	tenant: string
@@ -109,7 +109,7 @@ export interface VerifiedEmbedPolicyClaims {
 	protocolVersionMax: number
 	nbf: number
 	exp: number
-	/** Optional, signed grants for explicitly configured child iframe proxies. */
+	/** Optional, verified grants for explicitly configured child iframe proxies. */
 	childFrames?: VerifiedEmbedPolicyChildFrameGrant[]
 	[key: string]: unknown
 }

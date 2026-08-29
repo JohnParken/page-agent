@@ -25,6 +25,10 @@
         "./parent-bridge/adapter": {
             "types": "./src/parent-bridge/adapter.ts",
             "default": "./src/parent-bridge/adapter.ts"
+        },
+        "./parent-bridge/managed-auth": {
+            "types": "./src/parent-bridge/managed-auth.ts",
+            "default": "./src/parent-bridge/managed-auth.ts"
         }
     },
     "publishConfig": {
@@ -56,6 +60,11 @@
                 "types": "./dist/esm/parent-bridge/adapter.d.ts",
                 "import": "./dist/esm/parent-bridge/adapter.js",
                 "default": "./dist/esm/parent-bridge/adapter.js"
+            },
+            "./parent-bridge/managed-auth": {
+                "types": "./dist/esm/parent-bridge/managed-auth.d.ts",
+                "import": "./dist/esm/parent-bridge/managed-auth.js",
+                "default": "./dist/esm/parent-bridge/managed-auth.js"
             }
         }
     },
