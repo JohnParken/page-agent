@@ -3,6 +3,11 @@
 本文面向把 PageAgent 部署在跨域助手 iframe 中，并通过父页面代理操作父页面及其明确授权的
 跨域业务 iframe 的团队。本文采用以下角色名称：
 
+> **权威架构入口：** P / A / B 与公共 Auth 的最新拓扑、职责边界、主体/服务身份、精确请求流、
+> 数据模型和 V1/V2 边界见[《P / A / B 与公共 Auth 权威架构》](./parent-bridge-auth-architecture.zh-CN.md)。
+> 本手册是部署操作清单；授权架构出现冲突时以上述文档为准。当前协议与 managed-auth 仅为已落地
+> 原型，生产公共 Auth 尚未部署。
+
 -   **P（Parent）**：宿主业务页面，拥有父页面 DOM，并运行 `ParentPageControllerHost`。
 -   **A（Assistant）**：悬浮助手 iframe，运行 PageAgent、
     `ParentPageControllerAdapter`、审批 UI，并调用 LLM 网关。
