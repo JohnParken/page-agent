@@ -3,7 +3,7 @@ import { ParentPageControllerAdapter } from '@page-agent/page-controller/parent-
 /** Options accepted by the installed child-side adapter runtime. */
 export type ParentAdapterOptions = ConstructorParameters<typeof ParentPageControllerAdapter>[0]
 
-/** Connect an assistant iframe to its authorized parent host. */
+/** Connect an assistant iframe to its authorized parent host; call from the first user action. */
 export async function connectParentAdapter(
 	options: ParentAdapterOptions
 ): Promise<ParentPageControllerAdapter> {

@@ -3,6 +3,7 @@ import {
 	isCapability,
 	isParentControllerAcceptMessage,
 	isParentControllerConnectMessage,
+	isParentControllerDeactivateMessage,
 	isParentControllerMessageSizeAllowed,
 	isParentControllerOfferMessage,
 	isParentControllerPayload,
@@ -115,6 +116,7 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 	readonly requestTimeoutMs: number
 	readonly authorizeOffer: AuthorizeOffer<TAuthorizationContext>
 	readonly onApprovalRequired: OnApprovalRequired
+	readonly autoReconnect: boolean
 
 	private readonly bridgeWindow: ParentControllerAdapterWindow
 	private readonly parentWindow: ParentControllerAdapterWindow['parent']
@@ -149,6 +151,8 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 	private authorizationController: AbortController | null = null
 	private authorizationGeneration = 0
 	private authorizedParentState: AuthorizedParent<TAuthorizationContext> | null = null
+	private activated = false
+	private pendingHandshakeRequestId: string | null = null
 	private readonly windowMessageListener = (event: MessageEvent<unknown>) =>
 		this.handleWindowMessage(event)
 
@@ -176,6 +180,9 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		this.requestedCapabilities = requested
 		this.authorizeOffer = options.authorizeOffer
 		this.onApprovalRequired = options.onApprovalRequired
+		if (options.autoReconnect !== undefined && typeof options.autoReconnect !== 'boolean')
+			throw new TypeError('autoReconnect must be a boolean')
+		this.autoReconnect = options.autoReconnect ?? true
 		this.handshakeTimeoutMs = normalizeTimeout(
 			options.handshakeTimeoutMs,
 			5_000,
@@ -190,6 +197,10 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 
 	get connected(): boolean {
 		return this.connectedState && this.port !== null && !this.disposed
+	}
+
+	get activationActive(): boolean {
+		return this.activated && !this.disposed
 	}
 
 	get connection(): ParentControllerConnection<TAuthorizationContext> | null {
@@ -232,6 +243,12 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		// authorizer may complete synchronously and acceptOffer intentionally rejects
 		// work when no connection attempt is registered.
 		this.connecting = connecting
+		if (this.offer?.handshakeRequestId) {
+			this.offer = null
+			this.currentParentOrigin = null
+		}
+		const handshakeRequestId = secureParentControllerId('handshake')
+		this.pendingHandshakeRequestId = handshakeRequestId
 		this.connectTimer = setTimeout(
 			() =>
 				this.finishConnect(
@@ -249,12 +266,75 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 			if (context.signal.aborted) onAbort()
 		}
 		if (this.connecting !== connecting) return connecting
-		if (this.offer)
+		if (this.offer) {
 			void this.acceptOffer(this.offer, this.currentParentOrigin ?? undefined, context?.signal)
-		else
+		} else {
 			this.offerWaiter = (offer) =>
 				void this.acceptOffer(offer, this.currentParentOrigin ?? undefined, context?.signal)
+			try {
+				this.postHandshakeRequest(handshakeRequestId, this.activated ? 'reconnect' : 'user')
+			} catch (error) {
+				this.finishConnect(error)
+			}
+		}
 		return connecting
+	}
+
+	private postHandshakeRequest(
+		requestId: string,
+		reason: import('./protocol').ParentControllerHandshakeReason
+	): void {
+		const message = {
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'handshake-request' as const,
+			requestId,
+			reason,
+		}
+		if (!isParentControllerMessageSizeAllowed(message))
+			throw asError(ParentControllerErrorCode.INVALID_MESSAGE, 'Handshake request is invalid')
+		// The bootstrap request contains no policy, identity, or business data. A
+		// cannot read a cross-origin parent origin before the first trusted message.
+		this.parentWindow.postMessage(message, this.currentParentOrigin ?? '*')
+	}
+
+	/** A-side automatic reconnect after the first successful activation. */
+	reconnect(
+		context?: PageControllerCallContext
+	): Promise<ParentControllerConnection<TAuthorizationContext>> {
+		if (!this.activated)
+			return Promise.reject(
+				asError(
+					ParentControllerErrorCode.CONNECTION_CLOSED,
+					'The parent bridge has not been activated by the user'
+				)
+			)
+		if (this.connected) this.invalidate('Assistant requested a reconnect')
+		return this.connect(context)
+	}
+
+	/** Clear the activation lease; a later connect() is a new explicit activation. */
+	deactivate(reason = 'Assistant deactivated the parent bridge'): void {
+		if (this.disposed) return
+		const message = {
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'deactivate' as const,
+			requestId: secureParentControllerId('deactivate'),
+		}
+		try {
+			if (isParentControllerMessageSizeAllowed(message))
+				this.parentWindow.postMessage(message, this.currentParentOrigin ?? '*')
+		} catch {
+			/* Local deactivation still succeeds if the parent is already gone. */
+		}
+		this.clearActivation(reason)
+	}
+
+	private clearActivation(reason: string): void {
+		this.activated = false
+		this.invalidate(reason)
+		this.dispatchEvent(new Event('deactivated'))
 	}
 
 	private getAssistantOrigin(): string | null {
@@ -276,13 +356,28 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 			return
 		}
 		if (!isParentControllerMessageSizeAllowed(event.data)) return
+		if (isParentControllerDeactivateMessage(event.data)) {
+			if (this.currentParentOrigin !== null && actualParentOrigin !== this.currentParentOrigin)
+				return
+			// P-originated deactivation is already addressed to A. Clear local
+			// state without replying and requiring a second handshake message.
+			this.clearActivation('Parent controller deactivated the bridge')
+			return
+		}
 		if (isParentControllerOfferMessage(event.data)) {
 			const assistantOrigin = this.getAssistantOrigin()
 			if (!assistantOrigin || event.data.assistantOrigin !== assistantOrigin) return
 			if (event.data.frameContext.assistantOrigin !== assistantOrigin) return
 			if (event.data.frameContext.parentOrigin !== actualParentOrigin) return
+			if (
+				event.data.handshakeRequestId !== undefined &&
+				event.data.handshakeRequestId !== this.pendingHandshakeRequestId
+			)
+				return
+			if (event.data.automaticReconnect === true && !this.activated && !this.connecting) return
 			const sameOffer =
 				!!this.offer &&
+				this.offer.handshakeRequestId === event.data.handshakeRequestId &&
 				this.offer.policyId === event.data.policyId &&
 				this.offer.challenge === event.data.challenge &&
 				this.offer.sessionId === event.data.sessionId &&
@@ -290,7 +385,13 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 				this.offer.frameInstanceId === event.data.frameInstanceId
 			const replacingOffer = !!this.offer && !sameOffer
 			const wasConnecting = replacingOffer && this.connecting !== null
-			const shouldReconnect = replacingOffer && this.connected
+			const shouldReconnect =
+				replacingOffer && this.connected && this.activated && this.autoReconnect
+			const shouldAutoConnect =
+				!this.connecting &&
+				event.data.automaticReconnect === true &&
+				this.activated &&
+				this.autoReconnect
 			if (replacingOffer) {
 				if (wasConnecting) this.invalidateForOfferReplacement('Parent offer replaced')
 				else this.invalidate('Parent offer replaced')
@@ -309,7 +410,7 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 			this.dispatchEvent(new CustomEvent<ParentControllerOffer>('offer', { detail: event.data }))
 			if (wasConnecting)
 				void this.acceptOffer(event.data, actualParentOrigin).catch(() => undefined)
-			else if (shouldReconnect) this.reconnectAfterOffer()
+			else if (shouldReconnect || shouldAutoConnect) this.reconnectAfterOffer()
 			else {
 				this.offerWaiter?.(event.data)
 				this.offerWaiter = null
@@ -491,12 +592,19 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		this.port = port
 		this.portMessageHandler = (event) => this.handlePortMessage(event)
 		this.portMessageErrorHandler = () => {
+			if (this.disposed || this.port !== port) return
 			emitParentControllerLog(this.logger, {
 				event: 'error',
 				code: ParentControllerErrorCode.INVALID_MESSAGE,
 				sessionId: this.connectionState?.sessionId,
 			})
 			this.dispatchEvent(new Event('messageerror'))
+			this.invalidate('Parent controller port failed')
+			if (this.activated && this.autoReconnect) {
+				void this.connect().catch((error: unknown) => {
+					this.dispatchEvent(new CustomEvent('connectionerror', { detail: { error } }))
+				})
+			}
 		}
 		if (port.addEventListener) {
 			port.addEventListener('message', this.portMessageHandler)
@@ -588,6 +696,7 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 			return
 		this.treeRevision = message.treeRevision
 		this.connectedState = true
+		this.activated = true
 		this.connectionState = {
 			policyId: accepted.offer.policyId,
 			sessionId: accepted.offer.sessionId,
@@ -702,6 +811,7 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		this.connectionResolve = null
 		this.connectionReject = null
 		this.connecting = null
+		this.pendingHandshakeRequestId = null
 		if (error) {
 			this.closePort(asError(ParentControllerErrorCode.CONNECTION_CLOSED, 'Connection failed'))
 			this.accepted = null
@@ -1055,6 +1165,8 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		this.connectionState = null
 		this.accepted = null
 		this.authorizedParentState = null
+		this.activated = false
+		this.pendingHandshakeRequestId = null
 		this.offer = null
 		this.offerWaiter = null
 		emitParentControllerLog(this.logger, { event: 'disposed' })

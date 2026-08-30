@@ -12,7 +12,11 @@ import {
 } from './protocol'
 
 import type { VerifiedEmbedPolicyClaims } from './protocol'
-import type { ParentControllerMessagePort, ParentPageControllerHostOptions } from './types'
+import type {
+	ParentControllerEmbedPolicyRequestContext,
+	ParentControllerMessagePort,
+	ParentPageControllerHostOptions,
+} from './types'
 
 class TestPort implements ParentControllerMessagePort {
 	onmessage: ((event: MessageEvent<unknown>) => void) | null = null
@@ -39,6 +43,7 @@ function options(iframe: HTMLIFrameElement, root: ParentPageControllerHostOption
 		root,
 		scopeId: 'scope-1',
 		capabilities: ['observe' as const],
+		handshakeMode: 'parent-initiated' as const,
 		getEmbedPolicy: async () => 'policy',
 		verifyEmbedPolicy: async () => false as const,
 		visualFeedback: 'none' as const,
@@ -51,6 +56,7 @@ function makeInjectedHost(
 		actionPolicy?: ParentPageControllerHostOptions['actionPolicy']
 		capabilities?: ParentControllerCapability[]
 		disposeController?: boolean
+		requestTimeoutMs?: number
 	} = {}
 ) {
 	const capabilities =
@@ -68,7 +74,7 @@ function makeInjectedHost(
 		capabilities,
 		actionPolicy: config.actionPolicy,
 		disposeController: config.disposeController,
-		requestTimeoutMs: 1_000,
+		requestTimeoutMs: config.requestTimeoutMs ?? 1_000,
 	})
 	const controller = {
 		getIndexedElementForPolicy: vi.fn(() => target),
@@ -709,6 +715,263 @@ describe('ParentPageControllerHost lifecycle', () => {
 		iframe.remove()
 	})
 
+	it('stays passive until A requests a handshake, then pre-generates the exact binding', async () => {
+		const root = document.createElement('div')
+		const iframe = document.createElement('iframe')
+		iframe.src = 'https://assistant.example.test/child'
+		iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin')
+		document.body.append(root, iframe)
+		const getEmbedPolicy = vi.fn(
+			async (_context: ParentControllerEmbedPolicyRequestContext) => 'policy'
+		)
+		const host = new ParentPageControllerHost({
+			...options(iframe, root),
+			handshakeMode: 'assistant-initiated',
+			getEmbedPolicy,
+		}).start()
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(getEmbedPolicy).not.toHaveBeenCalled()
+		expect(host.activationActive).toBe(false)
+		expect(host.reconnect()).toBe(false)
+		;(
+			host as unknown as { handleWindowMessage: (event: MessageEvent<unknown>) => void }
+		).handleWindowMessage({
+			origin: 'https://assistant.example.test',
+			source: iframe.contentWindow,
+			data: {
+				protocol: PARENT_CONTROLLER_PROTOCOL,
+				version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+				type: 'handshake-request',
+				requestId: 'handshake-1',
+				reason: 'user',
+			},
+		} as unknown as MessageEvent<unknown>)
+		await waitUntil(() => getEmbedPolicy.mock.calls.length === 1)
+		const [context] = getEmbedPolicy.mock.calls[0]
+		expect(context).toMatchObject({
+			parentOrigin: window.location.origin,
+			assistantOrigin: 'https://assistant.example.test',
+			scopeId: 'scope-1',
+			capabilities: ['observe'],
+		})
+		expect(context.sessionId).toMatch(/^session-/)
+		expect(context.challenge).toMatch(/^challenge-/)
+		expect(context.hostInstanceId).toBe(host.hostInstanceId)
+		expect(context.frameInstanceId).toMatch(/^frame-/)
+		expect(context.signal).toBeInstanceOf(AbortSignal)
+
+		host.dispose()
+		root.remove()
+		iframe.remove()
+	})
+
+	it('replaces an in-flight policy issue when a newer A handshake request arrives', async () => {
+		const root = document.createElement('div')
+		const iframe = document.createElement('iframe')
+		iframe.src = 'https://assistant.example.test/child'
+		iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin')
+		document.body.append(root, iframe)
+		const firstPolicy = deferred<string>()
+		const getEmbedPolicy = vi
+			.fn<[ParentControllerEmbedPolicyRequestContext], Promise<string>>()
+			.mockImplementationOnce(() => firstPolicy.promise)
+			.mockResolvedValueOnce('policy-2')
+		const host = new ParentPageControllerHost({
+			...options(iframe, root),
+			handshakeMode: 'assistant-initiated',
+			getEmbedPolicy,
+		}).start()
+		const handleWindowMessage = (
+			host as unknown as { handleWindowMessage: (event: MessageEvent<unknown>) => void }
+		).handleWindowMessage.bind(host)
+		const request = (requestId: string) =>
+			handleWindowMessage({
+				origin: 'https://assistant.example.test',
+				source: iframe.contentWindow,
+				data: {
+					protocol: PARENT_CONTROLLER_PROTOCOL,
+					version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+					type: 'handshake-request',
+					requestId,
+					reason: 'user',
+				},
+			} as unknown as MessageEvent<unknown>)
+
+		request('handshake-1')
+		await waitUntil(() => getEmbedPolicy.mock.calls.length === 1)
+		request('handshake-2')
+		await waitUntil(() => getEmbedPolicy.mock.calls.length === 2)
+		expect(getEmbedPolicy.mock.calls[0][0].signal.aborted).toBe(true)
+		expect(getEmbedPolicy.mock.calls[1][0].signal.aborted).toBe(false)
+
+		firstPolicy.resolve('policy-1')
+		host.dispose()
+		root.remove()
+		iframe.remove()
+	})
+
+	it('clears activation on an assistant document reload instead of issuing an automatic offer', () => {
+		const root = document.createElement('div')
+		const iframe = document.createElement('iframe')
+		document.body.append(root, iframe)
+		const host = new ParentPageControllerHost({
+			...options(iframe, root),
+			handshakeMode: 'assistant-initiated',
+		}).start()
+		;(host as unknown as { activated: boolean }).activated = true
+		const publishOffer = vi.fn(() => Promise.resolve())
+		;(host as unknown as { publishOffer: typeof publishOffer }).publishOffer = publishOffer
+		const policyController = new AbortController()
+		;(host as unknown as { offerAbortController: AbortController }).offerAbortController =
+			policyController
+		;(host as unknown as { iframeLoadListener: () => void }).iframeLoadListener()
+
+		expect(host.activationActive).toBe(false)
+		expect(policyController.signal.aborted).toBe(true)
+		expect(publishOffer).not.toHaveBeenCalled()
+		host.dispose()
+		root.remove()
+		iframe.remove()
+	})
+
+	it('notifies A on host deactivation without echoing A-originated deactivation', () => {
+		const root = document.createElement('div')
+		const iframe = document.createElement('iframe')
+		document.body.append(root, iframe)
+		const host = new ParentPageControllerHost({
+			...options(iframe, root),
+			handshakeMode: 'assistant-initiated',
+		}).start()
+		const frame = iframe.contentWindow!
+		const postMessage = vi.spyOn(frame, 'postMessage').mockImplementation(() => undefined)
+
+		;(host as unknown as { activated: boolean }).activated = true
+		host.deactivate()
+		expect(postMessage).toHaveBeenCalledTimes(1)
+		expect(postMessage.mock.calls[0][0]).toMatchObject({
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'deactivate',
+		})
+		expect(postMessage.mock.calls[0][1]).toBe('https://assistant.example.test')
+		expect(host.activationActive).toBe(false)
+
+		postMessage.mockClear()
+		;(host as unknown as { activated: boolean }).activated = true
+		;(
+			host as unknown as { handleWindowMessage: (event: MessageEvent<unknown>) => void }
+		).handleWindowMessage({
+			origin: 'https://assistant.example.test',
+			source: frame,
+			data: {
+				protocol: PARENT_CONTROLLER_PROTOCOL,
+				version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+				type: 'deactivate',
+				requestId: 'deactivate-from-a',
+			},
+		} as unknown as MessageEvent<unknown>)
+		expect(host.activationActive).toBe(false)
+		expect(postMessage).not.toHaveBeenCalled()
+
+		host.dispose()
+		root.remove()
+		iframe.remove()
+	})
+
+	it('allows P-side automatic reconnect only while the activation lease is active', () => {
+		const root = document.createElement('div')
+		const iframe = document.createElement('iframe')
+		document.body.append(root, iframe)
+		const host = new ParentPageControllerHost({
+			...options(iframe, root),
+			handshakeMode: 'assistant-initiated',
+		}).start()
+		const publishOffer = vi.fn(() => Promise.resolve())
+		;(host as unknown as { publishOffer: typeof publishOffer }).publishOffer = publishOffer
+		expect(host.reconnect()).toBe(false)
+		;(host as unknown as { activated: boolean }).activated = true
+		expect(host.reconnect()).toBe(true)
+		expect(publishOffer).toHaveBeenCalledWith(true, { automaticReconnect: true })
+
+		host.deactivate()
+		expect(host.activationActive).toBe(false)
+		expect(host.reconnect()).toBe(false)
+		host.dispose()
+		root.remove()
+		iframe.remove()
+	})
+
+	it('settles a pending approval on cancel without dereferencing the cleared waiter', async () => {
+		const created = makeInjectedHost({
+			actionPolicy: async () => ({ decision: 'approval_required' as const }),
+		})
+		const message = requestMessage(created.connection)
+		;(
+			created.host as unknown as { handlePortMessage: (event: MessageEvent) => void }
+		).handlePortMessage.call(created.host, { data: message } as MessageEvent)
+		await waitUntil(() =>
+			created.port.messages.some(
+				(value) => (value as { type?: string }).type === 'approval-required'
+			)
+		)
+
+		expect(() =>
+			(
+				created.host as unknown as {
+					cancelRequest: (requestId: string, method: 'clickElement', capability: 'click') => void
+				}
+			).cancelRequest(message.requestId, 'clickElement', 'click')
+		).not.toThrow()
+		await waitUntil(() =>
+			created.port.messages.some((value) => (value as { type?: string }).type === 'response')
+		)
+
+		created.host.dispose()
+		created.root.remove()
+		created.iframe.remove()
+	})
+
+	it('settles a timed-out approval and lets the serial queue continue', async () => {
+		const created = makeInjectedHost({
+			actionPolicy: async () => ({ decision: 'approval_required' as const }),
+			requestTimeoutMs: 20,
+		})
+		const first = requestMessage(created.connection)
+		;(
+			created.host as unknown as { handlePortMessage: (event: MessageEvent) => void }
+		).handlePortMessage.call(created.host, { data: first } as MessageEvent)
+		await waitUntil(() =>
+			created.port.messages.some(
+				(value) =>
+					(value as { type?: string; requestId?: string }).type === 'response' &&
+					(value as { requestId?: string }).requestId === first.requestId
+			)
+		)
+
+		const second = requestMessage(created.connection, {
+			requestId: 'request-2',
+			method: 'getCurrentUrl',
+			capability: 'observe',
+			payload: null,
+		})
+		;(
+			created.host as unknown as { handlePortMessage: (event: MessageEvent) => void }
+		).handlePortMessage.call(created.host, { data: second } as MessageEvent)
+		await waitUntil(() =>
+			created.port.messages.some(
+				(value) =>
+					(value as { type?: string; requestId?: string }).type === 'response' &&
+					(value as { requestId?: string }).requestId === second.requestId
+			)
+		)
+		expect(created.controller.getCurrentUrl).toHaveBeenCalledTimes(1)
+
+		created.host.dispose()
+		created.root.remove()
+		created.iframe.remove()
+	})
+
 	it('suppresses duplicate request IDs while the first action is live', async () => {
 		const { host, root, iframe, connection, controller, port } = makeInjectedHost()
 		const message = requestMessage(connection)
@@ -822,6 +1085,7 @@ describe('ParentPageControllerHost lifecycle', () => {
 		connection.expiresAt = Math.floor(Date.now() / 1000) - 1
 		const publishOffer = vi.fn(() => Promise.resolve())
 		;(host as unknown as { publishOffer: typeof publishOffer }).publishOffer = publishOffer
+		;(host as unknown as { activated: boolean }).activated = true
 		const message = requestMessage(connection, {
 			method: 'getCurrentUrl',
 			capability: 'observe',

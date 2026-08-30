@@ -18,6 +18,8 @@ import {
 	isCapability,
 	isKnownMethod,
 	isParentControllerAcceptMessage,
+	isParentControllerDeactivateMessage,
+	isParentControllerHandshakeRequestMessage,
 	isParentControllerMessageSizeAllowed,
 	isParentControllerPayload,
 	isParentControllerPortMessage,
@@ -85,7 +87,13 @@ const MUTATING_METHODS = new Set<ParentControllerMethod>([
 ])
 const MAX_REQUESTS_PER_SESSION = 10_000
 const MAX_CONCURRENT_REQUESTS = 128
+const MAX_HANDSHAKE_REQUEST_IDS = 128
 const REQUIRED_SANDBOX_TOKENS = new Set(['allow-scripts', 'allow-same-origin'])
+
+interface OfferPublishMetadata {
+	readonly handshakeRequestId?: string
+	readonly automaticReconnect?: boolean
+}
 
 interface ActiveRequest {
 	readonly message: Omit<
@@ -314,6 +322,8 @@ export class ParentPageControllerHost extends EventTarget {
 	private readonly transformState: ParentControllerTransformState | undefined
 	private readonly disposeController: boolean
 	private readonly visualFeedback: 'non-blocking' | 'none'
+	private readonly handshakeMode: 'assistant-initiated' | 'parent-initiated'
+	private readonly autoReconnect: boolean
 	private readonly addedNotInteractive: boolean
 	private previousNotInteractive: string | null = null
 	private feedback: HTMLElement | null = null
@@ -323,10 +333,13 @@ export class ParentPageControllerHost extends EventTarget {
 	private offer: ParentControllerOfferMessage | null = null
 	private offerFrameContext: ParentFrameContext | null = null
 	private offerExpiresAt = 0
+	private offerSessionExpiresAt = 0
 	private offerChildFrameGrants: readonly ParentFrameProxyGrant[] = []
 	private offerPublishPromise: Promise<void> | null = null
 	private offerGeneration = 0
 	private offerAbortController: AbortController | null = null
+	private activated = false
+	private readonly seenHandshakeRequestIds = new Set<string>()
 	private usedPolicyIds = new Map<string, number>()
 	private connection: HostConnection | null = null
 	private connectionExpiryTimer: ReturnType<typeof setTimeout> | null = null
@@ -342,21 +355,33 @@ export class ParentPageControllerHost extends EventTarget {
 		this.handleWindowMessage(event)
 	private readonly iframeLoadListener = () => {
 		if (this.disposed || !this.started) return
+		// A new document cannot inherit the previous document's in-memory
+		// activation. Require the new A instance to request another user handshake.
+		this.activated = false
+		this.seenHandshakeRequestIds.clear()
+		this.offerGeneration += 1
+		this.offerAbortController?.abort()
+		this.offerAbortController = null
 		this.visualCursor?.clear()
 		this.resetConnection()
 		this.offer = null
 		this.offerFrameContext = null
 		this.offerChildFrameGrants = []
-		void this.publishOffer(true)
+		if (this.handshakeMode === 'parent-initiated') void this.publishOffer(true)
 	}
 	private readonly navigationListener = () => {
 		if (this.disposed || !this.started) return
+		const shouldReconnect = this.activated && this.autoReconnect
+		this.offerGeneration += 1
+		this.offerAbortController?.abort()
+		this.offerAbortController = null
 		this.visualCursor?.clear()
 		this.resetConnection()
 		this.offer = null
 		this.offerFrameContext = null
 		this.offerChildFrameGrants = []
-		void this.publishOffer(true)
+		if (shouldReconnect) this.publishAutomaticReconnect()
+		else if (this.handshakeMode === 'parent-initiated') void this.publishOffer(true)
 	}
 	private readonly pagehideListener = () => {
 		if (!this.disposed) this.dispose()
@@ -399,6 +424,16 @@ export class ParentPageControllerHost extends EventTarget {
 		this.transformState = options.transformState
 		this.disposeController = options.disposeController ?? true
 		this.visualFeedback = options.visualFeedback ?? 'none'
+		if (
+			options.handshakeMode !== undefined &&
+			options.handshakeMode !== 'assistant-initiated' &&
+			options.handshakeMode !== 'parent-initiated'
+		)
+			throw new TypeError('handshakeMode is invalid')
+		if (options.autoReconnect !== undefined && typeof options.autoReconnect !== 'boolean')
+			throw new TypeError('autoReconnect must be a boolean')
+		this.handshakeMode = options.handshakeMode ?? 'assistant-initiated'
+		this.autoReconnect = options.autoReconnect ?? true
 		this.validateRoot()
 		const controllerOptions = options.controllerOptions ?? {}
 		const childFrames = options.childFrames
@@ -509,8 +544,61 @@ export class ParentPageControllerHost extends EventTarget {
 		}
 		this.ensureFeedback()
 		this.ensureVisualCursor()
-		void this.publishOffer(false)
+		if (this.handshakeMode === 'parent-initiated') void this.publishOffer(false)
 		return this
+	}
+
+	get activationActive(): boolean {
+		return this.activated && !this.disposed
+	}
+
+	/** P-side automatic reconnect. It is available only after a successful activation. */
+	reconnect(): boolean {
+		if (this.disposed || !this.started || !this.activated || !this.autoReconnect) return false
+		this.resetConnection()
+		this.offer = null
+		this.offerFrameContext = null
+		this.offerChildFrameGrants = []
+		this.publishAutomaticReconnect()
+		return true
+	}
+
+	private publishAutomaticReconnect(): void {
+		if (this.handshakeMode === 'assistant-initiated')
+			void this.publishOffer(true, { automaticReconnect: true })
+		else void this.publishOffer(true)
+	}
+
+	/** Clear the activation lease; the next connection must be requested explicitly by A. */
+	deactivate(): void {
+		if (this.disposed) return
+		const message = {
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'deactivate' as const,
+			requestId: secureParentControllerId('deactivate'),
+		}
+		try {
+			if (isParentControllerMessageSizeAllowed(message))
+				this.frameWindow()?.postMessage(message, this.assistantOrigin)
+		} catch {
+			/* A may no longer be ready. */
+		}
+		this.clearActivation()
+	}
+
+	private clearActivation(): void {
+		this.activated = false
+		this.offerGeneration += 1
+		this.offerAbortController?.abort()
+		this.offerAbortController = null
+		this.resetConnection()
+		this.offer = null
+		this.offerFrameContext = null
+		this.offerChildFrameGrants = []
+		this.seenHandshakeRequestIds.clear()
+		this.emitLog({ event: 'deactivated' })
+		this.dispatchEvent(new Event('deactivated'))
 	}
 
 	private ensureFeedback(): void {
@@ -578,7 +666,7 @@ export class ParentPageControllerHost extends EventTarget {
 		}
 	}
 
-	private async publishOffer(force: boolean): Promise<void> {
+	private async publishOffer(force: boolean, metadata: OfferPublishMetadata = {}): Promise<void> {
 		if (force) {
 			this.offerGeneration += 1
 			this.offerAbortController?.abort()
@@ -586,7 +674,7 @@ export class ParentPageControllerHost extends EventTarget {
 		}
 		if (this.offerPublishPromise && !force) return this.offerPublishPromise
 		const generation = this.offerGeneration
-		const task = this.publishOfferImpl(force, generation)
+		const task = this.publishOfferImpl(force, generation, metadata)
 		this.offerPublishPromise = task
 		try {
 			await task
@@ -599,7 +687,11 @@ export class ParentPageControllerHost extends EventTarget {
 		return !this.disposed && this.started && generation === this.offerGeneration
 	}
 
-	private async publishOfferImpl(force: boolean, generation: number): Promise<void> {
+	private async publishOfferImpl(
+		force: boolean,
+		generation: number,
+		metadata: OfferPublishMetadata
+	): Promise<void> {
 		if (!this.isCurrentOfferGeneration(generation)) return
 		const target = this.frameWindow()
 		if (!target) return
@@ -616,33 +708,6 @@ export class ParentPageControllerHost extends EventTarget {
 			parentOrigin = this.parentOrigin()
 		} catch {
 			this.emitLog({ event: 'offer_denied', code: ParentControllerErrorCode.EMBED_POLICY_DENIED })
-			return
-		}
-		let policy: string
-		const policyController = new AbortController()
-		this.offerAbortController = policyController
-		const policyTimer = setTimeout(() => policyController.abort(), this.handshakeTimeoutMs)
-		try {
-			policy = await waitForAbort(
-				Promise.resolve().then(() => this.options.getEmbedPolicy()),
-				policyController.signal
-			)
-		} catch {
-			if (this.isCurrentOfferGeneration(generation))
-				this.emitLog({
-					event: 'offer_denied',
-					code: policyController.signal.aborted
-						? ParentControllerErrorCode.TIMEOUT
-						: ParentControllerErrorCode.EMBED_POLICY_DENIED,
-				})
-			return
-		} finally {
-			clearTimeout(policyTimer)
-			if (this.offerAbortController === policyController) this.offerAbortController = null
-		}
-		if (!this.isCurrentOfferGeneration(generation)) return
-		if (!isSafeString(policy, PARENT_CONTROLLER_MAX_POLICY_LENGTH)) {
-			this.emitLog({ event: 'offer_denied', code: ParentControllerErrorCode.INVALID_MESSAGE })
 			return
 		}
 		let frameContext: ParentFrameContext
@@ -664,6 +729,48 @@ export class ParentPageControllerHost extends EventTarget {
 			!frameContext.allowSameOrigin
 		) {
 			this.emitLog({ event: 'offer_denied', code: ParentControllerErrorCode.EMBED_POLICY_DENIED })
+			return
+		}
+		const bridgeBinding = {
+			challenge: secureParentControllerId('challenge'),
+			sessionId: secureParentControllerId('session'),
+			hostInstanceId: this.hostInstanceId,
+			frameInstanceId: secureParentControllerId('frame'),
+		}
+		let policy: string
+		const policyController = new AbortController()
+		this.offerAbortController = policyController
+		const policyTimer = setTimeout(() => policyController.abort(), this.handshakeTimeoutMs)
+		try {
+			policy = await waitForAbort(
+				Promise.resolve().then(() =>
+					this.options.getEmbedPolicy({
+						...bridgeBinding,
+						parentOrigin,
+						assistantOrigin: this.assistantOrigin,
+						scopeId: this.scopeId,
+						capabilities: [...this.capabilities],
+						signal: policyController.signal,
+					})
+				),
+				policyController.signal
+			)
+		} catch {
+			if (this.isCurrentOfferGeneration(generation))
+				this.emitLog({
+					event: 'offer_denied',
+					code: policyController.signal.aborted
+						? ParentControllerErrorCode.TIMEOUT
+						: ParentControllerErrorCode.EMBED_POLICY_DENIED,
+				})
+			return
+		} finally {
+			clearTimeout(policyTimer)
+			if (this.offerAbortController === policyController) this.offerAbortController = null
+		}
+		if (!this.isCurrentOfferGeneration(generation)) return
+		if (!isSafeString(policy, PARENT_CONTROLLER_MAX_POLICY_LENGTH)) {
+			this.emitLog({ event: 'offer_denied', code: ParentControllerErrorCode.INVALID_MESSAGE })
 			return
 		}
 		const signalController = new AbortController()
@@ -689,7 +796,7 @@ export class ParentPageControllerHost extends EventTarget {
 		if (this.offerAbortController === signalController) this.offerAbortController = null
 		if (!this.isCurrentOfferGeneration(generation) || signalController.signal.aborted) return
 		const claimsCode = claims
-			? this.validateClaims(claims, parentOrigin, frameContext)
+			? this.validateClaims(claims, parentOrigin, frameContext, bridgeBinding)
 			: ParentControllerErrorCode.EMBED_POLICY_DENIED
 		if (!claims || claimsCode !== true) {
 			this.emitLog({
@@ -714,17 +821,21 @@ export class ParentPageControllerHost extends EventTarget {
 			this.emitLog({ event: 'offer_denied', code: ParentControllerErrorCode.POLICY_REPLAYED })
 			return
 		}
-		this.usedPolicyIds.set(claims.jti, claims.exp)
+		this.usedPolicyIds.set(claims.jti, claims.bridgeSessionExp ?? claims.exp)
 		const offer: ParentControllerOfferMessage = {
 			protocol: PARENT_CONTROLLER_PROTOCOL,
 			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
 			type: 'offer',
+			...(metadata.handshakeRequestId === undefined
+				? {}
+				: { handshakeRequestId: metadata.handshakeRequestId }),
+			...(metadata.automaticReconnect === true ? { automaticReconnect: true } : {}),
 			policy,
 			policyId: claims.jti,
-			challenge: secureParentControllerId('challenge'),
-			sessionId: secureParentControllerId('session'),
-			hostInstanceId: this.hostInstanceId,
-			frameInstanceId: secureParentControllerId('frame'),
+			challenge: bridgeBinding.challenge,
+			sessionId: bridgeBinding.sessionId,
+			hostInstanceId: bridgeBinding.hostInstanceId,
+			frameInstanceId: bridgeBinding.frameInstanceId,
 			assistantOrigin: this.assistantOrigin,
 			capabilities: this.capabilities.filter((capability) => claims.cap.includes(capability)),
 			frameContext,
@@ -736,6 +847,7 @@ export class ParentPageControllerHost extends EventTarget {
 		this.offer = offer
 		this.offerFrameContext = frameContext
 		this.offerExpiresAt = claims.exp
+		this.offerSessionExpiresAt = claims.bridgeSessionExp ?? claims.exp
 		this.offerChildFrameGrants = childFrameGrants
 		try {
 			if (!this.isCurrentOfferGeneration(generation)) return
@@ -753,7 +865,8 @@ export class ParentPageControllerHost extends EventTarget {
 	private validateClaims(
 		claims: VerifiedEmbedPolicyClaims,
 		parentOrigin: string,
-		frameContext: ParentFrameContext
+		frameContext: ParentFrameContext,
+		bridgeBinding: import('./protocol').ParentControllerBridgeBinding
 	): true | ParentControllerErrorCode {
 		if (
 			!claims ||
@@ -788,6 +901,22 @@ export class ParentPageControllerHost extends EventTarget {
 			return ParentControllerErrorCode.POLICY_EXPIRED
 		if (!Number.isSafeInteger(claims.nbf) || claims.nbf > now || claims.exp <= claims.nbf)
 			return ParentControllerErrorCode.EMBED_POLICY_DENIED
+		if (claims.bridgeBinding !== undefined) {
+			const binding = claims.bridgeBinding
+			if (
+				!binding ||
+				binding.sessionId !== bridgeBinding.sessionId ||
+				binding.challenge !== bridgeBinding.challenge ||
+				binding.hostInstanceId !== bridgeBinding.hostInstanceId ||
+				binding.frameInstanceId !== bridgeBinding.frameInstanceId
+			)
+				return ParentControllerErrorCode.SESSION_MISMATCH
+		}
+		if (
+			claims.bridgeSessionExp !== undefined &&
+			(!Number.isSafeInteger(claims.bridgeSessionExp) || claims.bridgeSessionExp <= now)
+		)
+			return ParentControllerErrorCode.POLICY_EXPIRED
 		return true
 	}
 
@@ -845,6 +974,36 @@ export class ParentPageControllerHost extends EventTarget {
 		return grants
 	}
 
+	private handleHandshakeRequest(
+		message: import('./protocol').ParentControllerHandshakeRequestMessage
+	): void {
+		if (!this.started || (message.reason === 'reconnect' && !this.activated)) return
+		if (this.seenHandshakeRequestIds.has(message.requestId)) {
+			if (this.offer?.handshakeRequestId === message.requestId) {
+				try {
+					this.frameWindow()?.postMessage(this.offer, this.assistantOrigin)
+				} catch {
+					/* A may no longer be ready. */
+				}
+			}
+			return
+		}
+		if (this.seenHandshakeRequestIds.size >= MAX_HANDSHAKE_REQUEST_IDS) {
+			const oldest = this.seenHandshakeRequestIds.values().next().value as string | undefined
+			if (oldest) this.seenHandshakeRequestIds.delete(oldest)
+		}
+		this.seenHandshakeRequestIds.add(message.requestId)
+		this.emitLog({ event: 'handshake_request', requestId: message.requestId })
+		if (this.connection || this.port) this.resetConnection()
+		this.offer = null
+		this.offerFrameContext = null
+		this.offerChildFrameGrants = []
+		void this.publishOffer(true, {
+			handshakeRequestId: message.requestId,
+			automaticReconnect: message.reason === 'reconnect',
+		})
+	}
+
 	private handleWindowMessage(event: MessageEvent<unknown>): void {
 		if (this.disposed || event.source !== this.frameWindow()) return
 		let origin: string
@@ -853,12 +1012,18 @@ export class ParentPageControllerHost extends EventTarget {
 		} catch {
 			return
 		}
-		if (
-			origin !== this.assistantOrigin ||
-			!isParentControllerMessageSizeAllowed(event.data) ||
-			!isParentControllerAcceptMessage(event.data)
-		)
+		if (origin !== this.assistantOrigin || !isParentControllerMessageSizeAllowed(event.data)) return
+		if (isParentControllerHandshakeRequestMessage(event.data)) {
+			this.handleHandshakeRequest(event.data)
 			return
+		}
+		if (isParentControllerDeactivateMessage(event.data)) {
+			// A-originated deactivation is already addressed to this host. Clear
+			// local state without sending a second deactivate back to A.
+			this.clearActivation()
+			return
+		}
+		if (!isParentControllerAcceptMessage(event.data)) return
 		const offer = this.offer
 		if (
 			!offer ||
@@ -870,10 +1035,14 @@ export class ParentPageControllerHost extends EventTarget {
 		)
 			return
 		if (this.offerExpiresAt <= Math.floor(Date.now() / 1000)) {
+			const handshakeRequestId = offer.handshakeRequestId
+			const automaticReconnect = offer.automaticReconnect === true
 			this.offer = null
 			this.offerFrameContext = null
 			this.offerChildFrameGrants = []
-			void this.publishOffer(true)
+			if (handshakeRequestId)
+				void this.publishOffer(true, { handshakeRequestId, automaticReconnect })
+			else if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
 			return
 		}
 		try {
@@ -920,11 +1089,12 @@ export class ParentPageControllerHost extends EventTarget {
 					acceptedCapabilities.includes(capability as ParentControllerCapability)
 				),
 			})),
-			expiresAt: this.offerExpiresAt,
+			expiresAt: this.offerSessionExpiresAt,
 			seenRequestIds: new Set(),
 			treeRevision: 0,
 			state: null,
 		}
+		this.activated = true
 		if (this.controller instanceof ParentFrameProxyController)
 			this.controller.setAuthorizedFrames(this.connection.childFrameGrants)
 		this.connectionGeneration += 1
@@ -949,6 +1119,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.postConnected()
 		} catch {
 			this.resetConnection()
+			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
 		}
 	}
 
@@ -962,7 +1133,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.offer = null
 			this.offerFrameContext = null
 			this.offerChildFrameGrants = []
-			void this.publishOffer(true)
+			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
 		}
 		if (port.addEventListener) {
 			port.addEventListener('message', this.portMessageHandler)
@@ -983,7 +1154,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.offer = null
 			this.offerFrameContext = null
 			this.offerChildFrameGrants = []
-			void this.publishOffer(true)
+			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
 		}, delay)
 	}
 
@@ -1044,7 +1215,7 @@ export class ParentPageControllerHost extends EventTarget {
 			this.offer = null
 			this.offerFrameContext = null
 			this.offerChildFrameGrants = []
-			void this.publishOffer(true)
+			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
 			return
 		}
 		if (message.type === 'request') {
@@ -1111,9 +1282,10 @@ export class ParentPageControllerHost extends EventTarget {
 				)
 			}
 			active.abortController.abort()
-			if (active.approval) {
-				this.consumeApproval(active.approval)
-				active.approval.resolve(false)
+			const approval = active.approval
+			if (approval) {
+				this.consumeApproval(approval)
+				approval.resolve(false)
 			}
 		}, this.requestTimeoutMs)
 		this.requests.set(message.requestId, active)
@@ -1816,9 +1988,10 @@ export class ParentPageControllerHost extends EventTarget {
 		if (!active || active.message.method !== method || active.message.capability !== capability)
 			return
 		active.abortController.abort()
-		if (active.approval) {
-			this.consumeApproval(active.approval)
-			active.approval.resolve(false)
+		const approval = active.approval
+		if (approval) {
+			this.consumeApproval(approval)
+			approval.resolve(false)
 		}
 	}
 
@@ -1899,6 +2072,8 @@ export class ParentPageControllerHost extends EventTarget {
 		this.offer = null
 		this.offerFrameContext = null
 		this.offerChildFrameGrants = []
+		this.activated = false
+		this.seenHandshakeRequestIds.clear()
 		this.usedPolicyIds.clear()
 		this.emitLog({ event: 'disposed' })
 		this.dispatchEvent(new Event('dispose'))

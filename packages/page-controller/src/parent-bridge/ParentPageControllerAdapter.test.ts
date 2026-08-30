@@ -30,7 +30,8 @@ type MessageListener = (event: MessageEvent<unknown>) => void
 class FakePort implements ParentControllerMessagePort {
 	onmessage: MessageListener | null = null
 	readonly messages: unknown[] = []
-	private readonly listeners = new Set<MessageListener>()
+	private readonly messageListeners = new Set<MessageListener>()
+	private readonly messageErrorListeners = new Set<MessageListener>()
 	closed = false
 
 	postMessage(message: unknown): void {
@@ -38,12 +39,14 @@ class FakePort implements ParentControllerMessagePort {
 		this.messages.push(message)
 	}
 
-	addEventListener(_type: string, listener: MessageListener): void {
-		this.listeners.add(listener)
+	addEventListener(type: string, listener: MessageListener): void {
+		if (type === 'message') this.messageListeners.add(listener)
+		else if (type === 'messageerror') this.messageErrorListeners.add(listener)
 	}
 
-	removeEventListener(_type: string, listener: MessageListener): void {
-		this.listeners.delete(listener)
+	removeEventListener(type: string, listener: MessageListener): void {
+		if (type === 'message') this.messageListeners.delete(listener)
+		else if (type === 'messageerror') this.messageErrorListeners.delete(listener)
 	}
 
 	start(): void {}
@@ -54,8 +57,13 @@ class FakePort implements ParentControllerMessagePort {
 
 	emit(data: unknown): void {
 		const event = { data } as MessageEvent<unknown>
-		for (const listener of this.listeners) listener(event)
+		for (const listener of this.messageListeners) listener(event)
 		this.onmessage?.(event)
+	}
+
+	emitError(data: unknown = null): void {
+		const event = { data } as MessageEvent<unknown>
+		for (const listener of this.messageErrorListeners) listener(event)
 	}
 }
 
@@ -149,7 +157,9 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
 	}
 }
 
-async function connectAdapter(options: { requestTimeoutMs?: number } = {}) {
+async function connectAdapter(
+	options: { requestTimeoutMs?: number; autoReconnect?: boolean } = {}
+) {
 	const parent = new FakeParent()
 	const bridgeWindow = new FakeWindow(parent)
 	let authorizationCalls = 0
@@ -166,10 +176,23 @@ async function connectAdapter(options: { requestTimeoutMs?: number } = {}) {
 		},
 		onApprovalRequired: async () => false,
 		requestTimeoutMs: options.requestTimeoutMs ?? 30,
+		autoReconnect: options.autoReconnect,
 	})
-	const currentOffer = offer()
-	bridgeWindow.emit(currentOffer)
+	expect(parent.messages).toEqual([])
+	expect(authorizationCalls).toBe(0)
 	const connectionPromise = adapter.connect()
+	await waitUntil(() =>
+		parent.messages.some(
+			(entry) => (entry.message as { type?: string }).type === 'handshake-request'
+		)
+	)
+	const handshakeRequest = parent.messages.find(
+		(entry): entry is typeof entry & { message: { requestId: string } } =>
+			(entry.message as { type?: string }).type === 'handshake-request'
+	)
+	expect(handshakeRequest?.targetOrigin).toBe('*')
+	const currentOffer = offer({ handshakeRequestId: handshakeRequest!.message.requestId })
+	bridgeWindow.emit(currentOffer)
 	await waitUntil(() =>
 		parent.messages.some((entry) => (entry.message as { type?: string }).type === 'accept')
 	)
@@ -228,6 +251,53 @@ afterEach(() => {
 })
 
 describe('ParentPageControllerAdapter regressions', () => {
+	it('stays passive until connect is explicitly invoked by A', async () => {
+		const parent = new FakeParent()
+		const bridgeWindow = new FakeWindow(parent)
+		const authorizeOffer = vi.fn(async () => false as const)
+		const adapter = new ParentPageControllerAdapter({
+			window: bridgeWindow,
+			requestedCapabilities: ['observe'],
+			authorizeOffer,
+			onApprovalRequired: async () => false,
+		})
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(parent.messages).toEqual([])
+		expect(authorizeOffer).not.toHaveBeenCalled()
+		await expect(adapter.reconnect()).rejects.toMatchObject({
+			code: 'CONNECTION_CLOSED',
+		})
+
+		const connection = adapter.connect()
+		await waitUntil(() => parent.messages.length === 1)
+		expect(parent.messages[0]).toMatchObject({
+			targetOrigin: '*',
+			message: { type: 'handshake-request', reason: 'user' },
+		})
+		adapter.dispose()
+		await expect(connection).rejects.toMatchObject({ code: 'DISPOSED' })
+	})
+
+	it('ignores an offer for a stale handshake request', async () => {
+		const parent = new FakeParent()
+		const bridgeWindow = new FakeWindow(parent)
+		const authorizeOffer = vi.fn(async () => false as const)
+		const adapter = new ParentPageControllerAdapter({
+			window: bridgeWindow,
+			requestedCapabilities: ['observe'],
+			authorizeOffer,
+			onApprovalRequired: async () => false,
+		})
+		const connection = adapter.connect()
+		await waitUntil(() => parent.messages.length === 1)
+		bridgeWindow.emit(offer({ handshakeRequestId: 'stale-handshake-request' }))
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(authorizeOffer).not.toHaveBeenCalled()
+		expect(parent.messages).toHaveLength(1)
+		adapter.dispose()
+		await expect(connection).rejects.toMatchObject({ code: 'DISPOSED' })
+	})
+
 	it('reports OUTCOME_UNKNOWN after a posted mutation times out before started', async () => {
 		const { adapter, port } = await connectAdapter({ requestTimeoutMs: 10 })
 		vi.useFakeTimers()
@@ -296,6 +366,92 @@ describe('ParentPageControllerAdapter regressions', () => {
 		}
 	})
 
+	it('automatically requests an A-side reconnect after a real port messageerror', async () => {
+		const { adapter, parent, port } = await connectAdapter()
+		try {
+			expect(adapter.activationActive).toBe(true)
+			port.emitError()
+			await waitUntil(
+				() =>
+					parent.messages.filter(
+						(entry) => (entry.message as { type?: string }).type === 'handshake-request'
+					).length === 2
+			)
+			const reconnectRequest = parent.messages.filter(
+				(entry) => (entry.message as { type?: string }).type === 'handshake-request'
+			)[1]
+			expect(reconnectRequest).toMatchObject({
+				targetOrigin: '*',
+				message: { type: 'handshake-request', reason: 'reconnect' },
+			})
+			expect(port.closed).toBe(true)
+
+			adapter.deactivate()
+			expect(adapter.activationActive).toBe(false)
+			expect(parent.messages.at(-1)?.message).toMatchObject({ type: 'deactivate' })
+			await expect(adapter.reconnect()).rejects.toMatchObject({ code: 'CONNECTION_CLOSED' })
+		} finally {
+			adapter.dispose()
+		}
+	})
+
+	it('invalidates on port messageerror without reconnecting when autoReconnect is disabled', async () => {
+		const { adapter, parent, port } = await connectAdapter({ autoReconnect: false })
+		try {
+			const handshakeCount = parent.messages.filter(
+				(entry) => (entry.message as { type?: string }).type === 'handshake-request'
+			).length
+			port.emitError()
+			expect(adapter.connected).toBe(false)
+			expect(adapter.activationActive).toBe(true)
+			expect(port.closed).toBe(true)
+			expect(
+				parent.messages.filter(
+					(entry) => (entry.message as { type?: string }).type === 'handshake-request'
+				).length
+			).toBe(handshakeCount)
+		} finally {
+			adapter.dispose()
+		}
+	})
+
+	it('clears local activation on parent deactivation and requires a user handshake', async () => {
+		const { adapter, bridgeWindow, parent } = await connectAdapter()
+		try {
+			const deactivation = {
+				protocol: PARENT_CONTROLLER_PROTOCOL,
+				version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+				type: 'deactivate' as const,
+				requestId: 'deactivate-1',
+			}
+			const messageCount = parent.messages.length
+			bridgeWindow.emit(deactivation, 'https://wrong-parent.example.test')
+			expect(adapter.connected).toBe(true)
+			expect(adapter.activationActive).toBe(true)
+
+			bridgeWindow.emit(deactivation)
+			expect(adapter.connected).toBe(false)
+			expect(adapter.activationActive).toBe(false)
+			expect(parent.messages).toHaveLength(messageCount)
+
+			const connection = adapter.connect()
+			await waitUntil(
+				() =>
+					parent.messages.filter(
+						(entry) => (entry.message as { type?: string }).type === 'handshake-request'
+					).length === 2
+			)
+			expect(parent.messages.at(-1)).toMatchObject({
+				targetOrigin: '*',
+				message: { type: 'handshake-request', reason: 'user' },
+			})
+			adapter.dispose()
+			await expect(connection).rejects.toMatchObject({ code: 'DISPOSED' })
+		} finally {
+			adapter.dispose()
+		}
+	})
+
 	it('reauthorizes and reconnects when a new offer replaces the live offer', async () => {
 		const {
 			adapter,
@@ -311,6 +467,7 @@ describe('ParentPageControllerAdapter regressions', () => {
 				challenge: 'challenge-2',
 				sessionId: 'session-2',
 				frameInstanceId: 'frame-2',
+				automaticReconnect: true,
 			})
 			bridgeWindow.emit(replacement)
 			await waitUntil(() => getAuthorizationCalls() === 2)

@@ -36,8 +36,9 @@ existing `packages/e2e/server.mjs`, which listens on the parent origins
 The two parent URLs exercise the same child assistant origin with different
 parent origins. The fixture presents a realistic operations dashboard, with the
 assistant fixed on the right as a floating panel approximately 25% of the
-viewport wide and 80% high. After the iframe connects, click **Run PageAgent**
-to execute the fixed task: click the parent button, enter `PageAgent Demo` in
+viewport wide and 80% high. Click **Connect to parent** in A first; this is the
+only action that starts the initial P↔A authorization handshake. After it
+connects, click **Run PageAgent** to execute the fixed task: click the parent button, enter `PageAgent Demo` in
 **Parent value**, select `Pro` for **Parent plan**, then click **Release
 shipment** in the authorized business iframe and fill **Approval note** after a
 one-use approval. The assistant also keeps
@@ -78,7 +79,7 @@ Use the narrow runtime entries in bundled applications:
 import { PageController } from '@page-agent/page-controller'
 import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bridge/host'
 import { ParentPageControllerAdapter } from '@page-agent/page-controller/parent-bridge/adapter'
-import { createManagedEmbedAuthClient } from '@page-agent/page-controller/parent-bridge/managed-auth'
+import { createIntegrationAwareManagedEmbedAuthClient } from '@page-agent/page-controller/parent-bridge/integration-auth'
 import '@page-agent/page-controller/parent-bridge/host.css'
 ```
 
@@ -100,11 +101,15 @@ import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bri
 const iframe = document.querySelector<HTMLIFrameElement>('iframe[data-page-agent-parent-bridge]')
 if (!iframe) throw new Error('Parent bridge iframe was not found')
 
-const managedAuth = createManagedEmbedAuthClient({
+const managedAuth = createIntegrationAwareManagedEmbedAuthClient({
     endpoint: '/api/parent-bridge/embed-policy',
+    expectedIntegrationId: 'checkout-p__shared-assistant',
+    expectedParentAppId: 'checkout-p',
+    expectedAssistantAppId: 'shared-assistant',
     expectedParentOrigin: window.location.origin,
     expectedAssistantOrigin: 'https://assistant.example.com',
     expectedScopeId: 'checkout',
+    expectedIssuer: 'page-agent-auth',
     allowedCapabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup', 'visual'],
 })
 
@@ -120,7 +125,7 @@ const host = new ParentPageControllerHost({
         target?.matches('[data-checkout-payment], [data-permission-change]')
             ? { decision: 'approval_required', reason: 'Sensitive business action' }
             : { decision: 'allow' },
-    getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+    getEmbedPolicy: (context) => managedAuth.getEmbedPolicy(context),
     verifyEmbedPolicy: (policy, context) => managedAuth.verifyEmbedPolicy(policy, context),
 })
 
@@ -129,6 +134,12 @@ host.start()
 // On SPA teardown or page replacement:
 // host.dispose()
 ```
+
+`host.start()` is passive by default: it installs the P-side listeners but does
+not request a policy or send an offer. The first policy issue happens only after
+the bound A iframe sends the bootstrap request created by `adapter.connect()`.
+`handshakeMode: 'parent-initiated'` retains the old eager behavior for one
+compatibility release and should not be used by new integrations.
 
 `visualFeedback: 'non-blocking'` enables both the parent status badge and a
 fixed visual cursor. The cursor listens for the PageController's existing
@@ -167,34 +178,42 @@ click ripple. Target systems can brand it without changing runtime code:
 The arrow tip and ripple center both use the exact action coordinate. Avoid
 positive cursor offsets unless a custom shape has a different hotspot.
 
-By default, the managed-auth client accepts only the exact `{ policy, claims }`
-pair returned by its same-origin HTTPS endpoint, validates lifetime, parent/assistant origins,
-scope, protocol, and capabilities, and requires `verifyEmbedPolicy` to receive
-the same token and browser context. P's backend still performs user/business
-authorization at that endpoint, and A's backend must redeem the token online.
+By default, the integration-aware client accepts only the exact `{ policy, claims }`
+pair returned by its same-origin HTTPS endpoint. It validates the Integration,
+apps, config version, lifetime, complete bridge binding, parent/assistant
+origins, scope, protocol, and capabilities, and requires `verifyEmbedPolicy` to
+receive the same token and browser context. The Host passes a newly generated
+binding to `getEmbedPolicy(context)` before issue. P's backend still performs
+user/business authorization, and A's backend must redeem the token online. The
+browser request contains no user, tenant, issuer, or service actor.
 For ES256/JWKS, replace these callbacks with the application signature verifier.
 The bridge's origin/source/nonce checks do not replace application authorization.
 
-For a controlled private-network HTTP deployment, both the Auth-side
-`OpaqueEmbedAuthorizationService` and the P-side `createManagedEmbedAuthClient`
-must explicitly set `allowInsecureHttp: true`; the default is `false`. This
+For a controlled private-network HTTP deployment, the Auth global risk gate,
+the Integration `transportMode`, and the P-side
+`createIntegrationAwareManagedEmbedAuthClient` must all explicitly opt in; HTTP
+is rejected by default. This
 allows exact `http:` origins but does not encrypt transport or protect against
 an on-path attacker.
 
 The host may also be started from the standalone browser bundle. The bundle is
 intentionally limited to `ParentPageControllerHost`, the helper, and
 `PageController`; it does not contain PageAgent Core, an LLM client, or UI. The
-managed-auth helper remains a separate version-pinned ESM entry:
+integration-aware Auth helper remains a separate version-pinned ESM entry:
 
 ```html
 <script src="/assets/page-agent-parent-host.iife.min.js"></script>
 <script type="module">
-    import { createManagedEmbedAuthClient } from '/assets/parent-bridge/managed-auth.js'
-    const managedAuth = createManagedEmbedAuthClient({
+    import { createIntegrationAwareManagedEmbedAuthClient } from '/assets/parent-bridge/integration-auth.js'
+    const managedAuth = createIntegrationAwareManagedEmbedAuthClient({
         endpoint: '/api/parent-bridge/embed-policy',
+        expectedIntegrationId: 'checkout-p__shared-assistant',
+        expectedParentAppId: 'checkout-p',
+        expectedAssistantAppId: 'shared-assistant',
         expectedParentOrigin: window.location.origin,
         expectedAssistantOrigin: 'https://assistant.example.com',
         expectedScopeId: 'checkout',
+        expectedIssuer: 'page-agent-auth',
         allowedCapabilities: ['observe', 'click', 'input', 'cleanup'],
     })
     const iframe = document.querySelector('iframe[data-page-agent-parent-bridge]')
@@ -204,7 +223,7 @@ managed-auth helper remains a separate version-pinned ESM entry:
         root: () => document.querySelector('#checkout-root'),
         scopeId: 'checkout',
         capabilities: ['observe', 'click', 'input', 'cleanup'],
-        getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+        getEmbedPolicy: (context) => managedAuth.getEmbedPolicy(context),
         verifyEmbedPolicy: (policy, context) => managedAuth.verifyEmbedPolicy(policy, context),
     })
     host.start()
@@ -350,26 +369,39 @@ const adapter = new ParentPageControllerAdapter({
     },
 })
 
-await adapter.connect()
-try {
-    const state = await adapter.getBrowserState()
-    await adapter.clickElement(state.indices[0])
-} finally {
-    // Direct Adapter usage does not have PageAgentCore's task-finally cleanup.
+const connectButton = document.querySelector<HTMLButtonElement>('#connect-parent')
+if (!connectButton) throw new Error('Connect control is missing')
+connectButton.addEventListener('click', async () => {
+    connectButton.disabled = true
     try {
-        await Promise.allSettled([adapter.cleanUpHighlights(), adapter.hideMask()])
-    } finally {
-        adapter.dispose()
+        await adapter.connect()
+        document.querySelector<HTMLButtonElement>('#run-agent')!.disabled = false
+    } catch (error) {
+        connectButton.disabled = false
+        // Render an explicit unavailable state; do not access parent.document.
+        connectButton.dataset.state = 'error'
     }
-}
+})
+
+window.addEventListener('pagehide', () => adapter.dispose(), { once: true })
 ```
 
 `ParentPageControllerAdapter` implements the same controller-shaped methods as
 the local controller. `executeJavascript` remains available for structural
 compatibility but always resolves a deterministic `CAPABILITY_DENIED` result;
-the parent bridge never evaluates child-supplied JavaScript. The adapter
-reconnects after navigation only when the offer, policy, origin, frame
-instance, and challenge are valid.
+the parent bridge never evaluates child-supplied JavaScript. Do not call
+`connect()` from module initialization or `onMounted`; invoke it from a visible
+A-side user action. This product-level action is not cryptographic proof of a
+browser user gesture, so P/P BFF authorization remains mandatory.
+
+One successful handshake establishes one in-memory activation and bridge
+session, not one model call. Model steps reuse the existing `MessageChannel`.
+After activation, P may publish an automatic reconnect offer and A may call
+`adapter.reconnect()`; both paths still require a fresh policy and full
+validation. `adapter.deactivate()` and `host.deactivate()` notify the opposite
+side and clear both activation leases without echoing the control message. Call
+one of them on logout, user/tenant/target changes,
+or explicit disconnect. A new A document also requires another user click.
 
 ### Policy, rules, and one-use approvals
 
@@ -402,7 +434,7 @@ For a fuller Core + Tl wiring example with approval/degraded state, see
 [`examples/parent-bridge/use-page-agent.ts`](../examples/parent-bridge/use-page-agent.ts).
 
 ```ts
-import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { onBeforeUnmount, ref, shallowRef } from 'vue'
 import type { ParentControllerAdapterOptions } from '@page-agent/page-controller/parent-bridge/adapter'
 
 type ParentAdapter = InstanceType<
@@ -412,19 +444,21 @@ type ParentAdapter = InstanceType<
 export function useParentPageController(options: ParentControllerAdapterOptions) {
     const adapter = shallowRef<ParentAdapter | null>(null)
     const connected = ref(false)
+    const connecting = ref(false)
     const error = ref<unknown>(null)
     let disposed = false
 
     const connect = async () => {
         if (disposed) return false
+        connecting.value = true
         error.value = null
         try {
             const { ParentPageControllerAdapter } = await import(
                 '@page-agent/page-controller/parent-bridge/adapter'
             )
             if (disposed) return false
-            const instance = new ParentPageControllerAdapter(options)
-            adapter.value = instance
+            const instance = adapter.value ?? new ParentPageControllerAdapter(options)
+            if (!adapter.value) adapter.value = instance
             await instance.connect()
             if (disposed) {
                 instance.dispose()
@@ -436,12 +470,11 @@ export function useParentPageController(options: ParentControllerAdapterOptions)
             connected.value = false
             error.value = cause
             throw cause
+        } finally {
+            connecting.value = false
         }
     }
 
-    onMounted(() => {
-        void connect()
-    })
     onBeforeUnmount(() => {
         disposed = true
         adapter.value?.dispose()
@@ -449,9 +482,13 @@ export function useParentPageController(options: ParentControllerAdapterOptions)
         connected.value = false
     })
 
-    return { adapter, connected, error, connect }
+    return { adapter, connected, connecting, error, connect }
 }
 ```
+
+Bind `connect` to an A-side control, for example
+`<button :disabled="connected || connecting" @click="connect">Connect</button>`.
+Keep parent actions disabled until `connected` is true.
 
 Use an `AbortController` in the composable if a route change should cancel an
 in-flight `connect()` or action. Never keep an adapter alive after its iframe is
@@ -613,55 +650,62 @@ The responsibility split is deliberate:
 -   P's backend authenticates its user and applies tenant/business ACLs before
     asking the PageAgent authorization service for `{ policy, claims }`.
     PageAgent cannot decide P's order, workflow, or user permissions.
--   P's frontend only calls that same-origin endpoint and wires the managed-auth
+-   P's frontend only calls that same-origin endpoint and wires the integration-aware
     helper's `getEmbedPolicy` and `verifyEmbedPolicy` into the Host. It does not
     hold a private key, implement JOSE, or maintain JWKS.
 -   The authorization service generates at least 256 random bits, persists only
-    the digest, and records `jti`, exact parent/assistant origins, scope,
-    capabilities, protocol range, `nbf`/`exp`, tenant, user, target, and any
-    approved `childFrames` grants.
+    the digest, and records `jti`, Integration/app IDs, config version, exact
+    parent/assistant origins, scope, capabilities, protocol range, `nbf`/`exp`,
+    complete bridge binding, canonical subject, target, and any approved
+    `childFrames` grants. The subject is not returned to the browser.
 -   A's `authorizeOffer` sends the token, the browser-observed parent origin,
-    and the complete offer to A's same-origin backend. That backend atomically
-    consumes the token, checks claims against `policyId`, origin, and
-    capabilities, and binds `sessionId`, `challenge`, `frameInstanceId`, and
-    `hostInstanceId` into a short-lived authorization context. Replay, expiry,
-    tampering, and capability escalation fail closed.
+    and the complete offer to A's same-origin backend. A BFF calls Auth with its
+    own service identity and SSO subject. Auth compares the P/A subjects and,
+    before atomic consumption, checks `policyId`, origin, capabilities, and the
+    session/challenge/instances bound at issue. Replay, expiry, tampering, and
+    capability escalation fail closed.
 -   B never sees the token. P brokers only the B targets present in verified
     claims and continues enforcing B's origin, capability, action-policy, and
     approval gates.
 
-The PageAgent authorization service can use the reusable issuer/exchange entry
-directly. The in-memory store below demonstrates the API only:
+The independent production Auth service can reuse the contract and domain-engine
+entry. `productionRegistry` and `productionAtomicStore` below must be backed by
+a configuration database and shared atomic TTL storage:
 
 ```ts
 import {
-    InMemoryOpaqueEmbedAuthorizationStore,
-    OpaqueEmbedAuthorizationService,
-} from '@page-agent/page-controller/parent-bridge/managed-auth'
+    IntegrationAwareEmbedAuthorizationAuthority,
+    toBrowserAuthorizationContext,
+} from '@page-agent/page-controller/parent-bridge/integration-auth'
 
-const authority = new OpaqueEmbedAuthorizationService({
-    store: new InMemoryOpaqueEmbedAuthorizationStore(), // replace in production
-    assistantOrigin: 'https://assistant.example.com',
-    allowedParentOrigins: ['https://p.example.com'],
-    scopeId: 'checkout',
-    allowedCapabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
-    ttlSeconds: 120,
+const authority = new IntegrationAwareEmbedAuthorizationAuthority({
+    registry: productionRegistry,
+    store: productionAtomicStore,
+    issuer: 'page-agent-auth',
 })
 
-// P's same-origin POST route: authenticate and apply P's ACL first.
-const grant = await authority.issue({
-    tenant: currentTenant.id,
-    user: currentUser.id,
-    targetId: checkout.id,
-    scopeId: 'checkout',
-    parentOrigin: 'https://p.example.com',
-    assistantOrigin: 'https://assistant.example.com',
-    capabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
-})
+// P BFF: actor comes from mTLS/service auth; subject comes from P's SSO session.
+const grant = await authority.issue(
+    { actor: authenticatedPServiceActor, subject: canonicalPSubject },
+    {
+        integrationId: 'checkout-p__shared-assistant',
+        targetId: checkout.id,
+        scopeId: 'checkout',
+        parentOrigin: 'https://p.example.com',
+        assistantOrigin: 'https://assistant.example.com',
+        capabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
+        bridgeBinding,
+        parentSessionBinding,
+    }
+)
 // Return JSON `{ policy, claims }` with Cache-Control: no-store.
 
-// A's same-origin POST route receives the browser-observed origin and full offer.
-const authorizationContext = await authority.exchange({ policy, actualParentOrigin, offer })
+// A BFF uses its own trusted actor/subject; return only the identity-free browser context.
+const decision = await authority.exchange(
+    { actor: authenticatedAServiceActor, subject: canonicalASubject },
+    { policy, actualParentOrigin, actualAssistantOrigin, offer }
+)
+const authorizationContext = toBrowserAuthorizationContext(decision)
 ```
 
 A's `authorizeOffer` frontend maps only the returned context into
@@ -670,6 +714,8 @@ session, challenge, frame/host instances, and capabilities. HTTP 200 alone is
 not sufficient binding.
 
 P therefore needs only a small same-origin backend route and frontend wiring.
+The old `parent-bridge/managed-auth` API is deprecated and retained for one
+compatibility release; new integrations should not adopt it.
 Production token storage must use Redis, a transactional database, or an
 equivalent shared store with atomic get-and-delete/compare-and-delete semantics.
 The library's in-memory store is for single-process development/tests only and
@@ -686,16 +732,16 @@ minimal.
 
 ### Comparison with ES256/JWKS and upgrade path
 
-| Dimension      | One-time opaque token (current recommendation)             | ES256/JWKS (cross-system upgrade)                                         |
-| -------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Trust model    | P/A/B share a company and online authorization service     | P/A belong to independent systems or organizations                        |
-| P integration  | Same-origin route + managed-auth helper; no cryptography   | JWT/JWS verification, issuer/audience, JWKS cache/rotation                |
-| A verification | Online redemption with atomic consume per handshake        | Local signature verification; shared `jti` store still recommended        |
-| Revocation     | Server record can be rejected immediately                  | Issued tokens usually survive until expiry; use short TTL/revocation      |
-| Availability   | Depends on the service and shared store                    | Can verify offline with cached JWKS; scales across regions                |
-| Key operations | No asymmetric distribution; protect store/service identity | Protect private keys, publish JWKS, constrain algorithms and rotate `kid` |
-| Token contents | Opaque; still a bearer secret if leaked                    | Claims are readable and signed; still a bearer secret if leaked           |
-| Audit          | Issue and redemption naturally pass through one service    | Correlate issuer and verifier logs by `jti`                               |
+| Dimension      | One-time opaque token (current recommendation)                | ES256/JWKS (cross-system upgrade)                                         |
+| -------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Trust model    | P/A/B share a company and online authorization service        | P/A belong to independent systems or organizations                        |
+| P integration  | Same-origin route + integration-aware helper; no cryptography | JWT/JWS verification, issuer/audience, JWKS cache/rotation                |
+| A verification | Online redemption with atomic consume per handshake           | Local signature verification; shared `jti` store still recommended        |
+| Revocation     | Server record can be rejected immediately                     | Issued tokens usually survive until expiry; use short TTL/revocation      |
+| Availability   | Depends on the service and shared store                       | Can verify offline with cached JWKS; scales across regions                |
+| Key operations | No asymmetric distribution; protect store/service identity    | Protect private keys, publish JWKS, constrain algorithms and rotate `kid` |
+| Token contents | Opaque; still a bearer secret if leaked                       | Claims are readable and signed; still a bearer secret if leaked           |
+| Audit          | Issue and redemption naturally pass through one service       | Correlate issuer and verifier logs by `jti`                               |
 
 An ES256/JWKS migration keeps the Host/Adapter protocol, claims schema, exact
 origin/capability checks, and `authorizeOffer` contract. Replace only the issuer

@@ -103,6 +103,19 @@
 				border-radius: 999px;
 				background: rgb(255 255 255 / 82%);
 			}
+			.connection-panel {
+				display: grid;
+				gap: 0.4rem;
+				padding: 0.75rem;
+				border: 1px solid #c4b5fd;
+				border-radius: 0.85rem;
+				background: rgb(255 255 255 / 90%);
+			}
+			.connection-panel small {
+				color: #6b7280;
+				font-size: 0.68rem;
+				line-height: 1.45;
+			}
 			.agent-demo {
 				display: grid;
 				gap: 0.65rem;
@@ -156,6 +169,11 @@
 			#assistant-run-agent {
 				border-color: #6d5ce8;
 				background: #6d5ce8;
+				color: #fff;
+			}
+			#assistant-connect {
+				border-color: #7c3aed;
+				background: #7c3aed;
 				color: #fff;
 			}
 			#assistant-stop-agent {
@@ -275,7 +293,14 @@
 				</span>
 				<span class="origin-role" id="assistant-origin-role">target</span>
 			</div>
-			<p id="assistant-status">Waiting for parent controller…</p>
+			<p id="assistant-status">Disconnected. Connect when you want to use the parent page.</p>
+			<div class="connection-panel">
+				<button id="assistant-connect" type="button">Connect to parent</button>
+				<small>
+					This explicit action starts the P↔A authorization handshake. It is not repeated for every
+					model call.
+				</small>
+			</div>
 			<section class="agent-demo" aria-labelledby="page-agent-demo-title">
 				<h2 id="page-agent-demo-title">PageAgent controls the parent and business iframe</h2>
 				<label class="agent-task-label" for="assistant-agent-task">
@@ -307,12 +332,12 @@
 				</div>
 			</section>
 			<div class="manual-controls" aria-label="Low-level bridge controls">
-				<button id="assistant-run-observe" type="button">Observe parent root</button>
-				<button id="assistant-run-click" type="button">Click parent control</button>
-				<button id="assistant-run-input" type="button">Input parent control</button>
-				<button id="assistant-run-select" type="button">Select parent option</button>
-				<button id="assistant-run-scroll" type="button">Scroll parent container</button>
-				<button id="assistant-run-script" type="button">Try JavaScript</button>
+				<button id="assistant-run-observe" type="button" disabled>Observe parent root</button>
+				<button id="assistant-run-click" type="button" disabled>Click parent control</button>
+				<button id="assistant-run-input" type="button" disabled>Input parent control</button>
+				<button id="assistant-run-select" type="button" disabled>Select parent option</button>
+				<button id="assistant-run-scroll" type="button" disabled>Scroll parent container</button>
+				<button id="assistant-run-script" type="button" disabled>Try JavaScript</button>
 			</div>
 			<pre id="assistant-state"></pre>
 		</div>
@@ -332,6 +357,7 @@
 			document.querySelector('#assistant-origin-value').textContent = location.origin
 			document.querySelector('#assistant-origin-role').textContent = roleLabels[role] || role
 			const status = document.querySelector('#assistant-status')
+			const connectButton = document.querySelector('#assistant-connect')
 			const stateOutput = document.querySelector('#assistant-state')
 			const agentTask = document.querySelector('#assistant-agent-task')
 			const agentRun = document.querySelector('#assistant-run-agent')
@@ -342,6 +368,7 @@
 			const approvalSummary = document.querySelector('#assistant-approval-summary')
 			const approvalAllow = document.querySelector('#assistant-approval-allow')
 			const approvalDeny = document.querySelector('#assistant-approval-deny')
+			const manualControls = [...document.querySelectorAll('.manual-controls button')]
 			if (agentTask) agentTask.value = agentTask.value.trim()
 			let pageAgent = null
 			let pendingApproval = null
@@ -352,6 +379,9 @@
 			}
 			const writeState = (value) => {
 				if (stateOutput) stateOutput.textContent = JSON.stringify(value)
+			}
+			const setManualControlsEnabled = (enabled) => {
+				for (const control of manualControls) control.disabled = !enabled
 			}
 			const markerIndex = (content, marker) => {
 				const line = content.split('\n').find((candidate) => candidate.includes(`id=${marker}`))
@@ -414,7 +444,10 @@
 				}
 			}
 			const createPageAgent = () => {
-				if (pageAgent) return pageAgent
+				if (pageAgent) {
+					if (agentRun) agentRun.disabled = false
+					return pageAgent
+				}
 				if (typeof window.PageAgent !== 'function') {
 					throw new Error('PageAgent IIFE did not load')
 				}
@@ -531,27 +564,76 @@
 
 			window.reverseParentController = adapter
 			window.reverseParentRole = role
-			window.reverseParentConnection = adapter
-				.connect()
-				.then(async (connection) => {
-					window.reverseAuthorizationContext = connection.authorizedParent.authorizationContext
-					setStatus(`connected:${connection.parentOrigin}:opaque-online`)
-					try {
-						const state = await adapter.getBrowserState()
-						writeState(state)
-						if (role === 'target') createPageAgent()
-						return connection
-					} finally {
-						await cleanParentPresentation({ hideMask: true })
-					}
-				})
-				.catch((error) => {
-					setStatus(`error:${error?.code || error?.name || String(error)}`)
-					return null
-				})
-			window.reversePageAgentReady = window.reverseParentConnection.then((connection) =>
-				connection && role === 'target' ? createPageAgent() : null
-			)
+			window.reverseParentConnection = null
+			window.reversePageAgentReady = Promise.resolve(null)
+			let connectionAttempt = null
+			const presentConnection = (connection) => {
+				window.reverseAuthorizationContext = connection.authorizedParent.authorizationContext
+				setStatus(`connected:${connection.parentOrigin}:opaque-online`)
+				setManualControlsEnabled(true)
+				if (connectButton) {
+					connectButton.disabled = true
+					connectButton.textContent = 'Connected'
+				}
+				if (role === 'target') createPageAgent()
+				void adapter
+					.getBrowserState()
+					.then(writeState)
+					.finally(() => cleanParentPresentation({ hideMask: true }))
+			}
+			adapter.addEventListener('connected', (event) => {
+				presentConnection(event.detail)
+			})
+			adapter.addEventListener('invalidate', () => {
+				setManualControlsEnabled(false)
+				if (agentRun) agentRun.disabled = true
+				setStatus(adapter.activationActive ? 'reconnecting:parent-controller' : 'disconnected')
+				if (connectButton) {
+					connectButton.disabled = adapter.activationActive
+					connectButton.textContent = adapter.activationActive
+						? 'Reconnecting…'
+						: 'Connect to parent'
+				}
+			})
+			adapter.addEventListener('connectionerror', (event) => {
+				const error = event.detail?.error
+				setStatus(`error:${error?.code || error?.name || String(error)}`)
+				if (connectButton) {
+					connectButton.disabled = false
+					connectButton.textContent = 'Retry connection'
+				}
+			})
+			const connectParent = () => {
+				if (adapter.connected && adapter.connection) return Promise.resolve(adapter.connection)
+				if (connectionAttempt) return connectionAttempt
+				setStatus('connecting:parent-controller')
+				if (connectButton) {
+					connectButton.disabled = true
+					connectButton.textContent = 'Connecting…'
+				}
+				const attempt = adapter
+					.connect()
+					.catch((error) => {
+						setStatus(`error:${error?.code || error?.name || String(error)}`)
+						if (connectButton) {
+							connectButton.disabled = false
+							connectButton.textContent = 'Retry connection'
+						}
+						return null
+					})
+					.finally(() => {
+						if (connectionAttempt === attempt) connectionAttempt = null
+					})
+				connectionAttempt = attempt
+				window.reverseParentConnection = attempt
+				window.reversePageAgentReady = attempt.then((connection) =>
+					connection && role === 'target' ? createPageAgent() : null
+				)
+				return attempt
+			}
+			connectButton?.addEventListener('click', () => {
+				void connectParent()
+			})
 
 			agentRun?.addEventListener('click', async () => {
 				const task = agentTask?.value?.trim()
@@ -598,7 +680,8 @@
 				'pagehide',
 				() => {
 					settleApproval(false, 'Assistant page unloaded')
-					pageAgent?.dispose()
+					if (pageAgent) pageAgent.dispose()
+					else adapter.dispose()
 				},
 				{ once: true }
 			)

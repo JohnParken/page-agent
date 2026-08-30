@@ -22,6 +22,10 @@ export default defineConfig({
 				'parent-bridge/host': resolve(__dirname, 'src/parent-bridge/host.ts'),
 				'parent-bridge/adapter': resolve(__dirname, 'src/parent-bridge/adapter.ts'),
 				'parent-bridge/managed-auth': resolve(__dirname, 'src/parent-bridge/managed-auth.ts'),
+				'parent-bridge/integration-auth': resolve(
+					__dirname,
+					'src/parent-bridge/integration-auth.ts'
+				),
 			},
 			name: 'PageAgent',
 			fileName: (_format, entryName) => `${entryName}.js`,

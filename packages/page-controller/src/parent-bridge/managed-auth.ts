@@ -9,6 +9,8 @@ import {
 } from './protocol'
 import { normalizeParentControllerOrigin } from './security'
 
+import type { ParentControllerEmbedPolicyRequestContext } from './types'
+
 /** Audience used by the default managed parent-controller authorization service. */
 export const MANAGED_EMBED_POLICY_AUDIENCE = 'page-agent-parent-bridge'
 /** Default lifetime for an opaque policy. Keep this short in production. */
@@ -734,6 +736,11 @@ function normalizedFrameContextMatches(
  * It issues random bearer policies and stores only their SHA-256 digest. The
  * exchange validates every offer binding before atomically consuming the digest.
  */
+/**
+ * @deprecated Use `IntegrationAwareEmbedAuthorizationAuthority` from
+ * `parent-bridge/integration-auth`. This legacy flat-policy authority remains
+ * available for one compatibility cycle.
+ */
 export class OpaqueEmbedAuthorizationService {
 	private readonly config: ReturnType<typeof normalizeServiceOptions>
 
@@ -1076,6 +1083,10 @@ function normalizeGrant(
  * opaque policy. It accepts only the exact policy/context pair returned by its
  * latest same-origin fetch and validates the accompanying claims shape.
  */
+/**
+ * @deprecated Use `IntegrationAwareManagedEmbedAuthClient` from
+ * `parent-bridge/integration-auth` for new integrations.
+ */
 export class ManagedEmbedAuthClient {
 	private readonly config: ReturnType<typeof normalizeClientOptions>
 	private currentGrant: ManagedEmbedPolicyGrant | undefined
@@ -1084,7 +1095,9 @@ export class ManagedEmbedAuthClient {
 		this.config = normalizeClientOptions(options)
 	}
 
-	async getEmbedPolicy(signal?: AbortSignal): Promise<string> {
+	async getEmbedPolicy(
+		contextOrSignal?: AbortSignal | ParentControllerEmbedPolicyRequestContext
+	): Promise<string> {
 		// Always issue a fresh one-use policy. Reusing a still-live grant could
 		// collide with a host handshake that has already consumed its jti.
 		this.currentGrant = undefined
@@ -1095,6 +1108,10 @@ export class ManagedEmbedAuthClient {
 				ManagedEmbedAuthorizationErrorCode.CONFIG_INVALID
 			)
 		}
+		const signal =
+			contextOrSignal && 'signal' in contextOrSignal
+				? contextOrSignal.signal
+				: (contextOrSignal as AbortSignal | undefined)
 		let response: Response
 		try {
 			response = await fetchImpl(this.config.endpoint, {
@@ -1201,6 +1218,7 @@ export class ManagedEmbedAuthClient {
 	}
 }
 
+/** @deprecated Use `createIntegrationAwareManagedEmbedAuthClient` for new integrations. */
 export function createManagedEmbedAuthClient(
 	options: ManagedEmbedAuthClientOptions
 ): ManagedEmbedAuthClient {

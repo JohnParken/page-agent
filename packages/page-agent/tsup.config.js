@@ -8,6 +8,7 @@ export default defineConfig({
 		'parent-bridge/host': 'src/parent-bridge/host.ts',
 		'parent-bridge/adapter': 'src/parent-bridge/adapter.ts',
 		'parent-bridge/managed-auth': 'src/parent-bridge/managed-auth.ts',
+		'parent-bridge/integration-auth': 'src/parent-bridge/integration-auth.ts',
 	},
 	outDir: 'dist/esm',
 	format: ['esm'],

@@ -12,8 +12,11 @@ does not add Vue or an authentication dependency to the repository.
     the parent adapter, the assistant origin's same-origin Tl endpoint via
     native `fetch`, status/history/activity state, `ask_user` and one-use
     approval state, and an explicit host-unavailable degraded mode. Runtime
-    modules are loaded from `onMounted` for SSR safety; its teardown awaits
-    `agent.stop()` before `agent.dispose()`. It fails fast unless the child
+    modules are loaded only after the application calls the exposed `connect`
+    action, so SSR/module initialization never starts a handshake. Bind
+    `connect` to a visible A-side button and disable agent/parent actions until
+    `connected` is true; its teardown awaits `agent.stop()` before
+    `agent.dispose()`. It fails fast unless the child
     requests both `observe` and `cleanup`; the Host, verified Policy, and
     `authorizeOffer` result must preserve the same capabilities so final DOM
     highlights can be removed.
@@ -48,6 +51,9 @@ does not add Vue or an authentication dependency to the repository.
 
     The parent is a realistic operations dashboard, while the assistant is a
     fixed right-side panel approximately `25vw × 80vh`. In the assistant iframe,
+    **Connect to parent** explicitly starts the first P↔A authorization
+    handshake. Before that click, the fixture makes no P issue or A exchange
+    request and keeps all parent controls disabled. After connection,
     **Run PageAgent** submits the fixed task (click the parent button, enter
     `PageAgent Demo`, select `Pro`, then click `Release shipment` and enter
     `PageAgent business approval` in the authorized business iframe); the low-level

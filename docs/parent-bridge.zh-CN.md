@@ -11,7 +11,47 @@
 adapter。未安装 adapter 的跨域 iframe 不能绕过浏览器同源策略操作父页面 DOM。
 
 准备生产接入时，请先按[iframe PageAgent 生产部署手册：P / A / B 职责](./parent-bridge-production-deployment.zh-CN.md)
-完成跨团队责任划分、上线阻断项检查、部署顺序和验收矩阵。
+完成跨团队责任划分、生产缺口检查、部署顺序和验收矩阵。
+
+## 逻辑 A、浏览器实例与授权边界
+
+本文的图和代码示例都只表示一个运行时切片。生产环境中每个环境只有一个逻辑 A 系统，即一个
+登记的 AssistantApp 和一套助手产品能力；A 后端可以有多个 HA 副本。每个 P 页面嵌入的 A iframe
+则是独立浏览器文档和运行时实例，因此多个 P、同一 P 的不同租户以及同一浏览器的多个标签页可以
+同时使用这个逻辑 A，而不共享 bridge 连接。
+
+每个 P Host/对应 A iframe 运行时必须拥有独立的 bridge 状态和一个独立的 integration-aware auth
+client；A iframe 内的 Adapter 状态同样只属于当前文档。activation、binding、policy/context、
+session 和 instance 标识只保存在该运行时内存中，不得放入共享 `localStorage`。同源 A iframe
+可以按现有登录方案共享 A 登录 JWT，但 JWT 只证明登录态，不能标识 bridge 实例、租户、scope、
+target 或 session。
+
+生产配置中的几个标识承担不同职责：
+
+-   `tenantId`（或 canonical subject 中的等价租户声明）来自 P/A 服务端 session，定义当前主体的
+    租户边界；浏览器自报值不可信。租户默认不单独创建 Integration。
+-   `scopeId` 是 `parentApp × assistantApp × environment × scope` Integration 和 Host 固定的 DOM
+    委托边界；不同 scope 使用分别匹配的 Integration、Host 配置和 bridge 连接。
+-   `targetId` 是 P BFF 从业务会话解析的本次业务目标，不是 B 的 frame ID。B 由已登记的
+    ChildTarget ID 标识，并另外受精确 origin、capability 和 B ACL 约束。
+-   一个 bridge session 只绑定一个 canonical subject/tenant、一个 Integration/`scopeId`、一个
+    `targetId` 以及一组 session/frame/host instance 标识。单连接不能跨租户、scope、target 或
+    iframe 实例；当前也没有跨 scope 原子操作 API。
+
+一个 P/Integration 可以登记多个 B ChildTarget，P BFF 再按当前 tenant/target 和业务 ACL 选择
+当前 Grant 的子集；一个 Grant 最多 8 个 B target。获准 B 之间的操作和模型多步都复用同一个
+A↔P bridge session，不为每个 B 或每次模型调用另做握手。实际权限是以下交集：
+
+```text
+Integration maximum
+∩ P BFF tenant/business ACL
+∩ Grant subset
+∩ B final ACL
+```
+
+登出、tenant/target 切换、scope 变化、A iframe reload 或新文档加载都会使旧 activation 不再可用：
+先 deactivate/dispose 旧运行时，再由用户对新上下文显式连接。不能从登录 JWT、`localStorage` 或
+兄弟 iframe 恢复旧 bridge context。
 
 ## 运行本地 reverse parent-bridge Demo
 
@@ -32,8 +72,9 @@ npm run demo:parent-bridge
 -   [http://127.0.0.1:4175/reverse-parent.html](http://127.0.0.1:4175/reverse-parent.html)
 
 两个父页面会使用同一个助手 origin。父页面展示为完整的运营工作台，助手以右侧悬浮框形式
-固定显示，桌面端宽度约占视口 25%、高度约占 80%。iframe 连接成功后，点击 **Run
-PageAgent**，即可执行固定任务：点击父页面按钮，在 **Parent value** 输入 `PageAgent
+固定显示，桌面端宽度约占视口 25%、高度约占 80%。先在 A 中点击 **Connect to parent**；
+只有这个显式操作会启动首次 P↔A 授权握手。连接成功后点击 **Run PageAgent**，即可执行固定
+任务：点击父页面按钮，在 **Parent value** 输入 `PageAgent
 Demo`，把 **Parent plan** 选择为 `Pro`，再点击获授权业务 iframe 的 **Release shipment**
 并经一次性审批填写 **Approval note**。iframe 仍保留观察、点击、输入、选择、滚动和
 JavaScript 拒绝等低层手动控件，可直接练习 bridge。观察状态还会包含明确授权的业务
@@ -65,7 +106,7 @@ npm install page-agent @page-agent/page-controller @page-agent/core @page-agent/
 import { PageController } from '@page-agent/page-controller'
 import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bridge/host'
 import { ParentPageControllerAdapter } from '@page-agent/page-controller/parent-bridge/adapter'
-import { createManagedEmbedAuthClient } from '@page-agent/page-controller/parent-bridge/managed-auth'
+import { createIntegrationAwareManagedEmbedAuthClient } from '@page-agent/page-controller/parent-bridge/integration-auth'
 import '@page-agent/page-controller/parent-bridge/host.css'
 ```
 
@@ -79,6 +120,9 @@ Agent、LLM 或 UI。
 父页面拥有 DOM controller，应只开放助手所需的根节点和能力。`root` 可以是元素，
 也可以是页面替换根节点时会失败关闭的 resolver。
 
+下面的 `managedAuth` 与 `host` 只服务这一个 iframe 运行时。页面中存在多个 A iframe 时，应为
+每个 iframe 分别创建这一对对象；不要复用 `managedAuth` 当前 Grant 或 Host session。
+
 ```ts
 import { PageController } from '@page-agent/page-controller'
 import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bridge/host'
@@ -86,11 +130,15 @@ import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bri
 const iframe = document.querySelector<HTMLIFrameElement>('iframe[data-page-agent-parent-bridge]')
 if (!iframe) throw new Error('找不到 parent bridge iframe')
 
-const managedAuth = createManagedEmbedAuthClient({
+const managedAuth = createIntegrationAwareManagedEmbedAuthClient({
     endpoint: '/api/parent-bridge/embed-policy',
+    expectedIntegrationId: 'checkout-p__shared-assistant',
+    expectedParentAppId: 'checkout-p',
+    expectedAssistantAppId: 'shared-assistant',
     expectedParentOrigin: window.location.origin,
     expectedAssistantOrigin: 'https://assistant.example.com',
     expectedScopeId: 'checkout',
+    expectedIssuer: 'page-agent-auth',
     allowedCapabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup', 'visual'],
 })
 
@@ -106,13 +154,17 @@ const host = new ParentPageControllerHost({
         target?.matches('[data-checkout-payment], [data-permission-change]')
             ? { decision: 'approval_required', reason: '敏感业务操作' }
             : { decision: 'allow' },
-    getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+    getEmbedPolicy: (context) => managedAuth.getEmbedPolicy(context),
     verifyEmbedPolicy: (policy, context) => managedAuth.verifyEmbedPolicy(policy, context),
 })
 
 host.start()
 // SPA 销毁或页面替换时：host.dispose()
 ```
+
+`host.start()` 默认是被动的：它只安装 P 侧监听器，不申请 policy，也不主动发送 offer。只有已绑定
+A iframe 调用 `adapter.connect()` 发出 bootstrap 请求后，P 才首次 issue policy。
+`handshakeMode: 'parent-initiated'` 仅保留一个版本用于旧接入迁移，新接入不得使用它恢复自动握手。
 
 `visualFeedback: 'non-blocking'` 会同时启用父页面状态条和固定定位的模拟光标。光标监听
 PageController 已有的 `PageAgent::MovePointerTo` 与 `PageAgent::ClickPointer` 事件，只在
@@ -146,26 +198,32 @@ PageController 已有的 `PageAgent::MovePointerTo` 与 `PageAgent::ClickPointer
 箭头尖端与 ripple 圆心都使用实际动作坐标。除非自定义图形具有不同热点，否则不要设置
 正数 cursor offset。
 
-managed-auth client 默认只接受同源 HTTPS 接口返回的精确 `{ policy, claims }` 配对，检查时效、
-父子 origin、`scopeId`、协议版本和能力，并确保 `verifyEmbedPolicy` 收到的仍是同一个 token
-及浏览器上下文。真正的用户和业务权限由该同源接口的 P 后端完成；A 后端还必须在线核销。
+integration-aware client 默认只接受同源 HTTPS 接口返回的精确 `{ policy, claims }` 配对，检查
+Integration/app/configVersion、时效、完整 bridge binding、父子 origin、`scopeId`、协议版本和
+能力，并确保 `verifyEmbedPolicy` 收到的仍是同一个 token 及浏览器上下文。Host 会在签发前把新建
+的 binding 传给 `getEmbedPolicy(context)`；真正的用户和业务权限由 P 后端完成，A 后端还必须
+在线核销。浏览器请求不携带 user、tenant、issuer 或 service actor。
 不要接受 URL 查询参数中的任意 origin。如果改用 ES256/JWKS，则把这两个回调替换为业务验签
 实现。父页面也可以加载独立 IIFE：
 
-受控内网需要 HTTP 时，Auth 的 `OpaqueEmbedAuthorizationService` 和 P 的
-`createManagedEmbedAuthClient` 必须同时显式设置 `allowInsecureHttp: true`；默认值为 `false`。
+受控内网需要 HTTP 时，Auth 全局风险门、对应 Integration 的 `transportMode` 和 P 的
+`createIntegrationAwareManagedEmbedAuthClient` 必须同时显式启用；默认拒绝 HTTP。
 这只允许精确 `http:` origin，不提供传输加密，也不防御内网中间人。完整约束参见
 [生产部署手册的内网 HTTP 配置](./parent-bridge-production-deployment.zh-CN.md#受控内网-http-配置)。
 
 ```html
 <script src="/assets/page-agent-parent-host.iife.min.js"></script>
 <script type="module">
-    import { createManagedEmbedAuthClient } from '/assets/parent-bridge/managed-auth.js'
-    const managedAuth = createManagedEmbedAuthClient({
+    import { createIntegrationAwareManagedEmbedAuthClient } from '/assets/parent-bridge/integration-auth.js'
+    const managedAuth = createIntegrationAwareManagedEmbedAuthClient({
         endpoint: '/api/parent-bridge/embed-policy',
+        expectedIntegrationId: 'checkout-p__shared-assistant',
+        expectedParentAppId: 'checkout-p',
+        expectedAssistantAppId: 'shared-assistant',
         expectedParentOrigin: window.location.origin,
         expectedAssistantOrigin: 'https://assistant.example.com',
         expectedScopeId: 'checkout',
+        expectedIssuer: 'page-agent-auth',
         allowedCapabilities: ['observe', 'click', 'input', 'cleanup'],
     })
     const iframe = document.querySelector('iframe[data-page-agent-parent-bridge]')
@@ -175,7 +233,7 @@ managed-auth client 默认只接受同源 HTTPS 接口返回的精确 `{ policy,
         root: () => document.querySelector('#checkout-root'),
         scopeId: 'checkout',
         capabilities: ['observe', 'click', 'input', 'cleanup'],
-        getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+        getEmbedPolicy: (context) => managedAuth.getEmbedPolicy(context),
         verifyEmbedPolicy: (policy, context) => managedAuth.verifyEmbedPolicy(policy, context),
     })
     host.start()
@@ -183,7 +241,7 @@ managed-auth client 默认只接受同源 HTTPS 接口返回的精确 `{ policy,
 ```
 
 该 Host IIFE 只包含 `ParentPageControllerHost`、helper 和 `PageController`，不包含
-PageAgent Core、LLM 或 UI；managed-auth 仍使用独立、可固定版本的 ESM 入口。
+PageAgent Core、LLM 或 UI；integration-aware Auth helper 仍使用独立、可固定版本的 ESM 入口。
 
 ## 代理明确授权的同级业务 iframe
 
@@ -240,6 +298,10 @@ B 必须运行兼容的 iframe bridge v2 `FrameBridgeHost`，只允许 P 的精�
 修改 grant 会绕过业务授权，审查时必须拒绝。已验证 claim
 未包含 `childFrames` 时会明确降级为仅操作父页本地 root。已配置但未获授权的 B 内容
 不会暴露；已授权但暂时不可连接的 B 只显示 unavailable 标记；未配置的 iframe 永不发现。
+
+同一 P/Integration 可以配置多个这样的 ChildTarget；P BFF 只为当前 canonical tenant/target
+选择 Grant 子集，单个 Grant 上限为 8。第 9 个 target 必须使签发失败，不能被静默截断或在验证
+后由前端追加。Grant 内多个 B 共用当前 A↔P bridge session，但每个 B 仍保留自己的最终 ACL。
 
 操作 B 前，P 先用脱敏摘要请求 B prepare。B 的策略、父页元素策略与父页自定义
 `actionPolicy` 按 `deny` > `approval_required` > `allow` 合并；助手只为合并后的结果展示至多
@@ -308,24 +370,33 @@ const adapter = new ParentPageControllerAdapter({
     onApprovalRequired: async (request) => await confirm(`允许 ${request.method}？`),
 })
 
-await adapter.connect()
-try {
-    const state = await adapter.getBrowserState()
-    await adapter.clickElement(state.indices[0])
-} finally {
-    // 直接使用 Adapter 时，没有 PageAgentCore 的任务级 finally 清理。
+const connectButton = document.querySelector<HTMLButtonElement>('#connect-parent')
+if (!connectButton) throw new Error('缺少连接控件')
+connectButton.addEventListener('click', async () => {
+    connectButton.disabled = true
     try {
-        await Promise.allSettled([adapter.cleanUpHighlights(), adapter.hideMask()])
-    } finally {
-        adapter.dispose()
+        await adapter.connect()
+        document.querySelector<HTMLButtonElement>('#run-agent')!.disabled = false
+    } catch (error) {
+        connectButton.disabled = false
+        connectButton.dataset.state = 'error'
     }
-}
+})
+
+window.addEventListener('pagehide', () => adapter.dispose(), { once: true })
 ```
 
 adapter 提供完整的 indexed controller 形状方法。为保持结构兼容，仍有
 `executeJavascript` 方法，但始终返回确定性的 `CAPABILITY_DENIED` 结果；parent bridge
-永远不会执行 child 提供的 JavaScript。导航后只有在 offer、策略、origin、frame instance
-和 challenge 都重新通过校验时才会建立连接。
+永远不会执行 child 提供的 JavaScript。不要在模块初始化或 `onMounted` 中调用 `connect()`；首次
+调用必须来自 A 中清楚可见的用户操作。这个产品操作不是浏览器可验证的密码学 user gesture，
+P/P BFF 仍必须独立校验登录态、CSRF、target 和业务 ACL。
+
+一次成功握手建立一个仅内存 activation 和一个 bridge session，不是一次模型调用。模型的多个
+步骤复用当前 `MessageChannel`。激活后 P 可以发送自动重连 offer，A 也可以调用
+`adapter.reconnect()`；两条路径仍会申请新 policy 并完成全部校验。`adapter.deactivate()` 与
+`host.deactivate()` 都会通知对端并清除双方 activation，控制消息不会回环。登出、切换用户/
+租户/target 或显式断开时调用其中一端；新的 A 文档必须再次由用户点击。
 
 ### 策略、规则和一次性审批
 
@@ -351,7 +422,7 @@ Vue 不属于 Page Agent 依赖。以下代码应放在助手应用中，由应�
 [`examples/parent-bridge/use-page-agent.ts`](../examples/parent-bridge/use-page-agent.ts)。
 
 ```ts
-import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { onBeforeUnmount, ref, shallowRef } from 'vue'
 import type { ParentControllerAdapterOptions } from '@page-agent/page-controller/parent-bridge/adapter'
 
 type ParentAdapter = InstanceType<
@@ -361,19 +432,21 @@ type ParentAdapter = InstanceType<
 export function useParentPageController(options: ParentControllerAdapterOptions) {
     const adapter = shallowRef<ParentAdapter | null>(null)
     const connected = ref(false)
+    const connecting = ref(false)
     const error = ref<unknown>(null)
     let disposed = false
 
     const connect = async () => {
         if (disposed) return false
+        connecting.value = true
         error.value = null
         try {
             const { ParentPageControllerAdapter } = await import(
                 '@page-agent/page-controller/parent-bridge/adapter'
             )
             if (disposed) return false
-            const instance = new ParentPageControllerAdapter(options)
-            adapter.value = instance
+            const instance = adapter.value ?? new ParentPageControllerAdapter(options)
+            if (!adapter.value) adapter.value = instance
             await instance.connect()
             if (disposed) {
                 instance.dispose()
@@ -385,18 +458,23 @@ export function useParentPageController(options: ParentControllerAdapterOptions)
             connected.value = false
             error.value = cause
             throw cause
+        } finally {
+            connecting.value = false
         }
     }
-    onMounted(() => void connect())
     onBeforeUnmount(() => {
         disposed = true
         adapter.value?.dispose()
         adapter.value = null
         connected.value = false
     })
-    return { adapter, connected, error, connect }
+    return { adapter, connected, connecting, error, connect }
 }
 ```
+
+在 A 页面把 `connect` 绑定到可见按钮，例如
+`<button :disabled="connected || connecting" @click="connect">连接父页面</button>`；在
+`connected` 为 `true` 前禁用模型执行和所有父页操作。
 
 路由切换时用 `AbortController` 取消正在进行的连接或动作，并在 iframe 移除后
 释放 adapter。
@@ -515,6 +593,13 @@ helper 原样返回 `Response`，JSON 可调用 `response.json()`，SSE 可消�
     必须自行脱敏或保护。
 -   iframe 导航、策略变化、root 替换或卸载时释放旧连接；`OUTCOME_UNKNOWN` 后先重新
     观察，不要盲目重试变更操作。
+-   用至少两个 P、同一 P 的两个 canonical tenant 和多个并发 A iframe 验证：各实例可以独立
+    连接，但跨 tenant、跨 iframe/标签页重放 policy/session/context 必须失败；共享 A 登录 JWT
+    不能改变该结果。
+-   用一个含 8 个 B target 的 Grant 验证多 B 共用 session 且逐个应用 B 最终 ACL；含第 9 个
+    target 的签发必须失败，未进当前 Grant 的已登记 B 不可见、不可操作。
+-   tenant/target 切换、scope 变化和 A reload 后旧 activation/session 必须失效，并要求显式重新
+    连接；不同 scope 分别连接，不能把分别完成的动作当作一个原子跨 scope 事务。
 
 ### 推荐方案：PageAgent 托管的一次性 opaque token
 
@@ -528,56 +613,64 @@ URL、日志、localStorage、埋点或错误信息。
 
 -   P 后端先用自己的登录态和业务规则判断当前用户是否允许启用助手，再向 PageAgent 授权服务
     请求 `{ policy, claims }`。PageAgent 无法代替 P 判断租户、用户、订单或工作流权限。
--   P 前端只调用同源授权接口，并把 managed-auth helper 返回的 `getEmbedPolicy` 和
+-   P 前端只调用同源授权接口，并把 integration-aware helper 返回的 `getEmbedPolicy` 和
     `verifyEmbedPolicy` 交给 Host；无需保存私钥、实现 JOSE 或维护 JWKS。
 -   PageAgent 授权服务生成至少 256 bit 的随机 token，只持久化摘要，并把 `jti`、精确
-    `parentOrigin`/`assistantOrigin`、`scopeId`、能力、协议版本、`nbf`/`exp`、租户、用户、
-    target 以及获准的 `childFrames` 写入服务端记录。
+    `integrationId`、app IDs、configVersion、`parentOrigin`/`assistantOrigin`、`scopeId`、能力、
+    协议版本、`nbf`/`exp`、完整 bridge binding、canonical subject、target 以及获准的
+    `childFrames` 写入服务端记录；subject 不返回浏览器。
 -   A 的 `authorizeOffer` 把 token、浏览器实际观察到的父 Origin 和完整 offer 发送给同源 A
-    后端。后端原子核销 token，校验 claims 与 `policyId`、实际 Origin、能力集合相符，并把
-    `sessionId`、`challenge`、`frameInstanceId`、`hostInstanceId` 绑定到短期
-    `authorizationContext`。任何第二次交换、过期、篡改或越权能力都失败关闭。
+    后端。A BFF 以自己的服务身份和 SSO subject 调 Auth；Auth 比较 P/A subject，并在原子核销
+    前校验 claims 与 `policyId`、实际 Origin、能力集合和 issue 时已绑定的 session/challenge/
+    instance 完全相符。任何第二次交换、过期、篡改或越权能力都失败关闭。
 -   B 不接触 token。P 只为 claims 中明确列出的 B 建立代理，并继续执行 B 自己的 origin、
     capability、action policy 和审批规则。
 
-PageAgent 授权服务可以直接复用窄入口中的 issuer/exchange 组件；以下内存 store 仅用于展示 API：
+独立的生产 Auth 可以复用窄入口中的合同和领域引擎。以下 `productionRegistry` 和
+`productionAtomicStore` 必须由独立服务以配置数据库和共享原子 TTL 存储实现：
 
 ```ts
 import {
-    InMemoryOpaqueEmbedAuthorizationStore,
-    OpaqueEmbedAuthorizationService,
-} from '@page-agent/page-controller/parent-bridge/managed-auth'
+    IntegrationAwareEmbedAuthorizationAuthority,
+    toBrowserAuthorizationContext,
+} from '@page-agent/page-controller/parent-bridge/integration-auth'
 
-const authority = new OpaqueEmbedAuthorizationService({
-    store: new InMemoryOpaqueEmbedAuthorizationStore(), // 生产替换为共享原子 store
-    assistantOrigin: 'https://assistant.example.com',
-    allowedParentOrigins: ['https://p.example.com'],
-    scopeId: 'checkout',
-    allowedCapabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
-    ttlSeconds: 120,
+const authority = new IntegrationAwareEmbedAuthorizationAuthority({
+    registry: productionRegistry,
+    store: productionAtomicStore,
+    issuer: 'page-agent-auth',
 })
 
-// P 同源 POST 路由：先校验登录态和 P 的业务权限，再调用 PageAgent 服务。
-const grant = await authority.issue({
-    tenant: currentTenant.id,
-    user: currentUser.id,
-    targetId: checkout.id,
-    scopeId: 'checkout',
-    parentOrigin: 'https://p.example.com',
-    assistantOrigin: 'https://assistant.example.com',
-    capabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
-})
+// P BFF：actor 来自 mTLS/服务令牌，subject 来自 P 自己验证的 SSO 会话。
+const grant = await authority.issue(
+    { actor: authenticatedPServiceActor, subject: canonicalPSubject },
+    {
+        integrationId: 'checkout-p__shared-assistant',
+        targetId: checkout.id,
+        scopeId: 'checkout',
+        parentOrigin: 'https://p.example.com',
+        assistantOrigin: 'https://assistant.example.com',
+        capabilities: ['observe', 'click', 'input', 'select', 'scroll', 'cleanup'],
+        bridgeBinding,
+        parentSessionBinding,
+    }
+)
 // 返回 JSON：{ policy, claims }；响应必须 no-store。
 
-// A 同源 POST 路由：把浏览器观察到的 actualParentOrigin 与完整 offer 一起提交。
-const authorizationContext = await authority.exchange({ policy, actualParentOrigin, offer })
+// A BFF：使用自己的受信 actor/subject；只把无身份的最小上下文返回 A 浏览器。
+const decision = await authority.exchange(
+    { actor: authenticatedAServiceActor, subject: canonicalASubject },
+    { policy, actualParentOrigin, actualAssistantOrigin, offer }
+)
+const authorizationContext = toBrowserAuthorizationContext(decision)
 ```
 
 A 前端在 `authorizeOffer` 中只把服务端返回的 context 映射成 `AuthorizedParent`，并再次精确比较
 `policyId`、父/助手 origin、session、challenge、frame/host instance 和 capability；不要因接口
 返回 HTTP 200 就跳过这些关联检查。
 
-父页的最小改造因此只有一个同源后端路由和一段前端接线。生产环境的 token store 必须使用
+父页的最小改造因此只有一个同源后端路由和一段前端接线。旧 `parent-bridge/managed-auth` API
+保留一个版本并已标记 deprecated；新接入不要继续使用。生产环境的 token store 必须使用
 Redis、数据库事务或等价的共享存储，通过原子的 get-and-delete/compare-and-delete 完成核销；
 库提供的内存 store 只适合单进程开发和测试，不能跨实例防重放。接口响应和所有失败响应都应
 设置 `Cache-Control: no-store`，使用 HTTPS、受控 CORS/CSRF 和请求体大小限制。不要把服务端
@@ -590,16 +683,16 @@ Redis、数据库事务或等价的共享存储，通过原子的 get-and-delete
 
 ### 与 ES256/JWKS 的比较和升级路径
 
-| 维度           | 一次性 opaque token（当前推荐）               | ES256/JWKS（跨系统升级方案）                     |
-| -------------- | --------------------------------------------- | ------------------------------------------------ |
-| 适用信任关系   | P/A/B 同公司，可调用统一在线授权服务          | P/A 分属不同系统或组织，需要独立验证             |
-| P 接入成本     | 同源路由 + managed-auth helper，无密码学实现  | 校验 JWT/JWS、issuer/audience、JWKS 缓存与轮换   |
-| A 校验方式     | 每次握手在线调用服务端并原子核销              | 本地验签；仍建议用共享 `jti` store 防重放        |
-| 撤销与权限变化 | 服务端记录可立即拒绝，天然在线                | 已签发 token 通常到过期才失效，需短 TTL/撤销表   |
-| 可用性         | 依赖授权服务在线和共享存储                    | JWKS 缓存后可离线验证，跨区域更容易扩展          |
-| 密钥运维       | 无公私钥分发；重点保护 token store 和服务身份 | 需保护私钥、发布 JWKS、处理 `kid`/轮换/算法约束  |
-| token 可读性   | 不可读，泄漏仍必须按 bearer secret 处理       | claims 可读但有签名，也必须按 bearer secret 处理 |
-| 审计           | 授权与核销天然经过服务端，集中审计简单        | 签发和各验证方日志需关联 `jti`                   |
+| 维度           | 一次性 opaque token（当前推荐）                   | ES256/JWKS（跨系统升级方案）                     |
+| -------------- | ------------------------------------------------- | ------------------------------------------------ |
+| 适用信任关系   | P/A/B 同公司，可调用统一在线授权服务              | P/A 分属不同系统或组织，需要独立验证             |
+| P 接入成本     | 同源路由 + integration-aware helper，无密码学实现 | 校验 JWT/JWS、issuer/audience、JWKS 缓存与轮换   |
+| A 校验方式     | 每次握手在线调用服务端并原子核销                  | 本地验签；仍建议用共享 `jti` store 防重放        |
+| 撤销与权限变化 | 服务端记录可立即拒绝，天然在线                    | 已签发 token 通常到过期才失效，需短 TTL/撤销表   |
+| 可用性         | 依赖授权服务在线和共享存储                        | JWKS 缓存后可离线验证，跨区域更容易扩展          |
+| 密钥运维       | 无公私钥分发；重点保护 token store 和服务身份     | 需保护私钥、发布 JWKS、处理 `kid`/轮换/算法约束  |
+| token 可读性   | 不可读，泄漏仍必须按 bearer secret 处理           | claims 可读但有签名，也必须按 bearer secret 处理 |
+| 审计           | 授权与核销天然经过服务端，集中审计简单            | 签发和各验证方日志需关联 `jti`                   |
 
 升级到 ES256/JWKS 时保持 Host/Adapter 协议、claims schema、精确 origin/capability 检查和
 `authorizeOffer` 接口不变，只替换签发器与校验器：P 后端签发短期 ES256 JWS，A/P 依据固定

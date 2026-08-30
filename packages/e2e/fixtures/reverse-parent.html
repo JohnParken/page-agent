@@ -796,7 +796,7 @@
 
 		<script src="/controller-iife/page-agent-parent-host.iife.min.js"></script>
 		<script type="module">
-			import { createManagedEmbedAuthClient } from '/lib/parent-bridge/managed-auth.js'
+			import { createIntegrationAwareManagedEmbedAuthClient } from '/lib/parent-bridge/integration-auth.js'
 
 			if (!window.PageAgentParentHost) throw new Error('PageAgentParentHost is unavailable')
 			const { ParentPageControllerHost } = window.PageAgentParentHost
@@ -804,6 +804,12 @@
 			const params = new URLSearchParams(location.search)
 			const childOrigin = 'http://127.0.0.1:4174'
 			const businessOrigin = 'http://127.0.0.1:4176'
+			const primaryParentOrigin = 'http://127.0.0.1:4173'
+			const primaryIntegration = location.origin === primaryParentOrigin
+			const integrationId = primaryIntegration
+				? 'reverse-primary-assistant'
+				: 'reverse-secondary-assistant'
+			const parentAppId = primaryIntegration ? 'reverse-primary' : 'reverse-secondary'
 			document.querySelector('#parent-origin-value').textContent = location.origin
 			const authorizeBusiness = params.get('authorizeBusiness') !== 'false'
 			const childExpectedParentOrigin = params.get('childExpectedParentOrigin') || location.origin
@@ -823,12 +829,17 @@
 				`${businessOrigin}/reverse-business-child.html?role=authorized`
 			document.querySelector('#unconfigured-business-frame').src =
 				`${businessOrigin}/reverse-business-child.html?role=unauthorized`
-			const managedAuth = createManagedEmbedAuthClient({
+			const managedAuth = createIntegrationAwareManagedEmbedAuthClient({
 				endpoint: `/api/parent-bridge/embed-policy?authorizeBusiness=${authorizeBusiness}`,
 				allowInsecureHttp: true,
+				expectedIntegrationId: integrationId,
+				expectedParentAppId: parentAppId,
+				expectedAssistantAppId: 'reverse-assistant',
 				expectedParentOrigin: location.origin,
 				expectedAssistantOrigin: childOrigin,
 				expectedScopeId: 'reverse-e2e-root',
+				expectedIssuer: 'page-agent-e2e-auth',
+				expectedConfigVersion: 1,
 				allowedCapabilities: [
 					'observe',
 					'click',
@@ -874,7 +885,7 @@
 					requestTimeoutMs: 2_000,
 				},
 				visualFeedback: 'non-blocking',
-				getEmbedPolicy: () => managedAuth.getEmbedPolicy(),
+				getEmbedPolicy: (context) => managedAuth.getEmbedPolicy(context),
 				verifyEmbedPolicy: (policy, context) =>
 					managedAuth.verifyEmbedPolicy(policy, {
 						...context,

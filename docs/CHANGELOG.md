@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Features
+
+-   **Integration-aware parent-bridge authorization** - Added public Auth contracts and a reusable domain engine for registered Assistant/Parent apps, per-P Integrations and child targets, trusted P/A service actors, canonical-subject matching, one-use opaque grants, revocation, and atomic Store adapters.
+-   **Issue-time bridge binding** - The parent Host now supplies a pre-generated session, challenge, and host/frame instances to `getEmbedPolicy(context)`, so Auth can bind the grant before the wire-protocol offer while keeping policy-offer and bridge-session lifetimes separate.
+-   **Multi-P Auth conformance coverage** - Added unit and E2E scenarios for one shared A across multiple P applications, different B allow-lists, subject and service-actor mismatches, capability escalation, revocation, expiry, and replay.
+-   **Assistant-initiated parent handshake** - The Parent Host is passive by default, and A now starts the first authorization handshake from an explicit visible Connect action. A successful activation enables validated P- or A-initiated reconnects without repeating a handshake for every model call; deactivation and a new A document require another user action.
+
+### Improvements
+
+-   **Identity-minimized browser contract** - The integration-aware browser client validates app/Integration/config versions and exact bindings while keeping canonical subjects and service identities on trusted BFF-to-Auth paths.
+-   **Managed Auth compatibility window** - Exported the new API from `parent-bridge/integration-auth`; retained the old `parent-bridge/managed-auth` surface for one release and marked it deprecated.
+-   **Production Auth boundary** - Documented that this repository supplies contracts, domain behavior, and test implementations, while real SSO, mTLS, Redis/database persistence, HA, observability, and deployment belong in an independent Auth service repository.
+-   **Parent-initiated compatibility mode** - Retained `handshakeMode: 'parent-initiated'` for one migration release while new integrations use the assistant-initiated default.
+
+### Bug Fixes
+
+-   **Parent approval queue recovery** - Fixed approval timeout and cancellation paths dereferencing a consumed approval, which could leave later Host requests blocked.
+-   **Parent bridge deactivation consistency** - P- or A-initiated deactivation now clears both activation leases without message echo, and port errors always invalidate the A connection even when automatic reconnect is disabled.
+
 ## [1.12.0] - 2026-07-09
 
 -   **Stateless extension tab sync** - TabsController pulls tab state on demand instead of long-lived ports, so the MV3 service worker stays stateless and survives idle kills without stalling the side panel.

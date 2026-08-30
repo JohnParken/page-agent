@@ -3,9 +3,9 @@
  *
  * Install Vue in the consuming application. This source is deliberately kept
  * outside the Page Agent packages so Vue is never a runtime dependency here.
- * Runtime bridge/Core modules are loaded from onMounted for SSR safety.
+ * Runtime bridge/Core modules are loaded only after the explicit connect action.
  */
-import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { onBeforeUnmount, ref, shallowRef } from 'vue'
 
 import type { AgentActivity, AgentStatus, ExecutionResult, HistoricalEvent } from '@page-agent/core'
 import type {
@@ -114,6 +114,7 @@ export function usePageAgent(options: UsePageAgentOptions) {
 	const adapter = shallowRef<ParentAdapter | null>(null)
 	const agent = shallowRef<PageAgentCore | null>(null)
 	const connected = ref(false)
+	const connecting = ref(false)
 	const parentUnavailable = ref(false)
 	const degraded = ref(false)
 	const status = ref<AgentStatus>('idle')
@@ -223,6 +224,7 @@ export function usePageAgent(options: UsePageAgentOptions) {
 		if (disposed) return false
 		if (connectPromise) return connectPromise
 		connectPromise = (async () => {
+			connecting.value = true
 			error.value = null
 			try {
 				await createRuntime()
@@ -240,6 +242,7 @@ export function usePageAgent(options: UsePageAgentOptions) {
 				error.value = cause
 				return false
 			} finally {
+				connecting.value = false
 				connectPromise = null
 			}
 		})()
@@ -275,9 +278,6 @@ export function usePageAgent(options: UsePageAgentOptions) {
 		agent.value = null
 	}
 
-	onMounted(() => {
-		void connect()
-	})
 	onBeforeUnmount(() => {
 		void dispose()
 	})
@@ -286,6 +286,7 @@ export function usePageAgent(options: UsePageAgentOptions) {
 		adapter,
 		agent,
 		connected,
+		connecting,
 		parentUnavailable,
 		degraded,
 		status,

@@ -18,15 +18,19 @@ interface ActionResult {
 interface ReverseChildWindow extends Window {
 	reverseAuthorizationContext?: {
 		policyId: string
+		integrationId: string
+		parentAppId: string
+		assistantAppId: string
 		parentOrigin: string
 		assistantOrigin: string
-		tenant: string
-		user: string
 		targetId: string
 		scopeId: string
 		capabilities: string[]
 	}
 	reverseParentController?: {
+		readonly connected: boolean
+		readonly activationActive: boolean
+		reconnect(): Promise<{ policyId: string }>
 		getBrowserState(): Promise<BrowserState>
 		clickElement(index: number): Promise<ActionResult>
 		inputText(index: number, text: string): Promise<ActionResult>
@@ -55,7 +59,7 @@ interface ReverseChildWindow extends Window {
 }
 
 interface ReverseParentWindow extends Window {
-	reverseParentHost?: { controller?: unknown }
+	reverseParentHost?: { controller?: unknown; deactivate(): void }
 	PageAgentParentHost?: unknown
 }
 
@@ -87,6 +91,9 @@ async function connectedChildFrame(page: Page, parentOrigin: string): Promise<Fr
 		'allow-scripts allow-same-origin'
 	)
 	await expect(frame.locator('#assistant-root')).toBeVisible()
+	const connect = frame.locator('#assistant-connect')
+	await expect(connect).toBeVisible()
+	if (await connect.isEnabled()) await connect.click()
 	await expect
 		.poll(() => frame.locator('#assistant-status').textContent(), { timeout: 5_000 })
 		.toContain(`connected:${parentOrigin}`)
@@ -193,6 +200,35 @@ async function parentFeedbackBecameVisible(page: Page): Promise<boolean> {
 }
 
 test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
+	test('does not issue or redeem authorization before the user clicks Connect', async ({
+		page,
+	}) => {
+		const authorizationRequests: string[] = []
+		page.on('request', (request) => {
+			const path = new URL(request.url()).pathname
+			if (
+				path === '/api/parent-bridge/embed-policy' ||
+				path === '/api/parent-bridge/authorize-offer'
+			)
+				authorizationRequests.push(path)
+		})
+
+		await page.goto(`${parentOrigins[0]}/reverse-parent.html`)
+		await expect
+			.poll(() => page.evaluate(() => Boolean((window as ReverseParentWindow).reverseParentHost)))
+			.toBe(true)
+		const frame = await childFrame(page)
+		await expect(frame.locator('#assistant-status')).toContainText('Disconnected')
+		await expect(frame.locator('#assistant-connect')).toBeEnabled()
+		expect(authorizationRequests).toEqual([])
+
+		await frame.locator('#assistant-connect').click()
+		await expect(frame.locator('#assistant-status')).toContainText(`connected:${parentOrigins[0]}`)
+		await expect
+			.poll(() => [...new Set(authorizationRequests)].sort())
+			.toEqual(['/api/parent-bridge/authorize-offer', '/api/parent-bridge/embed-policy'])
+	})
+
 	test('observes only the trusted parent root and excludes outside/assistant DOM', async ({
 		page,
 	}) => {
@@ -217,13 +253,15 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		expect(new URL(business.url()).origin).toBe(businessOrigin)
 		expect(new URL(page.url()).origin).not.toBe(new URL(business.url()).origin)
 		expect(new URL(frame.url()).origin).not.toBe(new URL(business.url()).origin)
-		expect(
-			await frame.evaluate(() => (window as ReverseChildWindow).reverseAuthorizationContext)
-		).toMatchObject({
+		const authorizationContext = await frame.evaluate(
+			() => (window as ReverseChildWindow).reverseAuthorizationContext
+		)
+		expect(authorizationContext).toMatchObject({
+			integrationId: 'reverse-primary-assistant',
+			parentAppId: 'reverse-primary',
+			assistantAppId: 'reverse-assistant',
 			parentOrigin: parentOrigins[0],
 			assistantOrigin: childOrigin,
-			tenant: 'e2e-tenant',
-			user: 'e2e-user',
 			targetId: 'reverse-e2e-target',
 			scopeId: 'reverse-e2e-root',
 			capabilities: [
@@ -237,14 +275,26 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 				'visual',
 			],
 		})
+		expect(authorizationContext).not.toHaveProperty('subject')
+		expect(authorizationContext).not.toHaveProperty('tenant')
+		expect(authorizationContext).not.toHaveProperty('user')
 	})
 
 	test('redeems a managed opaque policy once and rejects tampering without burning the valid token', async ({
 		page,
 	}) => {
+		const bridgeBinding = {
+			sessionId: 'e2e-session',
+			challenge: 'e2e-challenge',
+			frameInstanceId: 'e2e-frame',
+			hostInstanceId: 'e2e-host',
+		}
 		const issue = await page.request.post(`${parentOrigins[0]}/api/parent-bridge/embed-policy`, {
 			headers: { Origin: parentOrigins[0] },
-			data: {},
+			data: {
+				integrationId: 'reverse-primary-assistant',
+				bridgeBinding,
+			},
 		})
 		expect(issue.ok()).toBe(true)
 		const grant = (await issue.json()) as {
@@ -256,10 +306,7 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 
 		const offer = {
 			policyId: grant.claims.jti,
-			sessionId: 'e2e-session',
-			challenge: 'e2e-challenge',
-			frameInstanceId: 'e2e-frame',
-			hostInstanceId: 'e2e-host',
+			...bridgeBinding,
 			capabilities: grant.claims.cap,
 		}
 		const authorize = (policy: string, actualParentOrigin = parentOrigins[0]) =>
@@ -277,6 +324,9 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 			authorized: true,
 			authorizationContext: {
 				policyId: grant.claims.jti,
+				integrationId: 'reverse-primary-assistant',
+				parentAppId: 'reverse-primary',
+				assistantAppId: 'reverse-assistant',
 				parentOrigin: parentOrigins[0],
 				assistantOrigin: childOrigin,
 				sessionId: offer.sessionId,
@@ -289,6 +339,41 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		const replay = await authorize(grant.policy)
 		expect(replay.status()).toBe(403)
 		expect(await replay.json()).toEqual({ error: 'POLICY_NOT_FOUND_OR_REPLAYED' })
+	})
+
+	test('rejects an A subject mismatch without burning the valid policy', async ({ page }) => {
+		const bridgeBinding = {
+			sessionId: 'subject-session',
+			challenge: 'subject-challenge',
+			frameInstanceId: 'subject-frame',
+			hostInstanceId: 'subject-host',
+		}
+		const issue = await page.request.post(`${parentOrigins[0]}/api/parent-bridge/embed-policy`, {
+			headers: { Origin: parentOrigins[0] },
+			data: { integrationId: 'reverse-primary-assistant', bridgeBinding },
+		})
+		expect(issue.ok()).toBe(true)
+		const grant = (await issue.json()) as {
+			policy: string
+			claims: { jti: string; cap: string[] }
+		}
+		const request = {
+			policy: grant.policy,
+			actualParentOrigin: parentOrigins[0],
+			offer: { policyId: grant.claims.jti, ...bridgeBinding, capabilities: grant.claims.cap },
+		}
+		const mismatch = await page.request.post(`${childOrigin}/api/parent-bridge/authorize-offer`, {
+			headers: { Origin: childOrigin, 'X-E2E-User-Id': 'different-user' },
+			data: request,
+		})
+		expect(mismatch.status()).toBe(403)
+		expect(await mismatch.json()).toEqual({ error: 'SUBJECT_MISMATCH' })
+
+		const accepted = await page.request.post(`${childOrigin}/api/parent-bridge/authorize-offer`, {
+			headers: { Origin: childOrigin },
+			data: request,
+		})
+		expect(accepted.ok()).toBe(true)
 	})
 
 	test('routes allowed and confirmed actions through the parent into the business iframe', async ({
@@ -753,7 +838,81 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 		const frame = await openParent(page, parentOrigins[1])
 		const browserState = await state(frame)
 		expect(browserState.content).toContain('parent-button')
+		expect(browserState.content).not.toContain('business-button')
+		expect(
+			await frame.evaluate(
+				() => (window as ReverseChildWindow).reverseAuthorizationContext?.integrationId
+			)
+		).toBe('reverse-secondary-assistant')
 		await expect(frame.locator('#assistant-status')).toContainText(parentOrigins[1])
+	})
+
+	test('supports A- and P-initiated reconnects only after the first activation', async ({
+		page,
+	}) => {
+		const frame = await openParent(page)
+		const firstPolicyId = await frame.evaluate(
+			() => (window as ReverseChildWindow).reverseAuthorizationContext?.policyId
+		)
+		expect(firstPolicyId).toMatch(/^pao_id_/)
+
+		const assistantPolicyId = await frame.evaluate(async () => {
+			const adapter = (window as ReverseChildWindow).reverseParentController
+			if (!adapter?.activationActive) throw new Error('Assistant activation is not active')
+			return (await adapter.reconnect()).policyId
+		})
+		expect(assistantPolicyId).toMatch(/^pao_id_/)
+		expect(assistantPolicyId).not.toBe(firstPolicyId)
+
+		await page.evaluate(() => window.dispatchEvent(new Event('popstate')))
+		await expect
+			.poll(async () => {
+				const policyId = await frame.evaluate(
+					() => (window as ReverseChildWindow).reverseAuthorizationContext?.policyId
+				)
+				return typeof policyId === 'string' && policyId !== assistantPolicyId
+			})
+			.toBe(true)
+		await expect(frame.locator('#assistant-status')).toContainText(`connected:${parentOrigins[0]}`)
+		await expect(frame.locator('#assistant-connect')).toBeDisabled()
+	})
+
+	test('propagates P deactivation to A and requires another visible Connect action', async ({
+		page,
+	}) => {
+		const frame = await openParent(page)
+		const firstPolicyId = await frame.evaluate(
+			() => (window as ReverseChildWindow).reverseAuthorizationContext?.policyId
+		)
+
+		await page.evaluate(() => {
+			const host = (window as ReverseParentWindow).reverseParentHost
+			if (!host) throw new Error('Parent host is unavailable')
+			host.deactivate()
+		})
+		await expect
+			.poll(() =>
+				frame.evaluate(() => {
+					const adapter = (window as ReverseChildWindow).reverseParentController
+					return adapter ? { connected: adapter.connected, active: adapter.activationActive } : null
+				})
+			)
+			.toEqual({ connected: false, active: false })
+		await expect(frame.locator('#assistant-status')).toHaveText('disconnected')
+		await expect(frame.locator('#assistant-connect')).toBeEnabled()
+
+		await page.waitForTimeout(150)
+		expect(
+			await frame.evaluate(() => (window as ReverseChildWindow).reverseParentController?.connected)
+		).toBe(false)
+
+		await frame.locator('#assistant-connect').click()
+		await expect(frame.locator('#assistant-status')).toContainText(`connected:${parentOrigins[0]}`)
+		await expect
+			.poll(() =>
+				frame.evaluate(() => (window as ReverseChildWindow).reverseAuthorizationContext?.policyId)
+			)
+			.not.toBe(firstPolicyId)
 	})
 
 	test('issues and redeems a fresh opaque policy after the assistant iframe reloads', async ({
@@ -786,6 +945,7 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 			)}`
 		)
 		const frame = await childFrame(page)
+		await frame.locator('#assistant-connect').click()
 		await expect
 			.poll(() => frame.locator('#assistant-status').textContent(), { timeout: 3_000 })
 			.toMatch(/error:(EMBED_POLICY_DENIED|TIMEOUT|CONNECTION_CLOSED)/)
@@ -811,6 +971,12 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 			)
 		expect(sibling).toBeTruthy()
 		expect(wrongSource).toBeTruthy()
+		await sibling!.evaluate(
+			() => document.querySelector<HTMLButtonElement>('#assistant-connect')?.click()
+		)
+		await wrongSource!.evaluate(
+			() => document.querySelector<HTMLButtonElement>('#assistant-connect')?.click()
+		)
 		await expect(sibling!.locator('#assistant-status')).not.toContainText('connected:', {
 			timeout: 1_500,
 		})

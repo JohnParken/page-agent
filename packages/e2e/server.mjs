@@ -6,10 +6,12 @@ import { dirname, extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config as dotenvConfig } from 'dotenv'
 import {
-	InMemoryOpaqueEmbedAuthorizationStore,
-	ManagedEmbedAuthorizationError,
-	OpaqueEmbedAuthorizationService,
-} from '../page-controller/dist/lib/parent-bridge/managed-auth.js'
+	InMemoryIntegrationAwareAuthorizationStore,
+	InMemoryManagedEmbedAuthorizationRegistry,
+	IntegrationAwareAuthorizationError,
+	IntegrationAwareEmbedAuthorizationAuthority,
+	toBrowserAuthorizationContext,
+} from '../page-controller/dist/lib/parent-bridge/integration-auth.js'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(currentDirectory, '../..')
@@ -68,6 +70,8 @@ const PARENT_BRIDGE_AUTHORIZE_PATH = '/api/parent-bridge/authorize-offer'
 const PARENT_BRIDGE_ASSISTANT_ORIGIN = 'http://127.0.0.1:4174'
 const PARENT_BRIDGE_BUSINESS_ORIGIN = 'http://127.0.0.1:4176'
 const PARENT_BRIDGE_PARENT_ORIGINS = ['http://127.0.0.1:4173', 'http://127.0.0.1:4175']
+const PARENT_BRIDGE_PRIMARY_INTEGRATION = 'reverse-primary-assistant'
+const PARENT_BRIDGE_SECONDARY_INTEGRATION = 'reverse-secondary-assistant'
 const PARENT_BRIDGE_CAPABILITIES = [
 	'observe',
 	'click',
@@ -79,18 +83,77 @@ const PARENT_BRIDGE_CAPABILITIES = [
 	'visual',
 ]
 
-// This shared in-memory authority intentionally models the PageAgent-operated
-// service boundary. Production must replace the store with an atomic shared
-// Redis/database implementation and derive identity/ACLs from P's backend.
-const parentBridgeAuthorizationService = new OpaqueEmbedAuthorizationService({
-	store: new InMemoryOpaqueEmbedAuthorizationStore(),
-	allowInsecureHttp: true,
-	assistantOrigin: PARENT_BRIDGE_ASSISTANT_ORIGIN,
-	allowedParentOrigins: PARENT_BRIDGE_PARENT_ORIGINS,
-	scopeId: 'reverse-e2e-root',
-	allowedCapabilities: PARENT_BRIDGE_CAPABILITIES,
-	ttlSeconds: 120,
+const parentBridgeRegistry = new InMemoryManagedEmbedAuthorizationRegistry({
+	assistantApps: [
+		{
+			assistantAppId: 'reverse-assistant',
+			environment: 'e2e',
+			origins: [PARENT_BRIDGE_ASSISTANT_ORIGIN],
+			serviceActorIds: ['reverse-assistant-bff'],
+			status: 'enabled',
+		},
+	],
+	parentApps: PARENT_BRIDGE_PARENT_ORIGINS.map((origin, index) => ({
+		parentAppId: index === 0 ? 'reverse-primary' : 'reverse-secondary',
+		environment: 'e2e',
+		origins: [origin],
+		serviceActorIds: [index === 0 ? 'reverse-primary-bff' : 'reverse-secondary-bff'],
+		status: 'enabled',
+	})),
+	integrations: PARENT_BRIDGE_PARENT_ORIGINS.map((origin, index) => ({
+		integrationId:
+			index === 0 ? PARENT_BRIDGE_PRIMARY_INTEGRATION : PARENT_BRIDGE_SECONDARY_INTEGRATION,
+		parentAppId: index === 0 ? 'reverse-primary' : 'reverse-secondary',
+		assistantAppId: 'reverse-assistant',
+		environment: 'e2e',
+		scopeId: 'reverse-e2e-root',
+		parentOrigins: [origin],
+		assistantOrigins: [PARENT_BRIDGE_ASSISTANT_ORIGIN],
+		maxCapabilities: PARENT_BRIDGE_CAPABILITIES,
+		childTargets:
+			index === 0
+				? [
+						{
+							childId: 'fulfilment-app',
+							origin: PARENT_BRIDGE_BUSINESS_ORIGIN,
+							maxCapabilities: ['observe', 'click', 'input', 'cleanup'],
+							status: 'enabled',
+						},
+					]
+				: [],
+		configVersion: 1,
+		status: 'enabled',
+		transportMode: 'trusted-intranet-http',
+	})),
 })
+
+// The E2E authority models the service boundary. Production supplies SSO and
+// workload identities at the HTTP layer and replaces this in-memory Store.
+const parentBridgeAuthorizationService = new IntegrationAwareEmbedAuthorizationAuthority({
+	registry: parentBridgeRegistry,
+	store: new InMemoryIntegrationAwareAuthorizationStore(),
+	issuer: 'page-agent-e2e-auth',
+	allowInsecureHttp: true,
+	policyTtlSeconds: 120,
+	bridgeSessionTtlSeconds: 900,
+})
+
+const E2E_CANONICAL_SUBJECT = {
+	issuer: 'e2e-sso',
+	tenantId: 'e2e-tenant',
+	userId: 'e2e-user',
+}
+
+function parentIntegration(requestURL) {
+	const primary = requestURL.origin === PARENT_BRIDGE_PARENT_ORIGINS[0]
+	return {
+		integrationId: primary
+			? PARENT_BRIDGE_PRIMARY_INTEGRATION
+			: PARENT_BRIDGE_SECONDARY_INTEGRATION,
+		parentAppId: primary ? 'reverse-primary' : 'reverse-secondary',
+		actorId: primary ? 'reverse-primary-bff' : 'reverse-secondary-bff',
+	}
+}
 
 async function readJsonRequest(request) {
 	let body = ''
@@ -192,8 +255,18 @@ function requestOrigin(request, fallbackOrigin) {
 function managedAuthorizationError(response, error) {
 	writeJson(response, 403, {
 		error:
-			error instanceof ManagedEmbedAuthorizationError ? error.code : 'MANAGED_AUTHORIZATION_DENIED',
+			error instanceof IntegrationAwareAuthorizationError
+				? error.code
+				: 'MANAGED_AUTHORIZATION_DENIED',
 	})
+}
+
+function e2eCanonicalSubject(request) {
+	const userId = request.headers['x-e2e-user-id']
+	return {
+		...E2E_CANONICAL_SUBJECT,
+		...(typeof userId === 'string' && userId ? { userId } : {}),
+	}
 }
 
 async function serveManagedEmbedPolicy(request, response, requestURL) {
@@ -202,33 +275,51 @@ async function serveManagedEmbedPolicy(request, response, requestURL) {
 		return
 	}
 	try {
-		await readJsonRequest(request)
+		const body = await readJsonRequest(request)
 		if (requestOrigin(request, requestURL.origin) !== requestURL.origin) {
 			throw new Error('Parent origin mismatch')
 		}
+		const registered = parentIntegration(requestURL)
+		if (body.integrationId !== registered.integrationId) {
+			throw new Error('Integration mismatch')
+		}
 		// This query flag simulates the result of P's server-side business ACL.
 		// A real route must derive it from the authenticated user and tenant.
-		const authorizeBusiness = requestURL.searchParams.get('authorizeBusiness') !== 'false'
-		const grant = await parentBridgeAuthorizationService.issue({
-			tenant: 'e2e-tenant',
-			user: 'e2e-user',
-			targetId: 'reverse-e2e-target',
-			scopeId: 'reverse-e2e-root',
-			parentOrigin: requestURL.origin,
-			assistantOrigin: PARENT_BRIDGE_ASSISTANT_ORIGIN,
-			capabilities: PARENT_BRIDGE_CAPABILITIES,
-			...(authorizeBusiness
-				? {
-						childFrames: [
-							{
-								id: 'fulfilment-app',
-								origin: PARENT_BRIDGE_BUSINESS_ORIGIN,
-								cap: ['observe', 'click', 'input', 'cleanup'],
-							},
-						],
-					}
-				: {}),
-		})
+		const authorizeBusiness =
+			registered.integrationId === PARENT_BRIDGE_PRIMARY_INTEGRATION &&
+			requestURL.searchParams.get('authorizeBusiness') !== 'false'
+		const grant = await parentBridgeAuthorizationService.issue(
+			{
+				actor: {
+					actorId: registered.actorId,
+					appId: registered.parentAppId,
+					environment: 'e2e',
+					role: 'parent-bff',
+				},
+				subject: e2eCanonicalSubject(request),
+			},
+			{
+				integrationId: registered.integrationId,
+				targetId: 'reverse-e2e-target',
+				scopeId: 'reverse-e2e-root',
+				parentOrigin: requestURL.origin,
+				assistantOrigin: PARENT_BRIDGE_ASSISTANT_ORIGIN,
+				capabilities: PARENT_BRIDGE_CAPABILITIES,
+				bridgeBinding: body.bridgeBinding,
+				parentSessionBinding: `e2e-session:${registered.parentAppId}`,
+				...(authorizeBusiness
+					? {
+							childFrames: [
+								{
+									id: 'fulfilment-app',
+									origin: PARENT_BRIDGE_BUSINESS_ORIGIN,
+									cap: ['observe', 'click', 'input', 'cleanup'],
+								},
+							],
+						}
+					: {}),
+			}
+		)
 		writeJson(response, 200, grant)
 	} catch (error) {
 		managedAuthorizationError(response, error)
@@ -245,8 +336,25 @@ async function serveManagedOfferAuthorization(request, response, requestURL) {
 			throw new Error('Assistant origin mismatch')
 		}
 		const body = await readJsonRequest(request)
-		const authorizationContext = await parentBridgeAuthorizationService.exchange(body)
-		writeJson(response, 200, { authorized: true, authorizationContext })
+		const decision = await parentBridgeAuthorizationService.exchange(
+			{
+				actor: {
+					actorId: 'reverse-assistant-bff',
+					appId: 'reverse-assistant',
+					environment: 'e2e',
+					role: 'assistant-bff',
+				},
+				subject: e2eCanonicalSubject(request),
+			},
+			{
+				...body,
+				actualAssistantOrigin: PARENT_BRIDGE_ASSISTANT_ORIGIN,
+			}
+		)
+		writeJson(response, 200, {
+			authorized: true,
+			authorizationContext: toBrowserAuthorizationContext(decision),
+		})
 	} catch (error) {
 		managedAuthorizationError(response, error)
 	}

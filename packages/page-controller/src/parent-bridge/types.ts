@@ -12,6 +12,7 @@ import type {
 	ScrollOptions,
 } from '../PageController'
 import type {
+	ParentControllerBridgeBinding,
 	ParentControllerCapability,
 	ParentControllerMethod,
 	ParentControllerPortMessage,
@@ -24,6 +25,7 @@ import type {
 /** Safe metadata only. Never add payload, state, policy text, or input text. */
 export interface ParentControllerLogEntry {
 	event:
+		| 'handshake_request'
 		| 'offer'
 		| 'offer_denied'
 		| 'connected'
@@ -33,6 +35,7 @@ export interface ParentControllerLogEntry {
 		| 'approval_required'
 		| 'approval_result'
 		| 'error'
+		| 'deactivated'
 		| 'disposed'
 	code?: string
 	sessionId?: string
@@ -190,7 +193,21 @@ export type ParentControllerTransformState = (
 	state: IndexedBrowserState
 ) => IndexedBrowserState | Promise<IndexedBrowserState>
 
-export type ParentControllerGetEmbedPolicy = () => string | Promise<string>
+export interface ParentControllerEmbedPolicyRequestContext extends ParentControllerBridgeBinding {
+	readonly parentOrigin: string
+	readonly assistantOrigin: string
+	readonly scopeId: string
+	readonly capabilities: readonly ParentControllerCapability[]
+	readonly signal: AbortSignal
+}
+
+/**
+ * The Host supplies a pre-generated handshake binding. Existing zero-argument
+ * callbacks remain assignable and may ignore the context during migration.
+ */
+export type ParentControllerGetEmbedPolicy = (
+	context: ParentControllerEmbedPolicyRequestContext
+) => string | Promise<string>
 
 export interface ParentControllerVerifyPolicyContext {
 	readonly actualParentOrigin: string
@@ -236,6 +253,13 @@ export interface ParentPageControllerHostOptions {
 	readonly controllerOptions?: import('../PageController').PageControllerConfig
 	readonly getEmbedPolicy: ParentControllerGetEmbedPolicy
 	readonly verifyEmbedPolicy: ParentControllerVerifyEmbedPolicy
+	/**
+	 * `assistant-initiated` keeps start() passive until A explicitly requests a
+	 * handshake. `parent-initiated` is a one-release compatibility mode.
+	 */
+	readonly handshakeMode?: 'assistant-initiated' | 'parent-initiated'
+	/** Allow P to reconnect automatically after the first successful activation. */
+	readonly autoReconnect?: boolean
 	readonly transformState?: ParentControllerTransformState
 	readonly actionPolicy?: ParentControllerActionPolicy
 	/** Explicit parent-brokered child iframe targets. Claims remain authoritative. */
@@ -254,6 +278,8 @@ export interface ParentControllerAdapterOptions<TAuthorizationContext = unknown>
 	/** Capabilities requested by this child application. */
 	readonly requestedCapabilities: readonly ParentControllerCapability[]
 	readonly authorizeOffer: AuthorizeOffer<TAuthorizationContext>
+	/** Accept P-initiated reconnect offers after this adapter has been activated. */
+	readonly autoReconnect?: boolean
 	/** Required one-use approval callback for action policy prompts. */
 	readonly onApprovalRequired: OnApprovalRequired
 	readonly handshakeTimeoutMs?: number

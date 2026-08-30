@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
 	isIdentifier,
 	isParentControllerConnectMessage,
+	isParentControllerDeactivateMessage,
+	isParentControllerHandshakeRequestMessage,
 	isParentControllerMessageSizeAllowed,
 	isParentControllerPortMessage,
 	isParentControllerPortMessageBase,
@@ -33,6 +35,32 @@ function base() {
 }
 
 describe('parent-controller protocol guards', () => {
+	it('validates the assistant bootstrap and deactivation envelopes', () => {
+		const handshakeRequest = {
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'handshake-request' as const,
+			requestId: 'handshake-1',
+			reason: 'user' as const,
+		}
+		expect(isParentControllerHandshakeRequestMessage(handshakeRequest)).toBe(true)
+		expect(
+			isParentControllerHandshakeRequestMessage({ ...handshakeRequest, reason: 'automatic' })
+		).toBe(false)
+		expect(
+			isParentControllerHandshakeRequestMessage({ ...handshakeRequest, policy: 'must-not-leak' })
+		).toBe(false)
+
+		const deactivate = {
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'deactivate' as const,
+			requestId: 'deactivate-1',
+		}
+		expect(isParentControllerDeactivateMessage(deactivate)).toBe(true)
+		expect(isParentControllerDeactivateMessage({ ...deactivate, reason: 'unknown' })).toBe(false)
+	})
+
 	it('rejects unknown envelope fields and oversized messages', () => {
 		const { challenge: _challenge, ...portBase } = base()
 		const request = {

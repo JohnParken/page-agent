@@ -82,7 +82,11 @@ await agent.execute('点击登录按钮')
 
 跨域 iframe 协作接入请参阅[iframe bridge 中文集成指南](./cross-origin-iframe-bridge.zh-CN.md)（[English](./cross-origin-iframe-bridge.md)）；普通 `<script>` 页面请参阅[IIFE 接入指南](./cross-origin-iframe-bridge-script.zh-CN.md)。
 
-如果 PageAgent 运行在助手 iframe 中并需要操作父页面及明确授权的同级业务 iframe，请参阅[父页面控制器桥接指南](./parent-bridge.zh-CN.md)；生产部署请按[P / A / B 生产部署手册](./parent-bridge-production-deployment.zh-CN.md)完成跨团队接入、安全验收和回滚准备。
+如果 PageAgent 运行在助手 iframe 中并需要操作父页面及明确授权的同级业务 iframe，请参阅[父页面控制器桥接指南](./parent-bridge.zh-CN.md)；生产部署请按[P / A / B 生产部署手册](./parent-bridge-production-deployment.zh-CN.md)完成跨团队接入、安全验收和回滚准备，尚未冻结的设计与实施问题在[架构待决事项台账](./parent-bridge-architecture-open-issues.zh-CN.md)中持续跟踪。
+
+生产模型在每个环境使用一个逻辑 A 系统，由多个 P 页面以彼此隔离的 A iframe 运行实例复用；同一
+P 可以服务多个租户并显式接入多个 B。身份、scope、target、会话与 B 子集的权威边界见
+[P / A / B 与公共 Auth 权威架构](./parent-bridge-auth-architecture.zh-CN.md)。
 
 ### 在现有测试应用中接入跨域 iframe
 
