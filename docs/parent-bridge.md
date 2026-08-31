@@ -5,13 +5,42 @@
 The parent bridge is the reverse of the existing `iframe-bridge`: an assistant
 running in a direct child iframe asks a host in the parent page (same-origin with
 the parent DOM) to observe and operate a deliberately scoped DOM root. The child
-never receives a parent `document` reference. All access is an authenticated,
-capability-limited protocol over `postMessage` and a dedicated `MessageChannel`.
+never receives a parent `document` reference. All access uses an explicitly
+authorized, capability-limited protocol over `postMessage` and a dedicated
+`MessageChannel`.
 
 This is a cooperative integration. The parent application must opt in by
 installing the host, and the assistant iframe must install the adapter. A
 cross-origin child that has not installed the adapter cannot operate the parent
 DOM under the browser same-origin policy.
+
+## Frozen V1 production decision
+
+The normative production architecture is maintained in the
+[Chinese P/A/B/Auth architecture](./parent-bridge-auth-architecture.zh-CN.md).
+[ADR-0001](./adr/0001-parent-bridge-auth-v1-p0-baseline.zh-CN.md) freezes the V1
+P0 decisions for the controlled-intranet deployment. In particular:
+
+-   P/A BFF-to-Auth service actors are bilaterally configured
+    configuration-selection, routing, and audit labels. Auth does not verify
+    their real caller/direction or use an actor match as an identity,
+    authorization, or rejection gate. V1 does not authenticate those callers
+    with mTLS, service JWTs, or another application-layer mechanism. Any
+    internal service that can reach Auth can impersonate P or A; that residual
+    risk is explicitly accepted.
+-   A successful exchange must create a separate revocable `ACTIVE` connection
+    lease. It lasts 900 seconds and is never renewed. P and A poll only their own
+    same-origin BFF every 30 seconds with ±20% jitter (24–36 seconds); those BFFs
+    query Auth.
+-   `REVOKED` or `EXPIRED` fails closed immediately. If 90 seconds pass after the
+    last positive `ACTIVE` result without reconfirmation, both sides clear the
+    activation/connection and prohibit automatic reconnect. Recovery requires a
+    new explicit A-side Connect action and a fresh issue/exchange/lease.
+
+The current package has the one-use Grant and local activation behavior, but it
+does not yet implement the production ActiveLease entity, polling APIs, or
+post-exchange revocation. Treat the rules above as a required integration
+contract, not as an already shipped runtime capability.
 
 ## Run the local reverse parent-bridge demo
 
@@ -392,16 +421,25 @@ compatibility but always resolves a deterministic `CAPABILITY_DENIED` result;
 the parent bridge never evaluates child-supplied JavaScript. Do not call
 `connect()` from module initialization or `onMounted`; invoke it from a visible
 A-side user action. This product-level action is not cryptographic proof of a
-browser user gesture, so P/P BFF authorization remains mandatory.
+browser user gesture, so P-side Host/BFF authorization remains mandatory.
 
 One successful handshake establishes one in-memory activation and bridge
 session, not one model call. Model steps reuse the existing `MessageChannel`.
-After activation, P may publish an automatic reconnect offer and A may call
-`adapter.reconnect()`; both paths still require a fresh policy and full
-validation. `adapter.deactivate()` and `host.deactivate()` notify the opposite
-side and clear both activation leases without echoing the control message. Call
-one of them on logout, user/tenant/target changes,
-or explicit disconnect. A new A document also requires another user click.
+The current package can let P publish an automatic reconnect offer or A call
+`adapter.reconnect()` after activation, and both paths still require a fresh
+policy and full validation. A production V1 integration must additionally gate
+reconnect on a positively confirmed ActiveLease and must not move that lease's
+original `expiresAt` or create rolling 900-second leases. The exact rebind,
+backoff, and race contract remains the P1 AUTH-010 decision. A
+`REVOKED`/`EXPIRED` result or 90 seconds without a positive `ACTIVE` result
+clears activation and prohibits automatic reconnect. `adapter.deactivate()` and
+`host.deactivate()` notify the opposite side and clear local activation without
+echoing the control message; they are cleanup signals, not proof of Auth lease
+state. On logout,
+user/tenant/target/scope changes, or an explicit disconnect that requires
+immediate revocation, first revoke through the corresponding BFF/Auth endpoint,
+then clear the browser state. A new A document and any lease failure require
+another user click and fresh issue/exchange/lease.
 
 ### Policy, rules, and one-use approvals
 
@@ -641,9 +679,11 @@ iframe) belong to one company or security domain, prefer a PageAgent-managed
 authorization service that issues a one-use opaque token and redeems it online
 from A's backend. The token is an unstructured high-entropy random value, not a
 JWT. The service stores only its SHA-256 digest, short-lived claims, and expiry.
-The full token reaches P through a same-origin HTTPS endpoint and is carried in
-the existing bridge offer as `policy`. Never place it in an iframe URL, log,
-localStorage, analytics event, or error message.
+The full token reaches P through a same-origin BFF endpoint and is carried in the
+existing bridge offer as `policy`. HTTPS remains the general default; ADR-0001
+explicitly accepts controlled-intranet HTTP for the target deployment. Never
+place the token in an iframe URL, log, localStorage, analytics event, or error
+message.
 
 The responsibility split is deliberate:
 
@@ -660,10 +700,12 @@ The responsibility split is deliberate:
     `childFrames` grants. The subject is not returned to the browser.
 -   A's `authorizeOffer` sends the token, the browser-observed parent origin,
     and the complete offer to A's same-origin backend. A BFF calls Auth with its
-    own service identity and SSO subject. Auth compares the P/A subjects and,
-    before atomic consumption, checks `policyId`, origin, capabilities, and the
-    session/challenge/instances bound at issue. Replay, expiry, tampering, and
-    capability escalation fail closed.
+    bilaterally configured logical actor label and SSO subject. The actor label
+    is useful for configuration selection, routing, and audit, but it neither
+    authenticates the caller nor controls authorization/rejection. Auth compares
+    the P/A subjects and, before atomic consumption, checks `policyId`,
+    origin, capabilities, and the session/challenge/instances bound at issue.
+    Replay, expiry, tampering, and capability escalation fail closed.
 -   B never sees the token. P brokers only the B targets present in verified
     claims and continues enforcing B's origin, capability, action-policy, and
     approval gates.
@@ -684,9 +726,10 @@ const authority = new IntegrationAwareEmbedAuthorizationAuthority({
     issuer: 'page-agent-auth',
 })
 
-// P BFF: actor comes from mTLS/service auth; subject comes from P's SSO session.
+// P BFF: actor is bilateral routing/audit metadata, not authenticated identity.
+// Subject still comes only from P's verified SSO session.
 const grant = await authority.issue(
-    { actor: authenticatedPServiceActor, subject: canonicalPSubject },
+    { actor: configuredPLogicalActor, subject: canonicalPSubject },
     {
         integrationId: 'checkout-p__shared-assistant',
         targetId: checkout.id,
@@ -700,9 +743,10 @@ const grant = await authority.issue(
 )
 // Return JSON `{ policy, claims }` with Cache-Control: no-store.
 
-// A BFF uses its own trusted actor/subject; return only the identity-free browser context.
+// A BFF uses its configured actor label and its own verified SSO subject.
+// Return only the identity-free browser context.
 const decision = await authority.exchange(
-    { actor: authenticatedAServiceActor, subject: canonicalASubject },
+    { actor: configuredALogicalActor, subject: canonicalASubject },
     { policy, actualParentOrigin, actualAssistantOrigin, offer }
 )
 const authorizationContext = toBrowserAuthorizationContext(decision)
@@ -719,9 +763,12 @@ compatibility release; new integrations should not adopt it.
 Production token storage must use Redis, a transactional database, or an
 equivalent shared store with atomic get-and-delete/compare-and-delete semantics.
 The library's in-memory store is for single-process development/tests only and
-does not prevent replay across replicas. Return `Cache-Control: no-store`, use
-HTTPS plus controlled CORS/CSRF, cap request sizes, and do not expose raw
-authorization context to the LLM or UI.
+does not prevent replay across replicas. The external production service must
+also atomically create and store the fixed 900-second ActiveLease; the package
+shown here does not provide that lease/polling API. Return `Cache-Control:
+no-store`, use exact controlled-network routes and controlled CORS/CSRF (plus
+HTTPS outside the accepted intranet mode), cap request sizes, and do not expose
+raw authorization context to the LLM or UI.
 
 This scheme authorizes a temporary, precisely scoped delegation from P to A and
 limits replay after token theft. It does not replace P login, business ACLs, XSS
@@ -732,16 +779,16 @@ minimal.
 
 ### Comparison with ES256/JWKS and upgrade path
 
-| Dimension      | One-time opaque token (current recommendation)                | ES256/JWKS (cross-system upgrade)                                         |
-| -------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Trust model    | P/A/B share a company and online authorization service        | P/A belong to independent systems or organizations                        |
-| P integration  | Same-origin route + integration-aware helper; no cryptography | JWT/JWS verification, issuer/audience, JWKS cache/rotation                |
-| A verification | Online redemption with atomic consume per handshake           | Local signature verification; shared `jti` store still recommended        |
-| Revocation     | Server record can be rejected immediately                     | Issued tokens usually survive until expiry; use short TTL/revocation      |
-| Availability   | Depends on the service and shared store                       | Can verify offline with cached JWKS; scales across regions                |
-| Key operations | No asymmetric distribution; protect store/service identity    | Protect private keys, publish JWKS, constrain algorithms and rotate `kid` |
-| Token contents | Opaque; still a bearer secret if leaked                       | Claims are readable and signed; still a bearer secret if leaked           |
-| Audit          | Issue and redemption naturally pass through one service       | Correlate issuer and verifier logs by `jti`                               |
+| Dimension      | One-time opaque token (current recommendation)                 | ES256/JWKS (cross-system upgrade)                                         |
+| -------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Trust model    | P/A/B share a company and online authorization service         | P/A belong to independent systems or organizations                        |
+| P integration  | Same-origin route + integration-aware helper; no cryptography  | JWT/JWS verification, issuer/audience, JWKS cache/rotation                |
+| A verification | Online redemption with atomic consume per handshake            | Local signature verification; shared `jti` store still recommended        |
+| Revocation     | ActiveLease can be revoked; runtimes fail closed via polling   | Issued tokens usually survive until expiry; use short TTL/revocation      |
+| Availability   | Depends on the service and shared store                        | Can verify offline with cached JWKS; scales across regions                |
+| Key operations | No asymmetric distribution; protect store and network boundary | Protect private keys, publish JWKS, constrain algorithms and rotate `kid` |
+| Token contents | Opaque; still a bearer secret if leaked                        | Claims are readable and signed; still a bearer secret if leaked           |
+| Audit          | Issue and redemption naturally pass through one service        | Correlate issuer and verifier logs by `jti`                               |
 
 An ES256/JWKS migration keeps the Host/Adapter protocol, claims schema, exact
 origin/capability checks, and `authorizeOffer` contract. Replace only the issuer

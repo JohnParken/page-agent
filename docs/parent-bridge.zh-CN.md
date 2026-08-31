@@ -12,6 +12,8 @@ adapter。未安装 adapter 的跨域 iframe 不能绕过浏览器同源策略�
 
 准备生产接入时，请先按[iframe PageAgent 生产部署手册：P / A / B 职责](./parent-bridge-production-deployment.zh-CN.md)
 完成跨团队责任划分、生产缺口检查、部署顺序和验收矩阵。
+V1 P0 的冻结默认值和风险接受见
+[ADR-0001](./adr/0001-parent-bridge-auth-v1-p0-baseline.zh-CN.md)。
 
 ## 逻辑 A、浏览器实例与授权边界
 
@@ -52,6 +54,38 @@ Integration maximum
 登出、tenant/target 切换、scope 变化、A iframe reload 或新文档加载都会使旧 activation 不再可用：
 先 deactivate/dispose 旧运行时，再由用户对新上下文显式连接。不能从登录 JWT、`localStorage` 或
 兄弟 iframe 恢复旧 bridge context。
+
+### V1 服务身份与 ActiveLease P0 合同
+
+浏览器只能调用自身同源 BFF：P runtime→P BFF，A runtime→A BFF；两个 BFF 才能访问 Auth，
+browser→Auth 必须被路由、CSP 和网络 ACL 阻断。当前受控内网 V1 的 BFF→Auth 没有 mTLS、
+service JWT、caller authentication 或应用级 actor enforcement。代码合同中的 actor 是 P/A 与
+Auth 双边固定、仅用于配置选择、路由和审计的逻辑元数据；Auth 不校验实际调用方或方向真伪，
+不以 actor 作为身份、授权或请求拒绝依据，actor 也不得取自浏览器。任何能访问 Auth 的内部服务都可
+使用已知配置冒充 P/A，这是本目标明确接受的剩余风险。
+
+P/A BFF 分别从自身受保护 session 生成并严格匹配 canonical subject
+`{ issuer, tenant, user }`；P BFF 还负责推导 `targetId`、`scopeId`、Integration 和业务 ACL。
+环境内 app、Integration、ChildTarget 等 ID 必须唯一，Registry/config 语义固定且以
+configVersion 版本化。B 不调用 Auth，V1 也不把 canonical subject 传入 B；B 后端仍以自身登录态
+执行最终 ACL。
+
+生产 P0 要求 exchange 在共享原子 store 中原子消费一次性 Grant 并创建 `ACTIVE` lease：policy
+TTL 为 120 秒、硬上限 300 秒；lease 固定 900 秒且不续期，lease/context 最大 3600 秒并且不超过
+上游凭据剩余寿命；时钟偏差预算为 5 秒。P 和 A runtime 分别只经自己的同源 BFF，每 30 秒 ±20%
+（24–36 秒）查询一次；BFF 再查 Auth。
+
+`REVOKED` 或 `EXPIRED` 必须立即失败关闭；连续 90 秒没有得到明确、肯定的 `ACTIVE`（包括超时、
+网络错误或 unknown）也必须失败关闭。两种路径都要清除 activation/连接，安全 abort 或 settle
+pending request、审批和模型任务，并禁止自动 reconnect。恢复只能由 A 用户显式 `connect()`，
+重新 issue/exchange 并创建新 lease。logout、user/tenant/target/scope 变化、权限/config disable、
+Integration 禁用和 kill switch 都要求 BFF/Auth revoke；`deactivate()` 只是清理信号，不能替代
+权威撤销。
+
+**实现状态：** 当前 `parent-bridge/integration-auth` 只实现一次性 Grant 的
+issue/consume/revoke，没有 ActiveLease、固定 900 秒状态、P/A BFF status endpoint 或 runtime
+polling。上述合同是生产接入待实现的 P0 release gate；本指南不会虚构尚不存在的 library 选项或
+调用方法。
 
 ## 运行本地 reverse parent-bridge Demo
 
@@ -303,6 +337,10 @@ B 必须运行兼容的 iframe bridge v2 `FrameBridgeHost`，只允许 P 的精�
 选择 Grant 子集，单个 Grant 上限为 8。第 9 个 target 必须使签发失败，不能被静默截断或在验证
 后由前端追加。Grant 内多个 B 共用当前 A↔P bridge session，但每个 B 仍保留自己的最终 ACL。
 
+B 不接触 opaque policy 或 ActiveLease，也不直接调用 Auth。V1 bridge 不把 P/A canonical subject
+传给 B；B 必须用自己的用户 session、tenant、对象权限、CSRF 和业务状态执行最终 ACL，不能把
+P 的代理动作当作已认证主体。
+
 操作 B 前，P 先用脱敏摘要请求 B prepare。B 的策略、父页元素策略与父页自定义
 `actionPolicy` 按 `deny` > `approval_required` > `allow` 合并；助手只为合并后的结果展示至多
 一次审批，然后 P commit B 的一次性 action token。A 和 P 都不能覆盖 B 的 deny，B 的
@@ -390,13 +428,17 @@ adapter 提供完整的 indexed controller 形状方法。为保持结构兼容�
 `executeJavascript` 方法，但始终返回确定性的 `CAPABILITY_DENIED` 结果；parent bridge
 永远不会执行 child 提供的 JavaScript。不要在模块初始化或 `onMounted` 中调用 `connect()`；首次
 调用必须来自 A 中清楚可见的用户操作。这个产品操作不是浏览器可验证的密码学 user gesture，
-P/P BFF 仍必须独立校验登录态、CSRF、target 和业务 ACL。
+P Host/P BFF 仍必须独立校验登录态、CSRF、target 和业务 ACL。
 
 一次成功握手建立一个仅内存 activation 和一个 bridge session，不是一次模型调用。模型的多个
-步骤复用当前 `MessageChannel`。激活后 P 可以发送自动重连 offer，A 也可以调用
-`adapter.reconnect()`；两条路径仍会申请新 policy 并完成全部校验。`adapter.deactivate()` 与
-`host.deactivate()` 都会通知对端并清除双方 activation，控制消息不会回环。登出、切换用户/
-租户/target 或显式断开时调用其中一端；新的 A 文档必须再次由用户点击。
+步骤复用当前 `MessageChannel`。只有 production ActiveLease 持续获得肯定 `ACTIVE`、且未触发
+fail-close 时，既有 `host.reconnect()`/`adapter.reconnect()` 路径才可重新申请 policy 并完整校验；
+生产 rebind 不得推进原 lease 的 `expiresAt`，也不得滚动创建新的 900 秒 lease 变相续租。具体
+rebind/退避/竞态 API 仍由 AUTH-010 P1 冻结。
+一旦收到 `REVOKED`/`EXPIRED` 或 90 秒无肯定 `ACTIVE`，两端必须清连接并禁止自动 reconnect；
+恢复只能由 A 用户显式 `connect()` 创建新 lease。`adapter.deactivate()` 与 `host.deactivate()`
+会通知对端并清除浏览器 activation，但只是清理信号，不代表 Auth lease 已 revoke。登出、切换
+用户/租户/scope/target 或显式断开时还必须由 BFF/Auth revoke；新的 A 文档必须再次由用户点击。
 
 ### 策略、规则和一次性审批
 
@@ -567,6 +609,9 @@ helper 原样返回 `Response`，JSON 可调用 `response.json()`，SSE 可消�
 
 -   公网默认使用 HTTPS；受控内网 HTTP 必须显式启用 `allowInsecureHttp`。allow-list 只写精确
     scheme/host/port，拒绝 `*`、`null`、路径、查询串和凭证。
+-   本目标 V1 已接受 P/A BFF→Auth 受控内网 HTTP 且没有 mTLS、service JWT 或 caller
+    authentication；logical actor 只作配置/路由/审计参考。最小化 Auth 网络可达面，并明确记录
+    “任一可达内部服务都能冒充 P/A”的剩余风险；浏览器始终只能访问自己的同源 BFF。
 -   双方校验 `event.origin`、`event.source`、协议版本、session/frame ID、challenge/
     nonce、payload schema 和 capability。
 -   子页面响应设置 CSP `frame-ancestors`，父页面 CSP `frame-src` 只允许助手 origin 与每个
@@ -600,6 +645,15 @@ helper 原样返回 `Response`，JSON 可调用 `response.json()`，SSE 可消�
     target 的签发必须失败，未进当前 Grant 的已登记 B 不可见、不可操作。
 -   tenant/target 切换、scope 变化和 A reload 后旧 activation/session 必须失效，并要求显式重新
     连接；不同 scope 分别连接，不能把分别完成的动作当作一个原子跨 scope 事务。
+-   生产实现完成后验证 exchange 原子创建固定 900 秒、不续期的 `ACTIVE` lease；policy TTL 为
+    120 秒/最大 300 秒，lease/context 最大 3600 秒且不超过凭据寿命，skew 为 5 秒。
+-   P/A 分别经自身 BFF 以 30 秒 ±20%（24–36 秒）轮询；`REVOKED`/`EXPIRED` 立即失败关闭，90 秒
+    无肯定 `ACTIVE` 同样失败关闭，且都 settle pending work、禁止自动 reconnect。恢复必须是新的
+    用户 `connect()`/issue/exchange/lease。
+-   验证 logout、user/tenant/target/scope 变化、权限/config disable、Integration 禁用和 kill
+    switch 都触发 Auth revoke；单独 `deactivate()` 不能作为撤销成功证据。
+-   当前库缺少 ActiveLease/status polling，以上场景在独立 Auth、P/A BFF 和 runtime 接线及测试
+    完成前必须保持 release-blocked，不能用现有 Grant E2E 代替。
 
 ### 推荐方案：PageAgent 托管的一次性 opaque token
 
@@ -620,9 +674,10 @@ URL、日志、localStorage、埋点或错误信息。
     协议版本、`nbf`/`exp`、完整 bridge binding、canonical subject、target 以及获准的
     `childFrames` 写入服务端记录；subject 不返回浏览器。
 -   A 的 `authorizeOffer` 把 token、浏览器实际观察到的父 Origin 和完整 offer 发送给同源 A
-    后端。A BFF 以自己的服务身份和 SSO subject 调 Auth；Auth 比较 P/A subject，并在原子核销
-    前校验 claims 与 `policyId`、实际 Origin、能力集合和 issue 时已绑定的 session/challenge/
-    instance 完全相符。任何第二次交换、过期、篡改或越权能力都失败关闭。
+    后端。A BFF 以双边固定的 logical actor 和自身 SSO subject 调 Auth；actor 不是调用方认证。
+    Auth 比较 P/A canonical subject 三元组，并在原子核销前校验 claims 与 `policyId`、实际 Origin、
+    能力集合和 issue 时已绑定的 session/challenge/instance 完全相符。任何第二次交换、过期、篡改
+    或越权能力都失败关闭。
 -   B 不接触 token。P 只为 claims 中明确列出的 B 建立代理，并继续执行 B 自己的 origin、
     capability、action policy 和审批规则。
 
@@ -641,9 +696,10 @@ const authority = new IntegrationAwareEmbedAuthorizationAuthority({
     issuer: 'page-agent-auth',
 })
 
-// P BFF：actor 来自 mTLS/服务令牌，subject 来自 P 自己验证的 SSO 会话。
+// P BFF：actor 来自与 Auth 双边固定的逻辑配置，仅作路由/审计元数据；不是调用方认证。
+// subject 来自 P 自己验证的 SSO 会话。
 const grant = await authority.issue(
-    { actor: authenticatedPServiceActor, subject: canonicalPSubject },
+    { actor: configuredPLogicalActor, subject: canonicalPSubject },
     {
         integrationId: 'checkout-p__shared-assistant',
         targetId: checkout.id,
@@ -657,13 +713,20 @@ const grant = await authority.issue(
 )
 // 返回 JSON：{ policy, claims }；响应必须 no-store。
 
-// A BFF：使用自己的受信 actor/subject；只把无身份的最小上下文返回 A 浏览器。
+// A BFF：使用双边固定的 logical actor 和自身 canonical subject；actor 不是调用方认证。
+// 只把无身份的最小上下文返回 A 浏览器。
 const decision = await authority.exchange(
-    { actor: authenticatedAServiceActor, subject: canonicalASubject },
+    { actor: configuredALogicalActor, subject: canonicalASubject },
     { policy, actualParentOrigin, actualAssistantOrigin, offer }
 )
 const authorizationContext = toBrowserAuthorizationContext(decision)
 ```
+
+示例中的 `configuredPLogicalActor`/`configuredALogicalActor` 是当前代码合同要求的逻辑元数据；
+当前领域参考实现包含 actor 配置错配检查，但冻结的 V1 生产合同不把该检查作为身份、授权或请求拒绝
+门禁。任何拥有 Auth 网络可达性的内部服务都能提交这些值并冒充 P/A。浏览器仍不得直接调用 Auth。
+生产还必须在 exchange 的原子事务中创建固定 900 秒、不续期的 ActiveLease，并由 P/A BFF 提供
+status/revoke；这些 ActiveLease 接口尚不在当前 library 中，上例没有假装展示它们。
 
 A 前端在 `authorizeOffer` 中只把服务端返回的 context 映射成 `AuthorizedParent`，并再次精确比较
 `policyId`、父/助手 origin、session、challenge、frame/host instance 和 capability；不要因接口
@@ -676,6 +739,10 @@ Redis、数据库事务或等价的共享存储，通过原子的 get-and-delete
 设置 `Cache-Control: no-store`，使用 HTTPS、受控 CORS/CSRF 和请求体大小限制。不要把服务端
 返回的身份上下文直接展示给 LLM 或 UI。
 
+生产 store 还要原子保存 ActiveLease/status/revoke，V1 优先单区域强一致；状态不确定或 store
+不可用时失败关闭。policy TTL 为 120 秒（最大 300 秒），lease 固定 900 秒不续期，context/lease
+最大 3600 秒且不超过上游凭据寿命，时钟偏差预算为 5 秒。
+
 该方案解决的是“P 获准把某个精确范围临时委托给 A”以及 token 被窃取后的重放窗口问题；它不
 替代 P 的登录认证、业务 ACL、XSS 防护、CSP/sandbox、bridge 的 origin/source 校验或敏感动作
 审批。P 页面中已能执行脚本的攻击者仍处在受信边界内，因此 Host 的 root、capability 和
@@ -683,16 +750,16 @@ Redis、数据库事务或等价的共享存储，通过原子的 get-and-delete
 
 ### 与 ES256/JWKS 的比较和升级路径
 
-| 维度           | 一次性 opaque token（当前推荐）                   | ES256/JWKS（跨系统升级方案）                     |
-| -------------- | ------------------------------------------------- | ------------------------------------------------ |
-| 适用信任关系   | P/A/B 同公司，可调用统一在线授权服务              | P/A 分属不同系统或组织，需要独立验证             |
-| P 接入成本     | 同源路由 + integration-aware helper，无密码学实现 | 校验 JWT/JWS、issuer/audience、JWKS 缓存与轮换   |
-| A 校验方式     | 每次握手在线调用服务端并原子核销                  | 本地验签；仍建议用共享 `jti` store 防重放        |
-| 撤销与权限变化 | 服务端记录可立即拒绝，天然在线                    | 已签发 token 通常到过期才失效，需短 TTL/撤销表   |
-| 可用性         | 依赖授权服务在线和共享存储                        | JWKS 缓存后可离线验证，跨区域更容易扩展          |
-| 密钥运维       | 无公私钥分发；重点保护 token store 和服务身份     | 需保护私钥、发布 JWKS、处理 `kid`/轮换/算法约束  |
-| token 可读性   | 不可读，泄漏仍必须按 bearer secret 处理           | claims 可读但有签名，也必须按 bearer secret 处理 |
-| 审计           | 授权与核销天然经过服务端，集中审计简单            | 签发和各验证方日志需关联 `jti`                   |
+| 维度           | 一次性 opaque token（当前推荐）                                   | ES256/JWKS（跨系统升级方案）                     |
+| -------------- | ----------------------------------------------------------------- | ------------------------------------------------ |
+| 适用信任关系   | P/A/B 同公司，可调用统一在线授权服务                              | P/A 分属不同系统或组织，需要独立验证             |
+| P 接入成本     | 同源路由 + integration-aware helper，无密码学实现                 | 校验 JWT/JWS、issuer/audience、JWKS 缓存与轮换   |
+| A 校验方式     | 每次握手在线调用服务端并原子核销                                  | 本地验签；仍建议用共享 `jti` store 防重放        |
+| 撤销与权限变化 | 服务端记录可立即拒绝，天然在线                                    | 已签发 token 通常到过期才失效，需短 TTL/撤销表   |
+| 可用性         | 依赖授权服务在线和共享存储                                        | JWKS 缓存后可离线验证，跨区域更容易扩展          |
+| 密钥运维       | 无公私钥分发；重点保护 token store、网络边界和 logical actor 配置 | 需保护私钥、发布 JWKS、处理 `kid`/轮换/算法约束  |
+| token 可读性   | 不可读，泄漏仍必须按 bearer secret 处理                           | claims 可读但有签名，也必须按 bearer secret 处理 |
+| 审计           | 授权与核销天然经过服务端，集中审计简单                            | 签发和各验证方日志需关联 `jti`                   |
 
 升级到 ES256/JWKS 时保持 Host/Adapter 协议、claims schema、精确 origin/capability 检查和
 `authorizeOffer` 接口不变，只替换签发器与校验器：P 后端签发短期 ES256 JWS，A/P 依据固定

@@ -5,16 +5,17 @@
 [iframe PageAgent 生产部署手册](./parent-bridge-production-deployment.zh-CN.md) 或
 [父页面控制器桥接协议](./parent-bridge.zh-CN.md)；协议细节只在这些权威文档中维护。
 
-“建议默认值”是待 ADR 批准的提案，不表示已经实现或已经获得安全批准。仓内代码是合同、领域
-引擎和测试参考实现；生产 Auth、真实 SSO、服务身份、共享 Store、HA 和运维能力属于独立服务
-及部署系统。
+本台账中的历史“建议默认值”已由 [ADR-0001](./adr/0001-parent-bridge-auth-v1-p0-baseline.zh-CN.md)
+在 V1 controlled-intranet deployment 范围内冻结；冻结只表示合同已决定，不表示已经实现或已经
+获得生产验收。仓内代码是合同、领域引擎和测试参考实现；生产 Auth、真实 SSO、logical actor
+配置、共享 Store、HA 和运维能力属于独立服务及部署系统。
 
 ## 1. 冻结基线
 
 以下事实视为本台账的输入，不在待决事项中重新讨论：
 
--   拓扑基数冻结为：每个 `environment` 恰好一个逻辑 A（一个 `AssistantApp`、A BFF 和 service
-    identity 归属；后端副本仍是同一个逻辑 A，生产/测试环境分开），多个逻辑 P，以及每个
+-   拓扑基数冻结为：每个 `environment` 恰好一个逻辑 A（一个 `AssistantApp`、A BFF 和
+    `serviceActor` 配置归属；后端副本仍是同一个逻辑 A，生产/测试环境分开），多个逻辑 P，以及每个
     P/Integration 可注册多个 B `ChildTarget`。浏览器操作路径固定为 `A → P → B`，P 是唯一父页
     代理，B 保留最终业务拒绝权。
 -   每个 P 页面/标签页都嵌入自己的 A iframe runtime instance，并独立拥有 `frameInstanceId`、bridge
@@ -25,7 +26,8 @@
     `parentAppId × assistantAppId × environment × scopeId`；一个 P 的多个 scope 对应多个 Integration。
 -   P、A、B 分别通过自己的 BFF 和统一 SSO 验证会话；浏览器不直接调用 Auth，也不把浏览器
     Cookie/JWT 交给 Auth。P/A 的 canonical subject 由各自 BFF 产生。
--   P BFF 负责 issue，A BFF 负责 exchange；Auth 比较受信的 service actor、P/A subject、
+-   P BFF 负责 issue，A BFF 负责 exchange；在本 ADR 的受控内网范围内，`serviceActor` 是配置、
+    路由和审计元数据，不是经过 caller authentication 的可信证明；Auth 仍按合同检查 P/A subject、
     Integration、origin、scope、能力、bridge binding、TTL 和一次性消费状态。每个 bridge session
     只绑定一个 `environment`、`assistantAppId`、`issuer`、`tenantId`、`userId`、`parentAppId`、
     `integrationId`、`scopeId`、`targetId`、`bridgeSessionId`、`hostInstanceId` 和 `frameInstanceId`；
@@ -69,98 +71,92 @@
 当前 21 项都会阻塞生产合同、集成或验收，因此本版没有把已知事项降为 P2；后续新增的长期优化
 可以使用 P2。
 
-每项的“建议默认值”都必须经过对应 owner 的 ADR 批准后，才能把决策状态改为 `已冻结`；只有
-同时清除适用的 `缺实现`、`缺生产实现`、`缺测试`、`需对齐` 并附上证据，才能标记 `已验证`。
+P0 决策已由 ADR-0001 在指定范围内批准，因此适用事项的决策状态可以标为 `已冻结`；这不改变
+落地标签。只有同时清除适用的 `缺实现`、`缺生产实现`、`缺测试`、`需对齐` 并附上证据，才能
+标记 `已验证`。P1 仍须各自完成自己的 ADR，不因本 ADR 自动冻结。
 
 ## 3. 优先级待决事项
 
-### P0：上线前必须冻结
+### P0：决策已冻结，落地证据仍为上线门禁
 
 #### AUTH-001 — 生产 Auth HTTP API 与 service identity
 
--   **决策状态**：`未冻结`；**落地标签**：`仅文档` · `缺生产实现`
--   **当前证据/缺口**：`ManagedAuthExecutionContext` 只是一组普通的 actor/subject 字段（`packages/page-controller/src/parent-bridge/integration-auth-contracts.ts:22-33`）；领域引擎直接接收该 context（`integration-auth-authority.ts:573-587,682-700`）。权威架构明确真实 Auth、SSO、mTLS 尚未建设（`docs/parent-bridge-auth-architecture.zh-CN.md:332-345`），但尚未冻结 Auth endpoint、请求签名、actor 注入、HTTP 状态和响应头合同。
--   **要记录的决策**：Auth endpoint 的路径/版本、P/A 调用方向、mTLS 或短期 service token、actor 与 app/environment 的绑定、密钥轮换、超时和安全错误映射。
--   **建议默认值（待 ADR）**：Auth 只接受后端服务调用；由 mTLS 身份或短期签名 service JWT 映射 actor，拒绝请求 JSON 自报 actor；浏览器不得直连 Auth。
+-   **决策状态**：`已冻结`；**落地标签**：`仅文档` · `缺生产实现`
+-   **当前证据/缺口**：`ManagedAuthExecutionContext` 仍只是一组普通的 actor/subject 字段（`packages/page-controller/src/parent-bridge/integration-auth-contracts.ts:22-33`）；领域引擎中的 actor 检查只能作为参考实现的配置/错配保护，不是生产 caller authentication。生产 Auth、endpoint、网络边界和 HTTP 合同尚未建设；在本 ADR 的受控内网范围内，任何能够到达 Auth 网络的内部调用方都可能冒充 P/A，该残余风险已明确接受但仍需部署记录和监控。
+-   **仍需落地的合同**：Auth endpoint 的路径/版本、P/A 调用方向、serviceActor 的配置/路由/审计字段、HTTP 状态和响应头、超时、错误映射、网络可达性和浏览器无直连网关证据；不得把 mTLS、service JWT 或 caller authentication 写回本范围决策。
+-   **冻结决策（ADR-0001）**：受控内网中 BFF→Auth 的 `serviceActor` 仅是双方约定的配置、路由和审计元数据；不实施 mTLS、service JWT、caller authentication 或 application-layer service-actor enforcement。浏览器仍不得直连 Auth；可到达 Auth 网络的内部调用方可冒充 P/A 的残余风险已接受。
 -   **责任人**：`<Auth 平台>`、`<服务身份/安全>`
--   **验收证据**：公开的 HTTP/OpenAPI 合同；伪造 actor/app/environment 的拒绝测试；密钥轮换演练；浏览器直连和匿名调用均失败的网关证据。
+-   **验收证据**：公开的 HTTP/OpenAPI 合同；受控内网网络可达性、浏览器无直连和匿名浏览器路径的网关证据；serviceActor 配置/路由/审计一致性以及残余冒充风险的监控与演练记录。不得用伪造 actor 拒绝或密钥轮换证明本范围内的 caller authentication。
 
 #### AUTH-002 — canonical subject 与 issuer 映射
 
--   **决策状态**：`未冻结`；**落地标签**：`参考实现`
--   **当前证据/缺口**：代码只按 `issuer + tenantId + userId` 做字符串全等（`integration-auth-authority.ts:183-210,249-253`）；文档仍把 issuer canonicalization、跨 issuer 映射和维护方列为待决（`docs/parent-bridge-auth-architecture.zh-CN.md:49-61,397-403`）。`authenticatedAt`/`credentialExpiresAt` 的比较、规范化和审计含义也未冻结。
--   **要记录的决策**：统一 SSO 的 issuer canonicalization、大小写/Unicode/租户命名规范、跨 issuer 是否允许映射、映射版本和主体全等规则。
--   **建议默认值（待 ADR）**：每个 Integration 使用一个明确的 canonical issuer；默认严格比较三元组；跨 issuer 只能经版本化、受信的映射表，不接受浏览器提供的别名。
+-   **决策状态**：`已冻结`；**落地标签**：`参考实现`
+-   **当前证据/缺口**：代码仍按 `issuer + tenantId + userId` 做字符串全等（`integration-auth-authority.ts:183-210,249-253`），但生产 SSO canonicalization、跨 issuer 映射和维护责任尚未接线；`authenticatedAt`/`credentialExpiresAt` 的比较、规范化和审计含义仍需实现和验证。
+-   **仍需落地的合同**：统一 SSO 的 issuer canonicalization、大小写/Unicode/租户命名规范、映射表 owner/version/审计、凭据时间字段和迁移矩阵。
+-   **冻结决策（ADR-0001）**：每个 Integration 使用明确的 canonical issuer；P/A subject 严格比较 `issuer + tenantId + userId` 三元组。跨 issuer 仅允许版本化、受信且可审计的映射；浏览器别名或自报身份无效。
 -   **责任人**：`<SSO/身份平台>`、`<Auth 平台>`
 -   **验收证据**：同用户/异 issuer、异租户、异 user、大小写和过期凭据的矩阵测试；映射变更和审计样例。
 
 #### AUTH-004 — active session binding、logout 与 revoke
 
--   **决策状态**：`未冻结`；**落地标签**：`参考实现` · `缺生产实现`
--   **当前证据/缺口**：`parentSessionBinding` 在 issue request 中是可选字段（`integration-auth-contracts.ts:99-110`），领域引擎只存储它（`integration-auth-authority.ts:656-660`）；exchange 的 expectation 没有当前 P 会话或该 binding，`revoke` 只是裸 selector 调用（`integration-auth-authority.ts:707-761,789-790`）。内存 Store 的 `revoke` 还只处理 `ISSUED` 记录，不会终止已经 `CONSUMED` 的活动 bridge session（`integration-auth-authority.ts:494-502`）。文档要求登出、用户切换和撤销清除 activation，但未指定触发方、活动连接执行机制和最长延迟（`docs/parent-bridge-auth-architecture.zh-CN.md:146-151,397-405`）。
--   **要记录的决策**：binding 的来源和摘要算法、logout/租户切换/权限撤销/kill switch 的事件、谁调用 revoke、活动 session 是通过可撤销 lease、P/A 推送 deactivate、周期性 revalidation 还是短 TTL 终止，以及传播 SLA 和失败策略。
--   **建议默认值（待 ADR）**：binding 必须是不可逆的 P 会话引用；P 事件先阻止新 issue/exchange，并撤销未消费 grant；Auth 记录可撤销的 active-session lease，P/A 在事件或 revalidation 时清除 activation 和连接。短 TTL 只作为失效上界，不能代替登出事件；超过撤销 SLA 必须失败关闭。
+-   **决策状态**：`已冻结`；**落地标签**：`参考实现` · `缺生产实现`
+-   **当前证据/缺口**：`parentSessionBinding` 在 issue request 中仍可选，领域引擎只存储它；当前 exchange/revoke 合同和内存 Store 没有 active lease，也不会终止已 `CONSUMED` 的活动 bridge session。仓内尚未实现 lease 创建、轮询、revoke 传播、abort 或禁止自动重连；这些是实现缺口，不是决策缺口。
+-   **仍需落地的合同**：lease API/state schema、binding 摘要/来源、P/A BFF polling endpoint、revoke 事件审计、跨副本状态传播和 15m/30s/90s 参数的监控与告警。
+-   **冻结决策（ADR-0001）**：有效 exchange 原子创建绑定完整 environment/assistantApp/parentApp/subject/integration/scope/target/bridge/host/frame/config context 的 `ACTIVE` lease；lease 固定 900s、永不续租。P/A runtime 仅轮询各自同源 BFF，BFF 查询 Auth，周期 30s、±20% 抖动（24–36s）；从最近一次 `ACTIVE` 起 90s 无法确认即 fail closed，`REVOKED`/`EXPIRED` 立即 fail closed。revoke 由 logout、用户/tenant/target/scope 切换、权限/配置禁用和 kill switch 触发；清除连接、abort 安全工作、禁止自动重连，新连接必须由 A 用户显式操作并重新 issue/exchange/建 lease。`deactivate` 仅为清理通知，不是撤销证明。
 -   **责任人**：`<P BFF>`、`<Auth 平台>`、`<安全响应>`
 -   **验收证据**：issue 前后 logout、exchange 后 logout、跨节点撤销、切租户/target、配置禁用和 kill switch 测试；活动连接在 SLA 内关闭且后续操作失败；撤销事件含原因、时间和关联 ID。
 
 #### AUTH-005 — scope / target / context binding 边界
 
--   **决策状态**：`未冻结`；**落地标签**：`参考实现`
--   **当前证据/缺口**：权威架构已冻结 tenant、scope、target 的维度和一次 Grant 的绑定粒度：P BFF 从受信会话与 ACL 派生业务 `targetId` 和最多 8 个 B 的 `childFrames` 子集；一个 session 只绑定一个 subject/tenant、Integration、scope、target 和 bridge binding。Auth issue 合同已有这些字段（`integration-auth-contracts.ts:99-110`），但 P 浏览器 client 只提交 integration、origin、scope、capability 和 bridge binding（`integration-auth-client.ts:446-463`），因此生产 P BFF 的字段来源、root/target 解析和 `parentSessionBinding` 合同仍未冻结。
--   **要记录的决策**：scope 与 root 的精确映射、`targetId` 的格式和服务端 resolver、`parentSessionBinding` 是否强制、P BFF 如何从 tenant/target ACL 选择 B 子集，以及浏览器请求 schema 的允许字段。
--   **建议默认值（待 ADR）**：浏览器只提交 bridge binding 和固定 Integration 选择；P BFF 独立派生 subject、target、root、capability 和 B 子集，Auth/Host 逐层收窄。不得把 `tenantId`、`targetId` 或 B 清单改成浏览器自报的授权依据。
+-   **决策状态**：`已冻结`；**落地标签**：`参考实现`
+-   **当前证据/缺口**：权威架构和 issue 合同已有 tenant/scope/target、bridge binding 与最多 8 个 B 的模型，但生产 P BFF 的字段来源、root/target resolver、binding 强制性和请求 schema 尚未接线；P 浏览器 client 仍只提交 integration、origin、scope、capability 和 bridge binding（`integration-auth-client.ts:446-463`）。
+-   **仍需落地的合同**：scope↔root 映射、`targetId` 格式/resolver、`parentSessionBinding` 强制性与摘要、浏览器允许字段、child subset resolver 和切换失效测试。
+-   **冻结决策（ADR-0001）**：浏览器只提交 bridge binding 和固定 Integration 选择；P BFF 独立派生 canonical subject、target、root、capability 和 B 子集，Auth/Host 只能收窄。浏览器自报 `tenantId`、`targetId`、root、capability 或 B 清单不得成为授权依据；一个 session 只能绑定一个完整上下文，Grant 的 B 子集最多 8 项。
 -   **责任人**：`<P 业务/BFF>`、`<Auth 平台>`
 -   **验收证据**：服务端请求 schema 与字段来源表；错误 tenant/target/root、同一用户跨 target、B 子集缺失/扩大/超过 8、scope 与 binding 错配的 issue/exchange 测试；tenant/target 切换后旧连接失效。
 
 #### AUTH-007 — trusted HTTP 与浏览器会话安全合同
 
--   **决策状态**：`未冻结`；**落地标签**：`仅文档` · `缺测试`
--   **当前证据/缺口**：文档要求 Auth 风险门、Integration `transportMode` 和 P client 三方显式启用 HTTP，并要求单独验证 cookie、CSP、网络边界（`docs/parent-bridge-auth-architecture.zh-CN.md:283-306`；`docs/parent-bridge-production-deployment.zh-CN.md:37-89`），但风险接受记录没有机器可读格式或 owner。P client 使用 same-origin cookie POST、没有 CSRF 字段（`integration-auth-client.ts:446-465`）；P/A BFF 的 CSRF、CORS、Cookie/JWT、policy 存储和 CSP 组合未冻结。
--   **要记录的决策**：HTTP 网络范围/责任人/到期日、Secure/SameSite/分区 cookie 方案、CSRF token 与 Origin 校验、CORS allow-list、CSP `frame-src`/`frame-ancestors`/`connect-src`、policy/短 token 的存储位置。
--   **建议默认值（待 ADR）**：生产默认 HTTPS；HTTP 仅接受有到期日的风险批准和私网证明；浏览器 BFF 使用显式 CSRF header + Origin 检查，禁止 wildcard CORS；原始 policy 只在短时内存中存在。
+-   **决策状态**：`已冻结`；**落地标签**：`仅文档` · `缺测试`
+-   **当前证据/缺口**：文档已有 Auth 风险门、Integration `transportMode` 和 P client 三方显式启用 HTTP 的参考配置，但真实风险批准、网络控制、cookie/CSP/CSRF/CORS 组合和目标浏览器仍未验收。P client 使用 same-origin cookie POST、没有 CSRF 字段（`integration-auth-client.ts:446-465`）；这些是实现缺口，不改变本 ADR 已冻结的受控内网范围。
+-   **仍需落地的合同**：HTTP 网络范围/责任人/到期日、Secure/SameSite/分区 cookie、CSRF token/header、CORS allow-list、CSP 指令、policy/短 token 存储位置及浏览器矩阵。
+-   **冻结决策（ADR-0001）**：生产默认 HTTPS；V1 受控内网 HTTP 仅接受有到期日的风险批准、私网证明和精确 origins；浏览器 BFF 使用显式 CSRF header + Origin 检查，禁止 wildcard CORS；原始 policy 只在短时内存存在。AUTH-001 的 bilateral logical-actor convention 不替代这些边界。
 -   **责任人**：`<安全/网络>`、`<P/A 平台>`、`<浏览器兼容性>`
 -   **验收证据**：真实内网域名/IP 和目标浏览器的 cookie/CSP/mixed-content/CSRF/CORS 矩阵；响应头扫描；HTTP 风险记录与到期提醒；浏览器不能调用 Auth 的网络日志。
 
 #### AUTH-008 — credential/session TTL、clock skew 与刷新
 
--   **决策状态**：`未冻结`；**落地标签**：`参考实现` · `缺测试`
--   **当前证据/缺口**：Authority 默认 policy/bridge TTL 为 120 秒/15 分钟，且有硬上限（`integration-auth-authority.ts:42-45,611-629`）；Integration 的最大 TTL 字段可选且 resolve 阶段没有统一边界校验（`integration-auth-contracts.ts:70-72`；`integration-auth-authority.ts:804-835`）。Client 与服务端对时钟偏差和过期窗口的合同也不同（`integration-auth-client.ts:251-275,344-359`）。文档仍要求决定 A JWT 短 token、刷新、存储、时钟和审计保留期（`docs/parent-bridge-auth-architecture.zh-CN.md:397-409`）。
--   **要记录的决策**：P/A/B 会话、policy-offer、bridge session、authorization context 和短 token 的 TTL；clock skew；是否允许刷新；stop/deactivate/logout 后的失效时间。
--   **建议默认值（待 ADR）**：服务端统一计算严格过期时间并在 Registry 加载时拒绝非法 TTL；policy 不刷新、不复用，bridge TTL 独立且不超过用户凭据；节点时钟同步，偏差只用于明确的 nbf 容忍窗口。
+-   **决策状态**：`已冻结`；**落地标签**：`参考实现` · `缺测试`
+-   **当前证据/缺口**：Authority 仍只有参考实现的 policy/bridge TTL 默认值（`integration-auth-authority.ts:42-45,611-629`）；active lease、统一 TTL 边界、5 秒 skew 和生产凭据生命周期尚未实现或验证。Client 与服务端的过期窗口合同仍需对齐（`integration-auth-client.ts:251-275,344-359`）。
+-   **仍需落地的合同**：P/A/B session、policy-offer、bridge、authorization context 和短 token 的具体生命周期；凭据刷新/存储；stop/deactivate/logout 失效证明和 TTL 指标。
+-   **冻结决策（ADR-0001）**：服务端统一计算严格过期并拒绝非法 TTL；policy 默认 120s、最大 300s；active lease/bridge context 默认 900s、最大 3600s 且不超过用户凭据；clock skew 固定 5s，仅用于 `nbf` 容忍；policy 不刷新/复用，lease 不续租。
 -   **责任人**：`<Auth 平台>`、`<SSO/A 平台>`、`<SRE>`
 -   **验收证据**：边界秒数、节点时钟偏差、凭据临近过期、刷新/登出/stop 的测试；非法配置启动失败；TTL 指标与保留期证明。
 
 #### AUTH-014 — cross-scope / cross-integration boundary
 
--   **决策状态**：`未冻结`；**落地标签**：`参考实现`
--   **当前证据/缺口**：权威架构已冻结 `Integration = parentApp × assistantApp × environment × scope`、一个 P 的多个 scope 使用多个 Integration、一个 bridge session 只属于一个 scope，且跨 scope 动作分别授权、分别执行，不具备原子事务语义。Authority 已按 integration/app/environment/scope 校验（`integration-auth-authority.ts:699-720`）。仍未冻结的是 ID 的全局/环境内唯一格式、跨 region 的命名空间和例外审批流程。
--   **要记录的决策**：`integrationId`/`scopeId` 的规范格式与唯一性范围、跨 region/环境 Registry 的隔离方式，以及确需例外时的新 Integration 版本与审批流程。
--   **建议默认值（待 ADR）**：ID 在 environment Registry 内唯一且带稳定的 parent/scope 语义；生产、测试 Registry 物理或逻辑隔离。任何跨 scope/环境例外都创建新的版本化 Integration，不复用现有 grant/context。
+-   **决策状态**：`已冻结`；**落地标签**：`参考实现`
+-   **当前证据/缺口**：权威架构和 Authority 已按 integration/app/environment/scope 做参考校验，但生产 ID namespace、跨 region Registry 隔离和例外审批流程尚未实现或验证；不同 scope 仍需分别授权、分别执行。
+-   **仍需落地的合同**：ID 规范格式、跨 region 命名/复制、例外审批与版本化流程，以及 context cache/log key 的生产约束。
+-   **冻结决策（ADR-0001）**：`integrationId`/`scopeId` 在 environment Registry 内唯一并带稳定 parent/scope 语义；生产/测试 Registry 物理或逻辑隔离；跨 scope/environment 例外必须新建版本化 Integration，不复用既有 grant/context，且无跨 scope 原子事务语义。
 -   **责任人**：`<Auth 平台>`、`<P/A 产品>`、`<多租户安全>`
 -   **验收证据**：同一逻辑 A 下多 P、同一 P 多 scope/tenant、不同环境和不同 B 的交叉交换测试；跨 scope 任务使用独立授权且部分成功不会扩大权限；context cache/日志键包含冻结的复合隔离键。
 
 #### AUTH-020 — 多实例隔离、HA、SLO 与故障矩阵
 
--   **决策状态**：`未冻结`；**落地标签**：`仅文档` · `缺生产实现` · `缺测试`
--   **当前证据/缺口**：仓内 Store 是单进程实现，生产合同要求跨副本原子 consume/revoke 和保留状态（`integration-auth-authority.ts:443-510`；`integration-auth-contracts.ts:156-173`）。架构已冻结一个逻辑 A 可有多个 HA 后端副本并同时服务多个 P/tenant/A iframe runtime instance，但共享 Registry/Store、容量、灾备、kill switch 和完整基数矩阵仍未生产验证。
--   **要记录的决策**：共享 Store 技术与一致性级别、compare-and-delete 语义、跨 AZ/RPO/RTO、限流和容量、Auth/LLM/握手超时、告警阈值、故障时降级与值班责任。
--   **建议默认值（待 ADR）**：生产禁用 `InMemory*`；使用共享原子 TTL Store 和 fail-closed；跨副本用条件更新保证一次消费，先按单区域强一致达标再扩展跨区域。
+-   **决策状态**：`已冻结`；**落地标签**：`仅文档` · `缺生产实现` · `缺测试`
+-   **当前证据/缺口**：仓内 Store 仍是单进程实现，生产尚无共享 Registry/Store、HA、kill switch、容量、灾备和完整基数矩阵证据（`integration-auth-authority.ts:443-510`；`integration-auth-contracts.ts:156-173`）。一个逻辑 A 多 HA 副本及多 P/tenant/A iframe 的拓扑已冻结，但尚未生产验证。
+-   **仍需落地的合同**：Store 技术/一致性、compare-and-delete 实现、跨 AZ/RPO/RTO、限流容量、Auth/LLM/握手超时、告警、故障降级和 on-call；这些不改变 ADR 的 fail-closed/单区域强一致门槛。
+-   **冻结决策（ADR-0001）**：生产禁用 `InMemory*`；使用共享原子 TTL Store 并 fail closed；跨副本用条件更新/compare-and-delete 保证一次消费；先达到单区域强一致，再评估跨区域扩展。HA 副本不构成新的逻辑 A 或运行时身份。
 -   **责任人**：`<Auth/SRE>`、`<平台运维>`、`<P/A/B 值班>`
 -   **验收证据**：并发双 exchange、跨节点 revoke、Store/SSO/Auth/LLM/Host/B 超时与恢复、容量压测、RPO/RTO 和真实浏览器 cookie/CSP/HTTP 报告；至少两个 P、同一 P 两个 tenant、多个并发 A iframe、多个 B 以及单 Grant 8/9 B 边界矩阵；签署的 SLO/故障报告。
 
 #### AUTH-003 — Registry schema 与 configVersion 治理
 
--   **决策状态**：`未冻结`；**落地标签**：`参考实现` · `缺生产实现`
--   **当前证据/缺口**：权威架构与 TypeScript 合同已经对齐 `environment`、`origins`、
-    `serviceActorIds`、`scopeId`、`childTargets` 和 `configVersion`，并冻结每个 environment 一个逻辑
-    `AssistantApp`、多个 `ParentApp`、`Integration = P × A × environment × scope`、tenant 作为运行时
-    context、每个 Integration 多个 B 的基数。仓内 Registry 仍只是参考实现；生产 schema、ID 与环境
-    命名空间、`configVersion` 的单调发布/回滚/禁用语义、actor 生命周期和配置分发机制尚未冻结。
--   **要记录的决策**：Registry 的规范持久化 schema、ID/环境格式、每环境单一 A 的约束方式、actor
-    生命周期、`configVersion` 发布/回滚/禁用语义和向后兼容策略。
--   **建议默认值（待 ADR）**：沿用当前合同字段；配置采用不可变版本和原子发布，版本单调递增，旧
-    grant 在 exchange 时因版本变化拒绝；每个 environment 只允许一个启用的 `AssistantApp`；tenant
-    默认复用同一 Integration，由 P BFF 在运行时收窄，不创建 tenant-specific Registry 记录。
+-   **决策状态**：`已冻结`；**落地标签**：`参考实现` · `缺生产实现`
+-   **当前证据/缺口**：权威架构与 TypeScript 合同已对齐 `environment`、`origins`、`serviceActorIds`、`scopeId`、`childTargets` 和 `configVersion`，但仓内 Registry 仍是参考实现；生产 schema、环境 namespace、版本发布/回滚/禁用、actor 生命周期和配置分发尚未实现。`serviceActorIds` 在本 ADR 范围内是配置/路由/审计元数据，不是 caller authentication。
+-   **仍需落地的合同**：Registry 持久化 schema/迁移、ID/环境格式、单一 A 约束、configVersion 兼容语义、配置分发以及 metadata 的审计字段。
+-   **冻结决策（ADR-0001）**：沿用当前合同字段；configVersion 不可变、单调递增并原子发布，版本变化后旧 grant 在 exchange 时拒绝；每个 environment 仅一个启用 AssistantApp；tenant 复用同一 Integration，不创建 tenant-specific Registry 记录。
 -   **责任人**：`<Auth 配置平台>`、`<平台架构>`
 -   **验收证据**：版本化 schema/迁移脚本；同环境第二个逻辑 A、非法/重复 actor、origin、child ID 和
     跨环境配置的拒绝测试；多 P、同一 P 多 scope/tenant 复用和多 B 注册测试；配置切换时旧 grant
@@ -168,16 +164,10 @@
 
 #### AUTH-006 — B subject consistency 与 V1 边界
 
--   **决策状态**：`未冻结`；**落地标签**：`仅文档` · `缺测试`
--   **当前证据/缺口**：权威架构已冻结每个 Integration 可注册多个 B、P BFF 按 tenant/target ACL
-    选择本次子集，以及四层有效权限交集。V1 的 B 不调用 Auth；Authority 只比较 P/A subject，B BFF
-    仍独立验证自己的 session、tenant/object ACL、CSRF 并保留最终 deny。尚未冻结的是：具体业务是否
-    必须证明 B 与 P/A 为同一主体、P BFF→B BFF 的服务端绑定证明格式，以及 V2 让 B 进入 Auth 时的迁移边界。
--   **要记录的决策**：V1 “不由 Auth 比较 B subject”的适用范围；B 自己的 session 与 P grant/业务
-    target 的服务端关联字段；需要三方同主体时的 P→B 证明；V2 B→Auth 的新 actor/integration 版本和跨租户规则。
--   **建议默认值（待 ADR）**：B 每个业务请求始终独立认证授权；不要求三方同主体的业务沿用 V1。
-    如果业务必须证明三方是同一主体，则增加受信的 P BFF→B BFF subject-binding，或让 B 以新版本
-    Integration 进入 Auth。不得把浏览器传入的 user-id 当作证明。
+-   **决策状态**：`已冻结`；**落地标签**：`仅文档` · `缺测试`
+-   **当前证据/缺口**：权威架构已有多 B、P tenant/target ACL、四层权限交集和 V1 B 不调用 Auth 的参考合同；生产 B session/tenant/object 关联、CSRF/幂等矩阵及 V2 边界尚未完成或验证。
+-   **仍需落地的合同**：各业务流是否需要同主体证明、P BFF→B BFF binding schema/审计、跨租户规则和 V2 actor/Integration 迁移。
+-   **冻结决策（ADR-0001）**：V1 Auth 只比较 P/A subject，不比较 B subject；B 每个业务请求独立认证授权并保留最终 deny。默认不要求三方同主体；需要时使用受信 P BFF→B BFF binding 或新版本 Integration；浏览器 user-id 不构成证明。
 -   **责任人**：`<B 业务>`、`<Auth 平台>`、`<多租户安全>`
 -   **验收证据**：同一 P 的两个 tenant、多个 B、P/A 与 B 不同用户、跨租户 B session 的矩阵；B
     session/tenant/object deny 不能被 P/A allow 覆盖；需要同主体的业务具有服务端绑定证明；V1/V2
@@ -188,18 +178,18 @@
 #### AUTH-009 — navigation/root/reload invalidation
 
 -   **决策状态**：`未冻结`；**落地标签**：`仅文档` · `缺测试`
--   **当前证据/缺口**：文档要求导航、root 替换、A/B reload、登录切换使旧 session/index/tree/action token 失效（`docs/parent-bridge-auth-architecture.zh-CN.md:235-236`；`docs/parent-bridge.zh-CN.md:129-130,259-263,347-352`），但未冻结事件顺序、跨窗口通知和正在进行的 issue/exchange 如何终止。当前 Host 对 iframe 新文档 load 会清除 activation，而部分 navigation 路径会保留 activation 并自动重连（`host.ts:356-385`），尚无统一的安全上下文变化判定键。
+-   **当前证据/缺口**：文档要求导航、root 替换、A/B reload、登录切换使旧 session/index/tree/action token 失效（`docs/parent-bridge-auth-architecture.zh-CN.md:235-236`；`docs/parent-bridge.zh-CN.md:129-130,259-263,347-352`），但未冻结事件顺序、跨窗口通知和正在进行的 issue/exchange 如何终止。当前 Host 对 iframe 新文档 load 会清除 activation，而部分 navigation 路径会保留 activation 并自动重连（`host.ts:356-385`），尚无统一的安全上下文变化判定键；AUTH-004 的 lease REVOKED/EXPIRED 或 90s 无法确认属于安全上下文失效，必须先于任何重连判断。
 -   **要记录的决策**：哪些导航/路由/root/iframe 事件清除 activation、policy client、prepared action 和 context；deactivate、abort、dispose 的先后与幂等行为。
--   **建议默认值（待 ADR）**：任何安全上下文变化先 abort 并 deactivate，再 dispose；新文档/new root 必须新 bridge binding、新 policy 和重新 observe；旧 action 不自动重试。
+-   **建议默认值（待 ADR）**：任何安全上下文变化先 abort 并 deactivate，再 dispose；新文档/new root 必须新 bridge binding、新 policy 和重新 observe；旧 action 不自动重试。lease 失效或无法在 AUTH-004 的 90s 窗口内确认时不得自动重连。
 -   **责任人**：`<P Host>`、`<A Adapter>`、`<B FrameBridgeHost>`
 -   **验收证据**：SPA 路由、root 替换、A/B reload、iframe 卸载和登录切换的事件时序测试；旧 index/token/context 全部拒绝。
 
 #### AUTH-010 — reconnect backoff、limits 与 activation
 
 -   **决策状态**：`未冻结`；**落地标签**：`仅文档` · `缺测试`
--   **当前证据/缺口**：文档规定只有首次成功后才允许自动重连，且每次使用新 policy（`docs/parent-bridge-auth-architecture.zh-CN.md:146-151`；`docs/parent-bridge-production-deployment.zh-CN.md:132-145`）。当前公开配置只有 `autoReconnect` 布尔值（`types.ts:241-289`），没有最大尝试数、时间窗、退避、抖动、并发锁、限流或用户恢复入口。
+-   **当前证据/缺口**：P0 已冻结“允许的 reconnect 不得推进原 ActiveLease 的 `expiresAt`”，但新的 bridge binding 如何 rebind 到原 lease 尚未冻结。当前文档规定只有首次成功后才允许自动重连，且每次使用新 policy（`docs/parent-bridge-auth-architecture.zh-CN.md:146-151`；`docs/parent-bridge-production-deployment.zh-CN.md:132-145`）。当前公开配置只有 `autoReconnect` 布尔值（`types.ts:241-289`），没有 lease-aware rebind、最大尝试数、时间窗、退避、抖动、并发锁、限流或用户恢复入口。
 -   **要记录的决策**：哪些断开可自动重连、最大尝试/总时长、退避和抖动、P/A 竞态、连续拒绝后的 circuit breaker、与 Auth 限流的关系。
--   **建议默认值（待 ADR）**：有界指数退避 + 抖动；每个 activation 只有一个重连协调器；达到次数/时间窗后停止并要求 A 用户重新点击；安全上下文变化永不自动重连。
+-   **建议默认值（待 ADR）**：仅在当前 lease 肯定 `ACTIVE` 时 rebind，并保持原 `expiresAt`；有界指数退避 + 抖动；每个 activation 只有一个重连协调器；达到次数/时间窗后停止并要求 A 用户重新点击；安全上下文变化以及 AUTH-004 lease REVOKED/EXPIRED 或 90s 无法确认后永不自动重连，必须由 A 用户重新 issue/exchange/建 lease。
 -   **责任人**：`<A Adapter>`、`<P Host>`、`<Auth/SRE>`
 -   **验收证据**：断网/Auth 429/Host 重启/新 A 文档/显式 deactivate 的重连测试；无无限循环、无重复 issue 洪峰、退避指标可见。
 
@@ -282,7 +272,7 @@
 -   **决策状态**：`未冻结`；**落地标签**：`参考实现` · `缺生产实现`
 -   **当前证据/缺口**：Authority 在 exchange 时检查当前 `configVersion`，配置变化会拒绝旧 grant（`integration-auth-authority.ts:699-706`）；Registry/Store 生产实现、发布顺序、跨副本传播和 kill switch 尚未建设（`docs/parent-bridge-auth-architecture.zh-CN.md:332-345,378-388`）。没有定义 issue 与 exchange 并发遇到配置发布时的线性化点。
 -   **要记录的决策**：配置 source of truth、版本发布/回滚/禁用、传播延迟、旧 grant 的处理、Registry 与 Store 的一致性和 kill switch 优先级。
--   **建议默认值（待 ADR）**：不可变版本 + 原子发布；issue 使用已发布版本，exchange 只接受当前启用版本；禁用先阻止新 issue，再在 SLA 内撤销 ISSUED grant。
+-   **建议默认值（待 ADR）**：不可变版本 + 原子发布；issue 使用已发布版本，exchange 只接受当前启用版本；禁用先阻止新 issue，再在 SLA 内撤销 ISSUED grant，并触发 AUTH-004 active lease 撤销与 BFF-mediated polling fail-closed；lease 失效后不得自动重连。
 -   **责任人**：`<Auth 配置平台>`、`<P/A 发布平台>`、`<SRE>`
 -   **验收证据**：跨副本配置传播和回滚测试；发布中 issue/exchange 线性化报告；禁用/kill switch 到生效的实测延迟。
 
@@ -303,39 +293,40 @@
 
 | 主题                                                | 台账项   | 优先级           | 决策状态 |
 | --------------------------------------------------- | -------- | ---------------- | -------- |
-| 生产 Auth HTTP API / service identity               | AUTH-001 | P0               | 未冻结   |
-| canonical subject / issuer                          | AUTH-002 | P0               | 未冻结   |
-| Registry / configVersion 治理                       | AUTH-003 | P0               | 未冻结   |
-| active-session revoke / logout                      | AUTH-004 | P0               | 未冻结   |
-| scope / target / context binding                    | AUTH-005 | P0               | 未冻结   |
-| B subject consistency                               | AUTH-006 | P0（启用 B 时）  | 未冻结   |
-| trusted HTTP、Cookie/JWT、CSRF、CORS、CSP、storage  | AUTH-007 | P0               | 未冻结   |
-| credential/session TTL                              | AUTH-008 | P0               | 未冻结   |
+| 生产 Auth HTTP API / service identity               | AUTH-001 | P0               | 已冻结   |
+| canonical subject / issuer                          | AUTH-002 | P0               | 已冻结   |
+| Registry / configVersion 治理                       | AUTH-003 | P0               | 已冻结   |
+| active-session revoke / logout                      | AUTH-004 | P0               | 已冻结   |
+| scope / target / context binding                    | AUTH-005 | P0               | 已冻结   |
+| B subject consistency                               | AUTH-006 | P0（启用 B 时）  | 已冻结   |
+| trusted HTTP、Cookie/JWT、CSRF、CORS、CSP、storage  | AUTH-007 | P0               | 已冻结   |
+| credential/session TTL                              | AUTH-008 | P0               | 已冻结   |
 | navigation invalidation                             | AUTH-009 | P1               | 未冻结   |
 | reconnect backoff / limits                          | AUTH-010 | P1               | 未冻结   |
 | multi-instance isolation / one auth-client-per-Host | AUTH-011 | P1               | 未冻结   |
 | A-side exchange helper                              | AUTH-012 | P1               | 未冻结   |
 | approval ownership                                  | AUTH-013 | P1               | 未冻结   |
-| cross-scope boundary                                | AUTH-014 | P0               | 未冻结   |
+| cross-scope boundary                                | AUTH-014 | P0               | 已冻结   |
 | protocol migration / event / error taxonomy         | AUTH-015 | P1               | 未冻结   |
 | observability / correlation                         | AUTH-016 | P1               | 未冻结   |
 | outcome-unknown / idempotency                       | AUTH-017 | P1               | 未冻结   |
 | data minimization                                   | AUTH-018 | P1               | 未冻结   |
 | config propagation                                  | AUTH-019 | P1               | 未冻结   |
-| SLO / HA / browser / fault matrix                   | AUTH-020 | P0               | 未冻结   |
+| SLO / HA / browser / fault matrix                   | AUTH-020 | P0               | 已冻结   |
 | RACI / ADR / test matrix                            | AUTH-021 | P1（发布前必需） | 未冻结   |
 
-## 5. 推荐 ADR 顺序与实现依赖
+## 5. ADR 实现依赖与顺序
 
-推荐按依赖顺序推进；同一阶段内可在文件和服务 owner 明确后并行：
+P0 决策已由 ADR-0001 冻结；以下顺序描述生产实现与验收依赖。P1 仍需各自完成 ADR，
+不能从本表推断为已冻结：
 
-| 阶段                  | 先冻结/交付                                                                    | 依赖与停止条件                                                                                          |
-| --------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| 0. 信任根             | AUTH-001、AUTH-002、AUTH-003                                                   | 未确定服务身份、主体映射和 Registry schema，不得实现生产 endpoint。                                     |
-| 1. 授权边界           | AUTH-004、AUTH-005、AUTH-008、AUTH-014、AUTH-019                               | 先固定 session/scope/target/configVersion 的绑定和撤销，再实现 Store/HA。                               |
-| 2. 浏览器与跨方合同   | AUTH-006、AUTH-007、AUTH-009、AUTH-010、AUTH-011、AUTH-012、AUTH-013、AUTH-018 | 先固定 HTTP/session/lifecycle/context 语义，再做 P/A/B 接线和 UI 降级；不得用浏览器行为猜测 Auth 授权。 |
-| 3. 服务实现与可观测性 | AUTH-015、AUTH-016、AUTH-017                                                   | endpoint、错误、事件、幂等和 trace 合同冻结后，接入真实 SSO、共享 Store、限流和告警。                   |
-| 4. 生产验收治理       | AUTH-020、AUTH-021                                                             | 真实域名/浏览器/多副本/故障矩阵完成并签署后，才允许内部租户灰度。                                       |
+| 阶段                  | 先冻结/交付                                                                    | 依赖与停止条件                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 0. 信任根             | AUTH-001、AUTH-002、AUTH-003                                                   | ADR-0001 已冻结；仍须交付 Auth 网络/HTTP 合同、SSO 映射和 Registry schema 后才能实现生产 endpoint。  |
+| 1. 授权边界           | AUTH-004、AUTH-005、AUTH-008、AUTH-014、AUTH-019                               | ADR-0001 已冻结 P0；先实现 session/lease/scope/target/configVersion 绑定和撤销，再实现 Store/HA。    |
+| 2. 浏览器与跨方合同   | AUTH-006、AUTH-007、AUTH-009、AUTH-010、AUTH-011、AUTH-012、AUTH-013、AUTH-018 | AUTH-006/007 的 P0 决策已冻结；P1 仍须固定 HTTP/session/lifecycle/context 语义后再做应用接线和降级。 |
+| 3. 服务实现与可观测性 | AUTH-015、AUTH-016、AUTH-017                                                   | endpoint、错误、事件、幂等和 trace 合同冻结后，接入真实 SSO、共享 Store、限流和告警。                |
+| 4. 生产验收治理       | AUTH-020、AUTH-021                                                             | AUTH-020 决策已冻结；真实域名/浏览器/多副本/故障矩阵完成并签署后，才允许内部租户灰度。               |
 
 建议的执行链为：
 
@@ -346,15 +337,22 @@
 
 ## 6. Release gate checklist
 
--   [ ] AUTH-001、AUTH-002、AUTH-003、AUTH-004、AUTH-005、AUTH-007、AUTH-008、AUTH-014、AUTH-020、AUTH-021 均有已批准 ADR、owner、reviewer 和验收证据；启用 B 时还必须包含 AUTH-006。
--   [ ] 生产 Auth endpoint 只接受受信 P/A service identity；浏览器无直接 Auth 路径；真实 SSO subject 不由请求 JSON 自报。
+### 6.1 决策门
+
+-   [x] AUTH-001、AUTH-002、AUTH-003、AUTH-004、AUTH-005、AUTH-007、AUTH-008、AUTH-014、AUTH-020 已由 [ADR-0001](./adr/0001-parent-bridge-auth-v1-p0-baseline.zh-CN.md) 在 `V1 controlled-intranet deployment` 范围内冻结；启用 B 时还包含 AUTH-006。责任人是项目负责人。
+-   [ ] AUTH-021 仍是独立的 P1 治理事项，必须另行补齐 RACI、reviewer、测试矩阵、证据链接和回滚 owner，不因 ADR-0001 自动冻结。
+
+### 6.2 证据门
+
+-   [ ] 决策已冻结不等于已部署或已验证；所有适用的 `仅文档`、`参考实现`、`缺实现`、`缺生产实现` 和 `缺测试` 标签必须保留，直到生产合同、部署配置和验收证据齐备。
+-   [ ] 生产 Auth endpoint 的网络可达性限制在受控内网范围；P/A `serviceActor` 仅为配置/路由/审计元数据，不是 caller authentication；浏览器无直接 Auth 路径；真实 SSO subject 不由请求 JSON 自报。
 -   [ ] Registry schema、环境、origin、capability、ChildTarget、configVersion 和发布/回滚/禁用语义已版本化；生产不用 `InMemory*`。
 -   [ ] 每个 environment 只登记一个逻辑 `AssistantApp`；多个 P/Integration 能复用该 A；tenant 保持
         运行时 context，一个 P 的每个 scope 使用独立 Integration，不能用 tenant/scope/target/childId
         互相代替。
--   [ ] Store 在多副本并发 exchange、revoke、TTL 到期、配置切换和故障时满足原子性、保留期和 fail-closed 要求。
+-   [ ] Store 在多副本并发 exchange、revoke、TTL 到期、配置切换和故障时满足原子性、保留期和 fail-closed 要求；policy 为 120s（最大 300s），active lease/bridge context 为 900s（最大 3600s）且不续租，clock skew 为 5s，polling 为 30s ±20%，连续 90s 无法确认时 fail closed。
 -   [ ] issue/exchange/revoke 的 scope、target、session、subject、origin、capability、B 子集和 configVersion 交叉拒绝矩阵通过。
--   [ ] logout、租户/target 切换、导航、A/B reload、root 替换、deactivate 和新文档加载均能使旧 grant/context/index/action 失效。
+-   [ ] logout、租户/target/scope 切换、导航、A/B reload、root 替换、deactivate 和新文档加载均能使旧 grant/context/index/action 失效；lease revoke/expiry 或 90s 无法确认后清除连接、abort 安全工作且禁止自动重连。
 -   [ ] 至少两个 P、同一 P 两个 tenant、多个并发 A iframe 和多个 B 的组合矩阵通过；单 Grant 8 个
         B 成功、9 个被拒绝，policy/context 不可跨 tenant/instance/scope/target 使用。
 -   [ ] P/A/B 的 cookie、JWT audience/刷新、CSRF、CORS、CSP、sandbox、storage、HTTP 风险接受和目标浏览器验证完成。
@@ -419,7 +417,8 @@ ADR: ADR-<编号>
 
 ## 8. 进度日志
 
-| 日期（UTC） | 台账项   | 变更                                                                                               | 证据/ADR                     | 记录人                       |
-| ----------- | -------- | -------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------- |
-| 2026-08-30  | 初始建立 | 建立 AUTH-001–AUTH-021 待决事项和 release gate                                                     | 本文件；权威架构/部署文档    | `<待指定>`                   |
-| 2026-08-30  | 架构基数 | 冻结每环境一个逻辑 A、多 P/tenant/B、Integration 粒度、runtime instance 隔离和单 Grant 最多 8 个 B | 权威架构 §1/§5；生产部署手册 | 项目负责人确认；owner 待登记 |
+| 日期（UTC） | 台账项                                                                                             | 变更                                                                                                               | 证据/ADR                                                          | 记录人                       |
+| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- | ---------------------------- |
+| 2026-08-30  | 初始建立                                                                                           | 建立 AUTH-001–AUTH-021 待决事项和 release gate                                                                     | 本文件；权威架构/部署文档                                         | `<待指定>`                   |
+| 2026-08-30  | 架构基数                                                                                           | 冻结每环境一个逻辑 A、多 P/tenant/B、Integration 粒度、runtime instance 隔离和单 Grant 最多 8 个 B                 | 权威架构 §1/§5；生产部署手册                                      | 项目负责人确认；owner 待登记 |
+| 2026-08-31  | AUTH-001、AUTH-002、AUTH-003、AUTH-004、AUTH-005、AUTH-006、AUTH-007、AUTH-008、AUTH-014、AUTH-020 | 在 V1 controlled-intranet deployment 范围内接受 ADR-0001，冻结 P0 合同；保留全部适用落地标签，决策不等于实现或验证 | [ADR-0001](./adr/0001-parent-bridge-auth-v1-p0-baseline.zh-CN.md) | 项目负责人                   |

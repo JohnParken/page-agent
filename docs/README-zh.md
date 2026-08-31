@@ -86,7 +86,8 @@ await agent.execute('点击登录按钮')
 
 生产模型在每个环境使用一个逻辑 A 系统，由多个 P 页面以彼此隔离的 A iframe 运行实例复用；同一
 P 可以服务多个租户并显式接入多个 B。身份、scope、target、会话与 B 子集的权威边界见
-[P / A / B 与公共 Auth 权威架构](./parent-bridge-auth-architecture.zh-CN.md)。
+[P / A / B 与公共 Auth 权威架构](./parent-bridge-auth-architecture.zh-CN.md)。V1 生产前置决策及其
+已接受风险见 [ADR-0001：P / A / B / Auth V1 P0 基线](./adr/0001-parent-bridge-auth-v1-p0-baseline.zh-CN.md)。
 
 ### 在现有测试应用中接入跨域 iframe
 
