@@ -100,8 +100,8 @@ P0 决策已由 ADR-0001 在指定范围内批准，因此适用事项的决策�
 #### AUTH-004 — active session binding、logout 与 revoke
 
 -   **决策状态**：`已冻结`；**落地标签**：`参考实现` · `缺生产实现`
--   **当前证据/缺口**：`parentSessionBinding` 在 issue request 中仍可选，领域引擎只存储它；当前 exchange/revoke 合同和内存 Store 没有 active lease，也不会终止已 `CONSUMED` 的活动 bridge session。仓内尚未实现 lease 创建、轮询、revoke 传播、abort 或禁止自动重连；这些是实现缺口，不是决策缺口。
--   **仍需落地的合同**：lease API/state schema、binding 摘要/来源、P/A BFF polling endpoint、revoke 事件审计、跨副本状态传播和 15m/30s/90s 参数的监控与告警。
+-   **当前证据/缺口**：`parentSessionBinding` 在 integration-aware issue request 中已改为必填；仓内 InMemory 参考实现已支持 ActiveLease 原子 consume+创建、`ACTIVE/REVOKED/EXPIRED` 状态管理、同源 status client/API 合同、固定 900s lease 与 30s±20%/90s fail-closed；`abort` 与 ActiveLease 模式的 automatic reconnect 禁止已覆盖。剩余缺口仍在生产 Auth/BFF、binding 摘要来源、共享 Store/HA 与跨节点 revoke 传播。
+-   **仍需落地的合同**：生产端跨实例一致性与 revoke 传播、事件审计、共享 Store/HA（含 compare-and-delete）与 15m/30s/90s 的生产监控告警。
 -   **冻结决策（ADR-0001）**：有效 exchange 原子创建绑定完整 environment/assistantApp/parentApp/subject/integration/scope/target/bridge/host/frame/config context 的 `ACTIVE` lease；lease 固定 900s、永不续租。P/A runtime 仅轮询各自同源 BFF，BFF 查询 Auth，周期 30s、±20% 抖动（24–36s）；从最近一次 `ACTIVE` 起 90s 无法确认即 fail closed，`REVOKED`/`EXPIRED` 立即 fail closed。revoke 由 logout、用户/tenant/target/scope 切换、权限/配置禁用和 kill switch 触发；清除连接、abort 安全工作、禁止自动重连，新连接必须由 A 用户显式操作并重新 issue/exchange/建 lease。`deactivate` 仅为清理通知，不是撤销证明。
 -   **责任人**：`<P BFF>`、`<Auth 平台>`、`<安全响应>`
 -   **验收证据**：issue 前后 logout、exchange 后 logout、跨节点撤销、切租户/target、配置禁用和 kill switch 测试；活动连接在 SLA 内关闭且后续操作失败；撤销事件含原因、时间和关联 ID。
@@ -127,7 +127,7 @@ P0 决策已由 ADR-0001 在指定范围内批准，因此适用事项的决策�
 #### AUTH-008 — credential/session TTL、clock skew 与刷新
 
 -   **决策状态**：`已冻结`；**落地标签**：`参考实现` · `缺测试`
--   **当前证据/缺口**：Authority 仍只有参考实现的 policy/bridge TTL 默认值（`integration-auth-authority.ts:42-45,611-629`）；active lease、统一 TTL 边界、5 秒 skew 和生产凭据生命周期尚未实现或验证。Client 与服务端的过期窗口合同仍需对齐（`integration-auth-client.ts:251-275,344-359`）。
+-   **当前证据/缺口**：Authority 仍只有参考实现的 policy/bridge TTL 默认值（`integration-auth-authority.ts:42-45,611-629`）；active lease 在仓内已有覆盖，但统一 TTL 边界、5 秒 skew 与生产凭据生命周期尚未实现或验证。Client 与服务端的过期窗口合同仍需对齐（`integration-auth-client.ts:251-275,344-359`）。
 -   **仍需落地的合同**：P/A/B session、policy-offer、bridge、authorization context 和短 token 的具体生命周期；凭据刷新/存储；stop/deactivate/logout 失效证明和 TTL 指标。
 -   **冻结决策（ADR-0001）**：服务端统一计算严格过期并拒绝非法 TTL；policy 默认 120s、最大 300s；active lease/bridge context 默认 900s、最大 3600s 且不超过用户凭据；clock skew 固定 5s，仅用于 `nbf` 容忍；policy 不刷新/复用，lease 不续租。
 -   **责任人**：`<Auth 平台>`、`<SSO/A 平台>`、`<SRE>`
@@ -187,7 +187,7 @@ P0 决策已由 ADR-0001 在指定范围内批准，因此适用事项的决策�
 #### AUTH-010 — reconnect backoff、limits 与 activation
 
 -   **决策状态**：`未冻结`；**落地标签**：`仅文档` · `缺测试`
--   **当前证据/缺口**：P0 已冻结“允许的 reconnect 不得推进原 ActiveLease 的 `expiresAt`”，但新的 bridge binding 如何 rebind 到原 lease 尚未冻结。当前文档规定只有首次成功后才允许自动重连，且每次使用新 policy（`docs/parent-bridge-auth-architecture.zh-CN.md:146-151`；`docs/parent-bridge-production-deployment.zh-CN.md:132-145`）。当前公开配置只有 `autoReconnect` 布尔值（`types.ts:241-289`），没有 lease-aware rebind、最大尝试数、时间窗、退避、抖动、并发锁、限流或用户恢复入口。
+-   **当前证据/缺口**：P0 已冻结“ActiveLease 模式不推进 `expiresAt` 且禁止 automatic reconnect”，但新的 bridge binding 如何 rebind 到原 lease 尚未冻结。当前文档规定只有首次成功后才允许自动重连，且每次使用新 policy（`docs/parent-bridge-auth-architecture.zh-CN.md:146-151`；`docs/parent-bridge-production-deployment.zh-CN.md:132-145`）。公开配置已有 `activeLease` 与 `autoReconnect`，但 ActiveLease 模式当前直接禁止 automatic reconnect，尚无 lease-aware rebind、最大尝试数、时间窗、退避、并发锁或限流；失效后的恢复入口是 A 用户显式 `connect()`。
 -   **要记录的决策**：哪些断开可自动重连、最大尝试/总时长、退避和抖动、P/A 竞态、连续拒绝后的 circuit breaker、与 Auth 限流的关系。
 -   **建议默认值（待 ADR）**：仅在当前 lease 肯定 `ACTIVE` 时 rebind，并保持原 `expiresAt`；有界指数退避 + 抖动；每个 activation 只有一个重连协调器；达到次数/时间窗后停止并要求 A 用户重新点击；安全上下文变化以及 AUTH-004 lease REVOKED/EXPIRED 或 90s 无法确认后永不自动重连，必须由 A 用户重新 issue/exchange/建 lease。
 -   **责任人**：`<A Adapter>`、`<P Host>`、`<Auth/SRE>`

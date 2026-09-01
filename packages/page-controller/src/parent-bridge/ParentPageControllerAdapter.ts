@@ -1,3 +1,7 @@
+import {
+	type ParentControllerActiveLeaseFailure,
+	ParentControllerActiveLeaseMonitor,
+} from './active-lease'
 import { emitParentControllerLog, messageByteLength } from './logger'
 import {
 	isCapability,
@@ -121,6 +125,7 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 	private readonly bridgeWindow: ParentControllerAdapterWindow
 	private readonly parentWindow: ParentControllerAdapterWindow['parent']
 	private readonly logger: ParentControllerAdapterOptions<TAuthorizationContext>['logger']
+	private readonly activeLeaseMonitor: ParentControllerActiveLeaseMonitor<TAuthorizationContext> | null
 	private readonly pending = new Map<string, PendingRequest>()
 	private readonly consumedApprovalIds = new Set<string>()
 	private readonly approvalControllers = new Map<string, AbortController>()
@@ -182,7 +187,17 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		this.onApprovalRequired = options.onApprovalRequired
 		if (options.autoReconnect !== undefined && typeof options.autoReconnect !== 'boolean')
 			throw new TypeError('autoReconnect must be a boolean')
-		this.autoReconnect = options.autoReconnect ?? true
+		if (options.activeLease && typeof options.activeLease.getStatus !== 'function')
+			throw new TypeError('activeLease.getStatus must be a function')
+		if (options.activeLease && options.autoReconnect === true)
+			throw new TypeError('autoReconnect must be false when ActiveLease monitoring is enabled')
+		this.autoReconnect = options.autoReconnect ?? options.activeLease === undefined
+		this.activeLeaseMonitor = options.activeLease
+			? new ParentControllerActiveLeaseMonitor<TAuthorizationContext>({
+					getStatus: options.activeLease.getStatus,
+					onFailure: (failure) => this.failActiveLease(failure),
+				})
+			: null
 		this.handshakeTimeoutMs = normalizeTimeout(
 			options.handshakeTimeoutMs,
 			5_000,
@@ -302,6 +317,13 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 	reconnect(
 		context?: PageControllerCallContext
 	): Promise<ParentControllerConnection<TAuthorizationContext>> {
+		if (this.activeLeaseMonitor)
+			return Promise.reject(
+				asError(
+					ParentControllerErrorCode.CONNECTION_CLOSED,
+					'Automatic rebind is unavailable in ActiveLease mode; start a new user connection'
+				)
+			)
 		if (!this.activated)
 			return Promise.reject(
 				asError(
@@ -334,7 +356,13 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 	private clearActivation(reason: string): void {
 		this.activated = false
 		this.invalidate(reason)
-		this.dispatchEvent(new Event('deactivated'))
+		this.dispatchEvent(new CustomEvent('deactivated', { detail: { reason } }))
+	}
+
+	private failActiveLease(failure: ParentControllerActiveLeaseFailure): void {
+		if (this.disposed) return
+		this.dispatchEvent(new CustomEvent('activeleasefailure', { detail: failure }))
+		this.deactivate(`ActiveLease ${failure.reason.toLowerCase()}`)
 	}
 
 	private getAssistantOrigin(): string | null {
@@ -599,7 +627,9 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 				sessionId: this.connectionState?.sessionId,
 			})
 			this.dispatchEvent(new Event('messageerror'))
-			this.invalidate('Parent controller port failed')
+			if (this.activeLeaseMonitor && this.activated)
+				this.deactivate('Parent controller port failed during ActiveLease')
+			else this.invalidate('Parent controller port failed')
 			if (this.activated && this.autoReconnect) {
 				void this.connect().catch((error: unknown) => {
 					this.dispatchEvent(new CustomEvent('connectionerror', { detail: { error } }))
@@ -707,6 +737,17 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 			frameContext: message.frameContext,
 			authorizedParent: accepted.authorized,
 		}
+		this.activeLeaseMonitor?.start({
+			role: 'assistant',
+			policyId: accepted.offer.policyId,
+			sessionId: accepted.offer.sessionId,
+			challenge: accepted.offer.challenge,
+			hostInstanceId: accepted.offer.hostInstanceId,
+			frameInstanceId: accepted.offer.frameInstanceId,
+			parentOrigin: accepted.parentOrigin,
+			assistantOrigin: accepted.offer.frameContext.assistantOrigin,
+			authorizationContext: accepted.authorized.authorizationContext,
+		})
 		emitParentControllerLog(this.logger, {
 			event: 'connected',
 			sessionId: accepted.offer.sessionId,
@@ -1071,6 +1112,7 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 	}
 
 	private closePort(reason: Error, rejectPending = true): void {
+		this.activeLeaseMonitor?.stop()
 		for (const controller of this.approvalControllers.values()) controller.abort()
 		this.approvalControllers.clear()
 		this.approvalRequestIds.clear()
@@ -1113,6 +1155,9 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 	}
 
 	private invalidateForOfferReplacement(reason: string): void {
+		const deactivated = this.activeLeaseMonitor !== null && this.activated
+		if (deactivated) this.activated = false
+		this.activeLeaseMonitor?.stop()
 		this.authorizationGeneration += 1
 		this.authorizationController?.abort()
 		this.authorizationController = null
@@ -1125,6 +1170,7 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		this.offerWaiter = null
 		this.currentParentOrigin = null
 		this.dispatchEvent(new CustomEvent('invalidate', { detail: { reason } }))
+		if (deactivated) this.dispatchEvent(new CustomEvent('deactivated', { detail: { reason } }))
 	}
 
 	private reconnectAfterOffer(): void {
@@ -1135,6 +1181,9 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 
 	invalidate(reason = 'Parent controller bridge invalidated'): void {
 		if (this.disposed) return
+		const deactivated = this.activeLeaseMonitor !== null && this.activated
+		if (deactivated) this.activated = false
+		this.activeLeaseMonitor?.stop()
 		const error = asError(ParentControllerErrorCode.CONNECTION_CLOSED, reason)
 		this.authorizationGeneration += 1
 		this.authorizationController?.abort()
@@ -1148,11 +1197,13 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 		this.offer = null
 		this.currentParentOrigin = null
 		this.dispatchEvent(new CustomEvent('invalidate', { detail: { reason } }))
+		if (deactivated) this.dispatchEvent(new CustomEvent('deactivated', { detail: { reason } }))
 	}
 
 	dispose(): void {
 		if (this.disposed) return
 		this.disposed = true
+		this.activeLeaseMonitor?.stop()
 		this.authorizationGeneration += 1
 		this.bridgeWindow.removeEventListener('message', this.windowMessageListener)
 		if (this.connectTimer) clearTimeout(this.connectTimer)

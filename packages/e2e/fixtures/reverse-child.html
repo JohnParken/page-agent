@@ -344,11 +344,13 @@
 
 		<script src="/page-agent/page-agent.demo.js?autoInit=false"></script>
 		<script type="module">
+			import { createIntegrationAwareActiveLeaseStatusClient } from '/lib/parent-bridge/integration-auth.js'
 			import { ParentPageControllerAdapter } from '/lib/parent-bridge/adapter.js'
 
 			const params = new URLSearchParams(location.search)
 			const expectedParentOrigin = params.get('expectedParentOrigin') || 'http://127.0.0.1:4173'
 			const role = params.get('role') || 'target'
+			const activeLeaseEnabled = params.get('activeLease') !== 'false'
 			const roleLabels = {
 				target: 'connected target',
 				sibling: 'untrusted sibling',
@@ -369,6 +371,12 @@
 			const approvalAllow = document.querySelector('#assistant-approval-allow')
 			const approvalDeny = document.querySelector('#assistant-approval-deny')
 			const manualControls = [...document.querySelectorAll('.manual-controls button')]
+			const activeLeaseStatusClient = activeLeaseEnabled
+				? createIntegrationAwareActiveLeaseStatusClient({
+						endpoint: '/api/parent-bridge/active-lease',
+						allowInsecureHttp: true,
+					})
+				: null
 			if (agentTask) agentTask.value = agentTask.value.trim()
 			let pageAgent = null
 			let pendingApproval = null
@@ -480,6 +488,12 @@
 
 			const adapter = new ParentPageControllerAdapter({
 				handshakeTimeoutMs: Number(params.get('handshakeTimeoutMs') || 1_500),
+				...(activeLeaseStatusClient
+					? {
+							activeLease: { getStatus: activeLeaseStatusClient.getStatus },
+							autoReconnect: false,
+						}
+					: {}),
 				requestedCapabilities: [
 					'observe',
 					'click',

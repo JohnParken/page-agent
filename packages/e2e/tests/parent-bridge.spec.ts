@@ -17,6 +17,9 @@ interface ActionResult {
 
 interface ReverseChildWindow extends Window {
 	reverseAuthorizationContext?: {
+		leaseId: string
+		leaseState: 'ACTIVE'
+		leaseIssuedAt: number
 		policyId: string
 		integrationId: string
 		parentAppId: string
@@ -128,10 +131,12 @@ async function businessFrame(page: Page): Promise<Frame> {
 
 async function openParent(
 	page: Page,
-	parentOrigin: (typeof parentOrigins)[number] = parentOrigins[0]
+	parentOrigin: (typeof parentOrigins)[number] = parentOrigins[0],
+	search = ''
 ) {
-	await page.goto(`${parentOrigin}/reverse-parent.html`)
-	await expect(page).toHaveURL(`${parentOrigin}/reverse-parent.html`)
+	const query = search.length === 0 ? '' : search.startsWith('?') ? search : `?${search}`
+	await page.goto(`${parentOrigin}/reverse-parent.html${query}`)
+	await expect(page).toHaveURL(`${parentOrigin}/reverse-parent.html${query}`)
 	await expect
 		.poll(() => page.evaluate(() => Boolean((window as ReverseParentWindow).reverseParentHost)))
 		.toBe(true)
@@ -850,7 +855,7 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 	test('supports A- and P-initiated reconnects only after the first activation', async ({
 		page,
 	}) => {
-		const frame = await openParent(page)
+		const frame = await openParent(page, parentOrigins[0], 'activeLease=false')
 		const firstPolicyId = await frame.evaluate(
 			() => (window as ReverseChildWindow).reverseAuthorizationContext?.policyId
 		)
@@ -875,6 +880,75 @@ test.describe('reverse parent-controller bridge cross-origin fixtures', () => {
 			.toBe(true)
 		await expect(frame.locator('#assistant-status')).toContainText(`connected:${parentOrigins[0]}`)
 		await expect(frame.locator('#assistant-connect')).toBeDisabled()
+	})
+
+	test('fails closed after ActiveLease revocation without automatic reconnect', async ({
+		page,
+	}) => {
+		test.setTimeout(60_000)
+		const authorizationRequests: string[] = []
+		const leaseStates: string[] = []
+		page.on('request', (request) => {
+			const path = new URL(request.url()).pathname
+			if (
+				path === '/api/parent-bridge/embed-policy' ||
+				path === '/api/parent-bridge/authorize-offer'
+			)
+				authorizationRequests.push(path)
+		})
+		page.on('response', (response) => {
+			if (new URL(response.url()).pathname !== '/api/parent-bridge/active-lease') return
+			void response
+				.json()
+				.then((payload) => {
+					if (payload && typeof payload.state === 'string') leaseStates.push(payload.state)
+				})
+				.catch(() => undefined)
+		})
+
+		const frame = await openParent(page)
+		const authorizationContext = await frame.evaluate(
+			() => (window as ReverseChildWindow).reverseAuthorizationContext
+		)
+		if (!authorizationContext) throw new Error('ActiveLease authorization context is missing')
+		expect(authorizationContext).toMatchObject({
+			leaseState: 'ACTIVE',
+			leaseId: expect.stringMatching(/^pao_lease_/),
+		})
+		await expect.poll(() => leaseStates.includes('ACTIVE'), { timeout: 5_000 }).toBe(true)
+		const revoke = await page.request.post(
+			`${parentOrigins[0]}/api/parent-bridge/revoke-active-lease`,
+			{
+				headers: { Origin: parentOrigins[0] },
+				data: { policyId: authorizationContext.policyId },
+			}
+		)
+		expect(revoke.ok()).toBe(true)
+		expect(await revoke.json()).toMatchObject({ activeLeasesRevoked: 1 })
+
+		await expect.poll(() => leaseStates.includes('REVOKED'), { timeout: 45_000 }).toBe(true)
+		await expect(frame.locator('#assistant-status')).toHaveText('disconnected')
+		await expect
+			.poll(() =>
+				frame.evaluate(() => {
+					const adapter = (window as ReverseChildWindow).reverseParentController
+					return adapter ? { connected: adapter.connected, active: adapter.activationActive } : null
+				})
+			)
+			.toEqual({ connected: false, active: false })
+		await expect(frame.locator('#assistant-run-click')).toBeDisabled()
+		await expect(frame.locator('#assistant-connect')).toBeEnabled()
+
+		const authorizationCountAfterFailure = authorizationRequests.length
+		await page.waitForTimeout(500)
+		expect(authorizationRequests).toHaveLength(authorizationCountAfterFailure)
+		const closedResult = await frame.evaluate(async () => {
+			const adapter = (window as ReverseChildWindow).reverseParentController
+			if (!adapter) throw new Error('Parent controller adapter has not been installed')
+			return adapter.clickElement(0)
+		})
+		expect(closedResult.success).toBe(false)
+		expect(closedResult.message).toContain('CONNECTION_CLOSED')
 	})
 
 	test('propagates P deactivation to A and requires another visible Connect action', async ({

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
 	type AuthenticatedServiceActor,
 	type CanonicalAuthSubject,
+	createIntegrationAwareActiveLeaseStatusClient,
 	createIntegrationAwareManagedEmbedAuthClient,
 	InMemoryIntegrationAwareAuthorizationStore,
 	InMemoryManagedEmbedAuthorizationRegistry,
@@ -173,6 +174,10 @@ function exchangeRequest(
 }
 
 describe('integration-aware parent-bridge authorization', () => {
+	type ExchangeDecision = Awaited<
+		ReturnType<IntegrationAwareEmbedAuthorizationAuthority['exchange']>
+	>
+
 	it('issues a pre-bound Grant and exchanges it into separate server and browser contexts', async () => {
 		const service = authority()
 		const grant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
@@ -199,6 +204,73 @@ describe('integration-aware parent-bridge authorization', () => {
 		})
 		expect(browserContext).not.toHaveProperty('subject')
 		expect(browserContext).not.toHaveProperty('parentSessionBinding')
+	})
+
+	it('produces a browser-safe context and active lease status', async () => {
+		const service = authority()
+		const grant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
+		const decision = await service.exchange(
+			{ actor: assistantActor, subject },
+			exchangeRequest(grant)
+		)
+		const browserContext = toBrowserAuthorizationContext(decision)
+		expect(browserContext).toMatchObject({
+			leaseId: decision.leaseId,
+			policyId: decision.policyId,
+			integrationId: 'parent-one-assistant',
+			parentAppId: 'parent-one',
+			assistantAppId: 'assistant',
+			sessionId: bridgeBinding.sessionId,
+			hostInstanceId: bridgeBinding.hostInstanceId,
+			frameInstanceId: bridgeBinding.frameInstanceId,
+		})
+		expect(browserContext).not.toHaveProperty('subject')
+		expect(browserContext).not.toHaveProperty('parentSessionBinding')
+		expect(
+			await service.getActiveLeaseStatus(
+				{ actor: assistantActor, subject },
+				{ policyId: decision.policyId, bridgeBinding }
+			)
+		).toMatchObject({
+			leaseId: decision.leaseId,
+			policyId: decision.policyId,
+			state: 'ACTIVE',
+			expiresAt: decision.expiresAt,
+			checkedAt: nowSeconds,
+		})
+	})
+
+	it('binds status lookup to the full bridge context and the registered P/A actors', async () => {
+		const service = authority()
+		const grant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
+		const decision = await service.exchange(
+			{ actor: assistantActor, subject },
+			exchangeRequest(grant)
+		)
+
+		await expect(
+			service.getActiveLeaseStatus(
+				{ actor: parentOneActor, subject },
+				{ policyId: decision.policyId, bridgeBinding }
+			)
+		).resolves.toMatchObject({ leaseId: decision.leaseId, state: 'ACTIVE' })
+		await expect(
+			service.getActiveLeaseStatus(
+				{ actor: assistantActor, subject },
+				{
+					leaseId: decision.leaseId,
+					bridgeBinding: { ...bridgeBinding, challenge: 'different-challenge' },
+				}
+			)
+		).rejects.toMatchObject({
+			code: IntegrationAwareAuthorizationErrorCode.ACTIVE_LEASE_NOT_FOUND_OR_DENIED,
+		})
+		await expect(
+			service.getActiveLeaseStatus(
+				{ actor: parentTwoActor, subject },
+				{ leaseId: decision.leaseId, bridgeBinding }
+			)
+		).rejects.toMatchObject({ code: IntegrationAwareAuthorizationErrorCode.ACTOR_DENIED })
 	})
 
 	it('rejects a different A subject without consuming the valid policy', async () => {
@@ -283,7 +355,7 @@ describe('integration-aware parent-bridge authorization', () => {
 		).rejects.toMatchObject({ code: IntegrationAwareAuthorizationErrorCode.INTEGRATION_DENIED })
 	})
 
-	it('atomically consumes once and supports targeted revocation', async () => {
+	it('atomically consumes once and supports targeted revocation of consumed ActiveLease entries', async () => {
 		const service = authority()
 		const grant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
 		const results = await Promise.allSettled([
@@ -292,13 +364,144 @@ describe('integration-aware parent-bridge authorization', () => {
 		])
 		expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
 		expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
-
-		const revokedGrant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
-		expect(await service.revoke({ policyId: revokedGrant.claims.jti })).toBe(1)
+		const fulfilled = results.find(
+			(result): result is PromiseFulfilledResult<ExchangeDecision> => result.status === 'fulfilled'
+		)
+		if (!fulfilled) throw new Error('Expected exactly one successful exchange')
+		const { value: decision } = fulfilled
+		expect(decision).toMatchObject({ leaseState: 'ACTIVE' })
 		await expect(
-			service.exchange({ actor: assistantActor, subject }, exchangeRequest(revokedGrant))
+			service.getActiveLeaseStatus(
+				{ actor: assistantActor, subject },
+				{ leaseId: decision.leaseId, bridgeBinding }
+			)
+		).resolves.toMatchObject({ leaseId: decision.leaseId, state: 'ACTIVE' })
+		expect(await service.revoke({ policyId: grant.claims.jti })).toMatchObject({
+			grantsRevoked: 0,
+			activeLeasesRevoked: 1,
+			totalRevoked: 1,
+		})
+		expect(
+			await service.getActiveLeaseStatus(
+				{ actor: assistantActor, subject },
+				{ leaseId: decision.leaseId, bridgeBinding }
+			)
+		).toMatchObject({
+			state: 'REVOKED',
+			leaseId: decision.leaseId,
+			policyId: grant.claims.jti,
+		})
+		await expect(
+			service.exchange({ actor: assistantActor, subject }, exchangeRequest(grant))
 		).rejects.toMatchObject({
 			code: IntegrationAwareAuthorizationErrorCode.POLICY_NOT_FOUND_OR_REPLAYED,
+		})
+
+		const revokedGrant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
+		const revoked = await service.revoke({ policyId: revokedGrant.claims.jti })
+		expect(revoked).toMatchObject({
+			grantsRevoked: 1,
+			activeLeasesRevoked: 0,
+			totalRevoked: 1,
+		})
+	})
+
+	it('rejects an empty or malformed revocation selector', async () => {
+		const service = authority()
+		await expect(service.revoke({})).rejects.toMatchObject({
+			code: IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID,
+		})
+		await expect(service.revoke({ configVersion: 0 })).rejects.toMatchObject({
+			code: IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID,
+		})
+	})
+
+	it('requires parentSessionBinding when issuing', async () => {
+		const service = authority()
+		await expect(
+			service.issue(
+				{ actor: parentOneActor, subject },
+				{
+					...issueRequest(),
+					parentSessionBinding: undefined as unknown as string,
+				}
+			)
+		).rejects.toMatchObject({ code: IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID })
+	})
+
+	it('caps ActiveLease expiry by assistant credential expiry', async () => {
+		const service = authority()
+		const parentCredentialedSubject: CanonicalAuthSubject = {
+			...subject,
+		}
+		const assistantCredentialedSubject: CanonicalAuthSubject = {
+			...subject,
+			credentialExpiresAt: nowSeconds + 60,
+		}
+		const grant = await service.issue(
+			{ actor: parentOneActor, subject: parentCredentialedSubject },
+			issueRequest()
+		)
+		const decision = await service.exchange(
+			{ actor: assistantActor, subject: assistantCredentialedSubject },
+			exchangeRequest(grant)
+		)
+		expect(decision.expiresAt).toBe(assistantCredentialedSubject.credentialExpiresAt)
+		expect(
+			(
+				await service.getActiveLeaseStatus(
+					{ actor: assistantActor, subject: assistantCredentialedSubject },
+					{ leaseId: decision.leaseId, bridgeBinding }
+				)
+			).expiresAt
+		).toBe(assistantCredentialedSubject.credentialExpiresAt)
+	})
+
+	it('revokes an ActiveLease when its Integration config version is replaced', async () => {
+		const registryValue = registry()
+		const service = authority(registryValue)
+		const grant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
+		const decision = await service.exchange(
+			{ actor: assistantActor, subject },
+			exchangeRequest(grant)
+		)
+		registryValue.setIntegration(integration({ configVersion: 2 }))
+		await expect(
+			service.getActiveLeaseStatus(
+				{ actor: assistantActor, subject },
+				{ leaseId: decision.leaseId, bridgeBinding }
+			)
+		).resolves.toMatchObject({ state: 'REVOKED', leaseId: decision.leaseId })
+	})
+
+	it('transitions an ActiveLease to EXPIRED at its authoritative expiry', async () => {
+		let currentTime = nowSeconds
+		const registryValue = registry()
+		const store = new InMemoryIntegrationAwareAuthorizationStore(() => currentTime)
+		const service = new IntegrationAwareEmbedAuthorizationAuthority({
+			registry: registryValue,
+			store,
+			issuer: 'page-agent-auth',
+			crypto: webcrypto as unknown as ManagedAuthCrypto,
+			now: () => currentTime,
+		})
+		const grant = await service.issue({ actor: parentOneActor, subject }, issueRequest())
+		const decision = await service.exchange(
+			{ actor: assistantActor, subject },
+			exchangeRequest(grant)
+		)
+
+		currentTime = decision.expiresAt
+
+		await expect(
+			service.getActiveLeaseStatus(
+				{ actor: assistantActor, subject },
+				{ leaseId: decision.leaseId, bridgeBinding }
+			)
+		).resolves.toMatchObject({
+			leaseId: decision.leaseId,
+			state: 'EXPIRED',
+			checkedAt: decision.expiresAt,
 		})
 	})
 
@@ -397,5 +600,72 @@ describe('integration-aware parent-bridge authorization', () => {
 				assistantOrigin,
 			})
 		).toBe(false)
+	})
+
+	it('polls ActiveLease only through a same-origin BFF with the full bridge binding', async () => {
+		const fetchCall = vi.fn()
+		let responsePayload: unknown = {
+			leaseId: 'pao_lease_reference',
+			policyId: 'pao_id_reference',
+			state: 'ACTIVE',
+			expiresAt: nowSeconds + 900,
+			checkedAt: nowSeconds,
+		}
+		const client = createIntegrationAwareActiveLeaseStatusClient({
+			endpoint: `${assistantOrigin}/api/parent-bridge/active-lease`,
+			runtimeOrigin: assistantOrigin,
+			fetchImpl: async (_input, init) => {
+				fetchCall(init)
+				return {
+					ok: true,
+					json: async () => responsePayload,
+				} as Response
+			},
+		})
+		const status = await client.getStatus(
+			{
+				role: 'assistant',
+				policyId: 'pao_id_reference',
+				...bridgeBinding,
+				parentOrigin: parentOneOrigin,
+				assistantOrigin,
+				authorizationContext: { leaseId: 'pao_lease_reference' },
+			},
+			new AbortController().signal
+		)
+		const request = fetchCall.mock.calls[0][0]
+		expect(request).toMatchObject({
+			credentials: 'same-origin',
+			cache: 'no-store',
+			redirect: 'error',
+		})
+		expect(JSON.parse(request.body as string)).toEqual({
+			policyId: 'pao_id_reference',
+			leaseId: 'pao_lease_reference',
+			bridgeBinding,
+		})
+		expect(status).toMatchObject({ state: 'ACTIVE', leaseId: 'pao_lease_reference' })
+		responsePayload = { ...(responsePayload as object), leaseId: '' }
+		await expect(
+			client.getStatus(
+				{
+					role: 'assistant',
+					policyId: 'pao_id_reference',
+					...bridgeBinding,
+					parentOrigin: parentOneOrigin,
+					assistantOrigin,
+					authorizationContext: { leaseId: 'pao_lease_reference' },
+				},
+				new AbortController().signal
+			)
+		).rejects.toMatchObject({
+			code: IntegrationAwareAuthorizationErrorCode.ACTIVE_LEASE_STATUS_UNAVAILABLE,
+		})
+		expect(() =>
+			createIntegrationAwareActiveLeaseStatusClient({
+				endpoint: `${parentOneOrigin}/api/parent-bridge/active-lease`,
+				runtimeOrigin: assistantOrigin,
+			})
+		).toThrow(/same-origin/)
 	})
 })

@@ -221,10 +221,10 @@ Auth policy 只授权“P 可以把某个精确 scope 临时委托给 A”。它
     都必须由相应 BFF/Auth 撤销 lease。`host.deactivate()`/`adapter.deactivate()` 只是浏览器清理
     信号，不能替代 Auth 中的 revoke，也不能作为撤销成功证据。
 
-**当前实现缺口：** 本仓库现有 integration-aware 合同只覆盖一次性 Grant 的
-issue/consume/revoke，没有 ActiveLease 状态机、固定 900 秒 lease、P/A BFF status endpoint 或
-浏览器轮询接线。以上是独立生产 Auth/BFF/runtime 必须补齐并通过发布门禁的 P0 合同，不能从当前
-library API 推断它已经可用。
+**当前实现边界：** 本仓库的 integration-aware 参考实现已覆盖一次性 Grant、exchange 原子创建
+ActiveLease、固定 900 秒不可续租、Authority status/revoke API、同源 status client 和 P/A runtime
+轮询/fail-close 接线。仓内 InMemory Store 和 E2E BFF endpoint 不能替代独立生产 Auth/BFF、共享
+原子 TTL Store、真实 SSO、HA、跨节点 revoke、审计和监控；这些生产能力仍必须通过发布门禁。
 
 ## 3. 共同决策：编码前必须冻结的部署合同
 
@@ -749,9 +749,9 @@ npm run test:e2e
 此外应增加不进入普通 CI 的真实 LLM smoke test：输入一条与 Demo 默认任务不同的指令，验证模型
 只执行指令要求的目标，并检查调用确实到达真实 LLM gateway。
 
-当前仓库没有 ActiveLease/status polling 实现，因此现有单元/E2E 不能作为上述 lease 场景的通过
-证据。独立 Auth、P/A BFF 和两个 runtime 的正向、超时、撤销、过期、store 故障测试未完成前不得
-发布生产版本。
+当前仓库的单元/E2E 可作为 library 参考合同的回归证据，但不能作为生产共享 Store、跨节点撤销或
+真实 SSO/BFF 故障场景的通过证据。独立 Auth、P/A BFF 和两个 runtime 在真实域名下的正向、超时、
+撤销、过期和 store 故障测试未完成前不得发布生产版本。
 
 ## 12. 回滚和应急处理
 

@@ -82,10 +82,11 @@ pending request、审批和模型任务，并禁止自动 reconnect。恢复只�
 Integration 禁用和 kill switch 都要求 BFF/Auth revoke；`deactivate()` 只是清理信号，不能替代
 权威撤销。
 
-**实现状态：** 当前 `parent-bridge/integration-auth` 只实现一次性 Grant 的
-issue/consume/revoke，没有 ActiveLease、固定 900 秒状态、P/A BFF status endpoint 或 runtime
-polling。上述合同是生产接入待实现的 P0 release gate；本指南不会虚构尚不存在的 library 选项或
-调用方法。
+**实现状态：** 当前 `parent-bridge/integration-auth` 已提供独立 Grant/ActiveLease 状态机、
+`consumeAndCreateActiveLease()` 原子 Store 合同、Authority status/revoke API、同源 BFF status
+client，以及 Host/Adapter 的固定 30 秒 ±20% polling 和 90 秒 fail-close 接线。仓内
+`InMemoryIntegrationAwareAuthorizationStore` 与 E2E endpoint 只用于合同测试和 demo；生产共享
+Store、真实 P/A BFF、SSO、HA、审计和告警仍是 P0 release gate。
 
 ## 运行本地 reverse parent-bridge Demo
 
@@ -652,8 +653,9 @@ helper 原样返回 `Response`，JSON 可调用 `response.json()`，SSE 可消�
     用户 `connect()`/issue/exchange/lease。
 -   验证 logout、user/tenant/target/scope 变化、权限/config disable、Integration 禁用和 kill
     switch 都触发 Auth revoke；单独 `deactivate()` 不能作为撤销成功证据。
--   当前库缺少 ActiveLease/status polling，以上场景在独立 Auth、P/A BFF 和 runtime 接线及测试
-    完成前必须保持 release-blocked，不能用现有 Grant E2E 代替。
+-   当前库已包含 ActiveLease/status polling 参考实现和撤销 E2E；独立生产 Auth、P/A BFF、共享
+    Store、跨节点撤销、真实 SSO 与故障演练完成前仍必须保持 release-blocked，不能用仓内 E2E
+    代替生产验收。
 
 ### 推荐方案：PageAgent 托管的一次性 opaque token
 
@@ -720,13 +722,62 @@ const decision = await authority.exchange(
     { policy, actualParentOrigin, actualAssistantOrigin, offer }
 )
 const authorizationContext = toBrowserAuthorizationContext(decision)
+
+// P/A BFF：从各自已认证会话重建 actor/subject，并把浏览器提交的完整 binding 交给 Auth 校验。
+// 以下以 A BFF 为例；P BFF 使用 configuredPLogicalActor/canonicalPSubject，并可只提交 policyId + binding。
+const status = await authority.getActiveLeaseStatus(
+    { actor: configuredALogicalActor, subject: canonicalASubject },
+    {
+        policyId: statusRequest.policyId,
+        leaseId: statusRequest.leaseId,
+        bridgeBinding: statusRequest.bridgeBinding,
+    }
+)
+
+// logout、租户/target/scope 切换或 kill switch：至少提供一个精确选择器；空选择器会被拒绝。
+await authority.revoke({ parentSessionBinding })
 ```
 
 示例中的 `configuredPLogicalActor`/`configuredALogicalActor` 是当前代码合同要求的逻辑元数据；
 当前领域参考实现包含 actor 配置错配检查，但冻结的 V1 生产合同不把该检查作为身份、授权或请求拒绝
 门禁。任何拥有 Auth 网络可达性的内部服务都能提交这些值并冒充 P/A。浏览器仍不得直接调用 Auth。
-生产还必须在 exchange 的原子事务中创建固定 900 秒、不续期的 ActiveLease，并由 P/A BFF 提供
-status/revoke；这些 ActiveLease 接口尚不在当前 library 中，上例没有假装展示它们。
+`decision`/`authorizationContext` 现在包含浏览器安全的 `leaseId`、不可续期的 `expiresAt` 和状态引用；
+P/A 前端应分别通过 `createIntegrationAwareActiveLeaseStatusClient()` 只访问自己的同源 BFF，并把
+其 `getStatus` 传给 Host/Adapter 的 `activeLease` 选项。启用该选项时 `autoReconnect: true` 会被
+拒绝；恢复只能从新的 A 用户 `connect()` 开始。生产 BFF 仍必须从自身会话派生 subject 和 binding，
+不得把 `leaseId` 当作 bearer credential。
+
+P、A 两个前端入口分别做同样的同源接线；状态 client 不会直连 Auth：
+
+```ts
+import { createIntegrationAwareActiveLeaseStatusClient } from '@page-agent/page-controller/parent-bridge/integration-auth'
+import { ParentPageControllerHost } from '@page-agent/page-controller/parent-bridge/host'
+import { ParentPageControllerAdapter } from '@page-agent/page-controller/parent-bridge/adapter'
+
+// P、A 各自在自己的前端 bundle/origin 中独立创建一个实例。
+const activeLeaseStatus = createIntegrationAwareActiveLeaseStatusClient({
+    endpoint: '/api/parent-bridge/active-lease',
+})
+
+// P 前端
+const host = new ParentPageControllerHost({
+    ...existingHostOptions,
+    activeLease: { getStatus: activeLeaseStatus.getStatus },
+    autoReconnect: false,
+})
+
+// A iframe 前端（位于 A 自己的 origin，使用 A 自己的同源 endpoint）
+const adapter = new ParentPageControllerAdapter({
+    ...existingAdapterOptions,
+    activeLease: { getStatus: activeLeaseStatus.getStatus },
+    autoReconnect: false,
+})
+```
+
+Host/Adapter 在租约收到 `REVOKED`、`EXPIRED` 或连续 90 秒无法获得肯定 `ACTIVE` 时触发
+`activeleasefailure`，其 `event.detail.reason` 分别为 `REVOKED`、`EXPIRED`、`STALE`；随后两端通过
+`deactivate` 清理通知关闭 activation、连接和 pending work，并触发带 `detail.reason` 的
+`deactivated`。这些事件可用于 UI 和审计关联，但不能作为服务端已经完成 revoke 的证明。
 
 A 前端在 `authorizeOffer` 中只把服务端返回的 context 映射成 `AuthorizedParent`，并再次精确比较
 `policyId`、父/助手 origin、session、challenge、frame/host instance 和 capability；不要因接口

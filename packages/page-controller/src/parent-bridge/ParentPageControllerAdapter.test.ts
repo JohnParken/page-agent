@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ACTIVE_LEASE_STALE_AFTER_MS } from './active-lease'
 import { ParentPageControllerAdapter } from './ParentPageControllerAdapter'
 import {
 	PARENT_CONTROLLER_PROTOCOL,
@@ -9,6 +10,7 @@ import {
 } from './protocol'
 
 import type {
+	ParentControllerActiveLeaseOptions,
 	ParentControllerAdapterWindow,
 	ParentControllerMessagePort,
 	ParentControllerTargetWindow,
@@ -157,6 +159,14 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
 	}
 }
 
+async function waitFor(predicate: () => boolean): Promise<void> {
+	for (let i = 0; i < 2_000; i++) {
+		if (predicate()) return
+		await Promise.resolve()
+	}
+	throw new Error('condition timed out')
+}
+
 async function connectAdapter(
 	options: { requestTimeoutMs?: number; autoReconnect?: boolean } = {}
 ) {
@@ -194,6 +204,83 @@ async function connectAdapter(
 	const currentOffer = offer({ handshakeRequestId: handshakeRequest!.message.requestId })
 	bridgeWindow.emit(currentOffer)
 	await waitUntil(() =>
+		parent.messages.some((entry) => (entry.message as { type?: string }).type === 'accept')
+	)
+	const port = new FakePort()
+	bridgeWindow.emit(
+		{
+			protocol: PARENT_CONTROLLER_PROTOCOL,
+			version: PARENT_CONTROLLER_PROTOCOL_VERSION,
+			type: 'connect',
+			policyId: currentOffer.policyId,
+			challenge: currentOffer.challenge,
+			sessionId: currentOffer.sessionId,
+			hostInstanceId: currentOffer.hostInstanceId,
+			frameInstanceId: currentOffer.frameInstanceId,
+			capabilities: [...CAPABILITIES],
+			frameContext: currentOffer.frameContext,
+		},
+		PARENT_ORIGIN,
+		[port]
+	)
+	port.emit(connectedMessage(currentOffer))
+	const connection = await connectionPromise
+	return {
+		adapter,
+		bridgeWindow,
+		parent,
+		port,
+		offer: currentOffer,
+		connection,
+		getAuthorizationCalls: () => authorizationCalls,
+	}
+}
+
+async function connectAdapterWithActiveLease({
+	autoReconnect,
+	requestTimeoutMs,
+	activeLease,
+}: {
+	autoReconnect?: boolean
+	requestTimeoutMs?: number
+	activeLease: ParentControllerActiveLeaseOptions
+}) {
+	const parent = new FakeParent()
+	const bridgeWindow = new FakeWindow(parent)
+	let authorizationCalls = 0
+	const adapter = new ParentPageControllerAdapter({
+		window: bridgeWindow,
+		requestedCapabilities: CAPABILITIES,
+		authorizeOffer: async (currentOffer, actualParentOrigin) => {
+			authorizationCalls += 1
+			return {
+				parentOrigin: actualParentOrigin,
+				policyId: currentOffer.policyId,
+				capabilities: [...CAPABILITIES],
+			}
+		},
+		onApprovalRequired: async () => false,
+		requestTimeoutMs: requestTimeoutMs ?? 30,
+		autoReconnect,
+		activeLease,
+	})
+
+	expect(parent.messages).toEqual([])
+	expect(authorizationCalls).toBe(0)
+	const connectionPromise = adapter.connect()
+	await waitFor(() =>
+		parent.messages.some(
+			(entry) => (entry.message as { type?: string }).type === 'handshake-request'
+		)
+	)
+	const handshakeRequest = parent.messages.find(
+		(entry): entry is typeof entry & { message: { requestId: string } } =>
+			(entry.message as { type?: string }).type === 'handshake-request'
+	)
+	expect(handshakeRequest?.targetOrigin).toBe('*')
+	const currentOffer = offer({ handshakeRequestId: handshakeRequest!.message.requestId })
+	bridgeWindow.emit(currentOffer)
+	await waitFor(() =>
 		parent.messages.some((entry) => (entry.message as { type?: string }).type === 'accept')
 	)
 	const port = new FakePort()
@@ -392,6 +479,81 @@ describe('ParentPageControllerAdapter regressions', () => {
 			await expect(adapter.reconnect()).rejects.toMatchObject({ code: 'CONNECTION_CLOSED' })
 		} finally {
 			adapter.dispose()
+		}
+	})
+
+	it('rejects ActiveLease configuration with autoReconnect=true', () => {
+		expect(() => {
+			const parent = new FakeParent()
+			const bridgeWindow = new FakeWindow(parent)
+			new ParentPageControllerAdapter({
+				window: bridgeWindow,
+				requestedCapabilities: ['observe'],
+				authorizeOffer: async (currentOffer, actualParentOrigin) => ({
+					parentOrigin: actualParentOrigin,
+					policyId: currentOffer.policyId,
+					capabilities: ['observe'],
+				}),
+				onApprovalRequired: async () => false,
+				autoReconnect: true,
+				activeLease: {
+					getStatus: async () => ({
+						leaseId: 'lease-1',
+						policyId: 'policy-1',
+						state: 'ACTIVE' as const,
+						expiresAt: Math.floor(Date.now() / 1000) + 120,
+						checkedAt: Math.floor(Date.now() / 1000),
+					}),
+				},
+			})
+		}).toThrow(/autoReconnect must be false when ActiveLease monitoring is enabled/)
+	})
+
+	it('stops active-lease auto reconnect on 90s stale while allowing user reconnect', async () => {
+		vi.useFakeTimers()
+		const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+		try {
+			const now = Math.floor(Date.now() / 1000)
+			const getStatus = vi.fn(async () => {
+				if (getStatus.mock.calls.length === 1)
+					return {
+						leaseId: 'lease-1',
+						policyId: 'policy-1',
+						state: 'ACTIVE' as const,
+						expiresAt: now + 120,
+						checkedAt: now,
+					}
+				throw new Error('status unavailable')
+			})
+			const { adapter, parent, bridgeWindow, connection } = await connectAdapterWithActiveLease({
+				autoReconnect: false,
+				activeLease: { getStatus },
+			})
+			expect(adapter.activationActive).toBe(true)
+			expect(connection.policyId).toBe('policy-1')
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(getStatus).toHaveBeenCalledTimes(2)
+
+			await vi.advanceTimersByTimeAsync(ACTIVE_LEASE_STALE_AFTER_MS - 30_000)
+			expect(adapter.activationActive).toBe(false)
+			expect(adapter.connected).toBe(false)
+			expect(
+				parent.messages.some((entry) => (entry.message as { type?: string }).type === 'deactivate')
+			).toBe(true)
+			const preConnectCount = parent.messages.length
+			await vi.advanceTimersByTimeAsync(1)
+			expect(parent.messages).toHaveLength(preConnectCount)
+			const reconnect = (adapter as ParentPageControllerAdapter).connect().catch(() => undefined)
+			await waitFor(() => parent.messages.length > preConnectCount)
+			expect(parent.messages.at(-1)).toMatchObject({
+				message: { type: 'handshake-request', reason: 'user' },
+			})
+
+			adapter.dispose()
+			await reconnect
+		} finally {
+			random.mockRestore()
+			vi.useRealTimers()
 		}
 	})
 

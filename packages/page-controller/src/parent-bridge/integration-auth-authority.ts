@@ -18,16 +18,21 @@ import { normalizeParentControllerOrigin } from './security'
 
 import type {
 	AuthenticatedServiceActor,
+	BrowserActiveLeaseStatus,
 	BrowserAuthorizationContext,
 	CanonicalAuthSubject,
+	IntegrationAwareActiveLease,
+	IntegrationAwareActiveLeaseLookup,
 	IntegrationAwareAuthorizationDecision,
 	IntegrationAwareAuthorizationRecord,
 	IntegrationAwareAuthorizationStore,
+	IntegrationAwareConsumeAndCreateLeaseResult,
 	IntegrationAwareConsumeExpectation,
 	IntegrationAwareExchangeRequest,
 	IntegrationAwareIssueRequest,
 	IntegrationAwareManagedEmbedPolicyClaims,
 	IntegrationAwareManagedEmbedPolicyGrant,
+	IntegrationAwareRevocationResult,
 	IntegrationAwareRevocationSelector,
 	ManagedAuthAssistantApp,
 	ManagedAuthExecutionContext,
@@ -43,6 +48,9 @@ const DEFAULT_POLICY_TTL_SECONDS = 120
 const DEFAULT_BRIDGE_SESSION_TTL_SECONDS = 15 * 60
 const MAX_POLICY_TTL_SECONDS = 5 * 60
 const MAX_BRIDGE_SESSION_TTL_SECONDS = 60 * 60
+const ACTIVE_LEASE_TTL_SECONDS = 15 * 60
+const ACTIVE_LEASE_ID_PREFIX = 'pao_lease_'
+const IN_MEMORY_TERMINAL_LEASE_RETENTION_SECONDS = 15 * 60
 const CHILD_FRAME_CAPABILITIES: ReadonlySet<string> = new Set(
 	PARENT_CONTROLLER_CAPABILITIES.filter((capability) => capability !== 'visual')
 )
@@ -59,6 +67,8 @@ export const IntegrationAwareAuthorizationErrorCode = {
 	OFFER_MISMATCH: 'OFFER_MISMATCH',
 	POLICY_INVALID: 'POLICY_INVALID',
 	POLICY_NOT_FOUND_OR_REPLAYED: 'POLICY_NOT_FOUND_OR_REPLAYED',
+	ACTIVE_LEASE_NOT_FOUND_OR_DENIED: 'ACTIVE_LEASE_NOT_FOUND_OR_DENIED',
+	ACTIVE_LEASE_STATUS_UNAVAILABLE: 'ACTIVE_LEASE_STATUS_UNAVAILABLE',
 	INTERNAL_ERROR: 'INTERNAL_ERROR',
 } as const
 
@@ -98,6 +108,11 @@ interface RegisteredIntegration {
 interface StoredEntry {
 	record: IntegrationAwareAuthorizationRecord
 	readonly expiresAt: number
+}
+
+interface StoredActiveLeaseEntry {
+	record: IntegrationAwareActiveLease
+	readonly purgeAt: number
 }
 
 function unixNow(): number {
@@ -264,6 +279,94 @@ function sameBinding(
 	)
 }
 
+const REVOCATION_SELECTOR_KEYS: readonly (keyof IntegrationAwareRevocationSelector)[] = [
+	'leaseId',
+	'policyId',
+	'environment',
+	'integrationId',
+	'parentAppId',
+	'assistantAppId',
+	'configVersion',
+	'subject',
+	'parentSessionBinding',
+	'scopeId',
+	'targetId',
+	'bridgeSessionId',
+	'hostInstanceId',
+	'frameInstanceId',
+]
+
+function hasRevocationCriterion(value: unknown): value is IntegrationAwareRevocationSelector {
+	return isRecord(value) && REVOCATION_SELECTOR_KEYS.some((key) => value[key] !== undefined)
+}
+
+function normalizeRevocationSubject(value: unknown): CanonicalAuthSubject {
+	if (!isRecord(value)) {
+		throw new IntegrationAwareAuthorizationError(
+			'Revocation subject is invalid',
+			IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID
+		)
+	}
+	return {
+		issuer: identifier(value.issuer, 'Revocation subject issuer'),
+		tenantId: identifier(value.tenantId, 'Revocation subject tenant'),
+		userId: identifier(value.userId, 'Revocation subject user'),
+	}
+}
+
+function normalizeRevocationSelector(value: unknown): IntegrationAwareRevocationSelector {
+	if (!hasRevocationCriterion(value)) {
+		throw new IntegrationAwareAuthorizationError(
+			'Revocation requires at least one selector',
+			IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID
+		)
+	}
+	const configVersion = value.configVersion
+	if (
+		configVersion !== undefined &&
+		(!Number.isSafeInteger(configVersion) || (configVersion as number) < 1)
+	) {
+		throw new IntegrationAwareAuthorizationError(
+			'Revocation config version is invalid',
+			IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID
+		)
+	}
+	type MutableSelector = {
+		-readonly [Key in keyof IntegrationAwareRevocationSelector]: IntegrationAwareRevocationSelector[Key]
+	}
+	const normalized: MutableSelector = {}
+	if (value.leaseId !== undefined)
+		normalized.leaseId = identifier(value.leaseId, 'Revocation ActiveLease id')
+	if (value.policyId !== undefined)
+		normalized.policyId = identifier(value.policyId, 'Revocation policy id')
+	if (value.environment !== undefined)
+		normalized.environment = identifier(value.environment, 'Revocation environment')
+	if (value.integrationId !== undefined)
+		normalized.integrationId = identifier(value.integrationId, 'Revocation Integration id')
+	if (value.parentAppId !== undefined)
+		normalized.parentAppId = identifier(value.parentAppId, 'Revocation parent app')
+	if (value.assistantAppId !== undefined)
+		normalized.assistantAppId = identifier(value.assistantAppId, 'Revocation assistant app')
+	if (configVersion !== undefined) normalized.configVersion = configVersion as number
+	if (value.subject !== undefined) normalized.subject = normalizeRevocationSubject(value.subject)
+	if (value.parentSessionBinding !== undefined)
+		normalized.parentSessionBinding = identifier(
+			value.parentSessionBinding,
+			'Revocation parent session binding'
+		)
+	if (value.scopeId !== undefined)
+		normalized.scopeId = identifier(value.scopeId, 'Revocation scope')
+	if (value.targetId !== undefined)
+		normalized.targetId = identifier(value.targetId, 'Revocation target')
+	if (value.bridgeSessionId !== undefined)
+		normalized.bridgeSessionId = identifier(value.bridgeSessionId, 'Revocation bridge session')
+	if (value.hostInstanceId !== undefined)
+		normalized.hostInstanceId = identifier(value.hostInstanceId, 'Revocation host instance')
+	if (value.frameInstanceId !== undefined)
+		normalized.frameInstanceId = identifier(value.frameInstanceId, 'Revocation frame instance')
+	return normalized
+}
+
 function cloneSubject(subject: CanonicalAuthSubject): CanonicalAuthSubject {
 	return { ...subject }
 }
@@ -297,6 +400,24 @@ function cloneRecord(
 	}
 }
 
+function cloneActiveLease(lease: IntegrationAwareActiveLease): IntegrationAwareActiveLease {
+	return {
+		...lease,
+		subject: cloneSubject(lease.subject),
+		bridgeBinding: { ...lease.bridgeBinding },
+		capabilities: [...lease.capabilities],
+		...(lease.childFrames === undefined
+			? {}
+			: {
+					childFrames: lease.childFrames.map((frame) => ({
+						id: frame.id,
+						origin: frame.origin,
+						cap: [...frame.cap],
+					})),
+				}),
+	}
+}
+
 function cloneAssistantApp(app: ManagedAuthAssistantApp): ManagedAuthAssistantApp {
 	return { ...app, origins: [...app.origins], serviceActorIds: [...app.serviceActorIds] }
 }
@@ -323,12 +444,64 @@ function selectorMatches(
 	selector: IntegrationAwareRevocationSelector
 ): boolean {
 	return (
+		selector.leaseId === undefined &&
 		(selector.policyId === undefined || selector.policyId === record.claims.jti) &&
+		(selector.environment === undefined || selector.environment === record.environment) &&
 		(selector.integrationId === undefined ||
 			selector.integrationId === record.claims.integrationId) &&
+		(selector.parentAppId === undefined || selector.parentAppId === record.claims.parentAppId) &&
+		(selector.assistantAppId === undefined ||
+			selector.assistantAppId === record.claims.assistantAppId) &&
+		(selector.configVersion === undefined ||
+			selector.configVersion === record.claims.configVersion) &&
 		(selector.subject === undefined || sameSubject(selector.subject, record.parentSubject)) &&
 		(selector.parentSessionBinding === undefined ||
-			selector.parentSessionBinding === record.parentSessionBinding)
+			selector.parentSessionBinding === record.parentSessionBinding) &&
+		(selector.scopeId === undefined || selector.scopeId === record.claims.scopeId) &&
+		(selector.targetId === undefined || selector.targetId === record.claims.targetId) &&
+		(selector.bridgeSessionId === undefined ||
+			selector.bridgeSessionId === record.claims.bridgeBinding.sessionId) &&
+		(selector.hostInstanceId === undefined ||
+			selector.hostInstanceId === record.claims.bridgeBinding.hostInstanceId) &&
+		(selector.frameInstanceId === undefined ||
+			selector.frameInstanceId === record.claims.bridgeBinding.frameInstanceId)
+	)
+}
+
+function activeLeaseSelectorMatches(
+	lease: IntegrationAwareActiveLease,
+	selector: IntegrationAwareRevocationSelector
+): boolean {
+	return (
+		(selector.leaseId === undefined || selector.leaseId === lease.leaseId) &&
+		(selector.policyId === undefined || selector.policyId === lease.policyId) &&
+		(selector.environment === undefined || selector.environment === lease.environment) &&
+		(selector.integrationId === undefined || selector.integrationId === lease.integrationId) &&
+		(selector.parentAppId === undefined || selector.parentAppId === lease.parentAppId) &&
+		(selector.assistantAppId === undefined || selector.assistantAppId === lease.assistantAppId) &&
+		(selector.configVersion === undefined || selector.configVersion === lease.configVersion) &&
+		(selector.subject === undefined || sameSubject(selector.subject, lease.subject)) &&
+		(selector.parentSessionBinding === undefined ||
+			selector.parentSessionBinding === lease.parentSessionBinding) &&
+		(selector.scopeId === undefined || selector.scopeId === lease.scopeId) &&
+		(selector.targetId === undefined || selector.targetId === lease.targetId) &&
+		(selector.bridgeSessionId === undefined ||
+			selector.bridgeSessionId === lease.bridgeBinding.sessionId) &&
+		(selector.hostInstanceId === undefined ||
+			selector.hostInstanceId === lease.bridgeBinding.hostInstanceId) &&
+		(selector.frameInstanceId === undefined ||
+			selector.frameInstanceId === lease.bridgeBinding.frameInstanceId)
+	)
+}
+
+function activeLeaseLookupMatches(
+	lease: IntegrationAwareActiveLease,
+	lookup: IntegrationAwareActiveLeaseLookup
+): boolean {
+	return (
+		(lookup.leaseId === undefined || lookup.leaseId === lease.leaseId) &&
+		(lookup.policyId === undefined || lookup.policyId === lease.policyId) &&
+		sameBinding(lookup.bridgeBinding, lease.bridgeBinding)
 	)
 }
 
@@ -346,6 +519,52 @@ function consumeMatches(
 		sameSubject(record.parentSubject, expected.parentSubject) &&
 		sameBinding(record.claims.bridgeBinding, expected.bridgeBinding) &&
 		expected.requestedCapabilities.every((capability) => record.claims.cap.includes(capability))
+	)
+}
+
+function activeLeaseMatchesConsumedGrant(
+	record: IntegrationAwareAuthorizationRecord,
+	expected: IntegrationAwareConsumeExpectation,
+	lease: IntegrationAwareActiveLease,
+	nowSeconds: number
+): boolean {
+	const capabilitiesMatch =
+		lease.capabilities.length === expected.requestedCapabilities.length &&
+		lease.capabilities.every((capability) => expected.requestedCapabilities.includes(capability))
+	const childFramesMatch =
+		lease.childFrames === undefined ||
+		lease.childFrames.every((leaseFrame) => {
+			const grantFrame = record.claims.childFrames?.find((frame) => frame.id === leaseFrame.id)
+			return (
+				grantFrame !== undefined &&
+				grantFrame.origin === leaseFrame.origin &&
+				leaseFrame.cap.every(
+					(capability) =>
+						lease.capabilities.includes(capability as ParentControllerCapability) &&
+						grantFrame.cap.includes(capability)
+				)
+			)
+		})
+	return (
+		lease.state === 'ACTIVE' &&
+		lease.policyId === record.claims.jti &&
+		lease.environment === record.environment &&
+		lease.integrationId === record.claims.integrationId &&
+		lease.parentAppId === record.claims.parentAppId &&
+		lease.assistantAppId === record.claims.assistantAppId &&
+		lease.configVersion === record.claims.configVersion &&
+		lease.parentOrigin === record.claims.parentOrigin &&
+		lease.assistantOrigin === record.claims.assistantOrigin &&
+		lease.targetId === record.claims.targetId &&
+		lease.scopeId === record.claims.scopeId &&
+		lease.parentSessionBinding === record.parentSessionBinding &&
+		sameSubject(lease.subject, record.parentSubject) &&
+		sameBinding(lease.bridgeBinding, record.claims.bridgeBinding) &&
+		capabilitiesMatch &&
+		childFramesMatch &&
+		lease.issuedAt === nowSeconds &&
+		lease.expiresAt > nowSeconds &&
+		lease.expiresAt <= record.claims.bridgeSessionExp
 	)
 }
 
@@ -444,6 +663,7 @@ export class InMemoryIntegrationAwareAuthorizationStore
 	implements IntegrationAwareAuthorizationStore
 {
 	private readonly entries = new Map<string, StoredEntry>()
+	private readonly activeLeases = new Map<string, StoredActiveLeaseEntry>()
 	private readonly now: ManagedAuthClock
 
 	constructor(now: ManagedAuthClock = unixNow) {
@@ -478,33 +698,93 @@ export class InMemoryIntegrationAwareAuthorizationStore
 		return cloneRecord(entry.record)
 	}
 
-	async consume(
+	async consumeAndCreateActiveLease(
 		policyDigest: string,
 		expected: IntegrationAwareConsumeExpectation,
+		activeLease: IntegrationAwareActiveLease,
 		nowSeconds: number
-	): Promise<IntegrationAwareAuthorizationRecord | null> {
+	): Promise<IntegrationAwareConsumeAndCreateLeaseResult | null> {
 		this.sweep(nowSeconds)
 		const entry = this.entries.get(policyDigest)
-		if (!entry || entry.record.claims.exp <= nowSeconds || !consumeMatches(entry.record, expected))
+		if (
+			!entry ||
+			entry.record.claims.exp <= nowSeconds ||
+			!consumeMatches(entry.record, expected) ||
+			!activeLeaseMatchesConsumedGrant(entry.record, expected, activeLease, nowSeconds) ||
+			this.activeLeases.has(activeLease.leaseId)
+		)
 			return null
 		entry.record = { ...entry.record, state: 'CONSUMED', consumedAt: nowSeconds }
-		return cloneRecord(entry.record)
+		const lease = cloneActiveLease(activeLease)
+		this.activeLeases.set(lease.leaseId, {
+			record: lease,
+			purgeAt: lease.expiresAt + IN_MEMORY_TERMINAL_LEASE_RETENTION_SECONDS,
+		})
+		return {
+			authorization: cloneRecord(entry.record),
+			activeLease: cloneActiveLease(lease),
+		}
 	}
 
-	async revoke(selector: IntegrationAwareRevocationSelector, nowSeconds: number): Promise<number> {
+	async getActiveLease(
+		lookup: IntegrationAwareActiveLeaseLookup,
+		nowSeconds: number
+	): Promise<IntegrationAwareActiveLease | null> {
 		this.sweep(nowSeconds)
-		let revoked = 0
+		if (lookup.leaseId === undefined && lookup.policyId === undefined) return null
+		for (const entry of this.activeLeases.values()) {
+			if (activeLeaseLookupMatches(entry.record, lookup)) return cloneActiveLease(entry.record)
+		}
+		return null
+	}
+
+	async revoke(
+		selector: IntegrationAwareRevocationSelector,
+		nowSeconds: number
+	): Promise<IntegrationAwareRevocationResult> {
+		if (!hasRevocationCriterion(selector)) {
+			throw new IntegrationAwareAuthorizationError(
+				'Revocation requires at least one selector',
+				IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID
+			)
+		}
+		this.sweep(nowSeconds)
+		let grantsRevoked = 0
 		for (const entry of this.entries.values()) {
 			if (entry.record.state !== 'ISSUED' || !selectorMatches(entry.record, selector)) continue
 			entry.record = { ...entry.record, state: 'REVOKED', revokedAt: nowSeconds }
-			revoked += 1
+			grantsRevoked += 1
 		}
-		return revoked
+		let activeLeasesRevoked = 0
+		for (const entry of this.activeLeases.values()) {
+			if (entry.record.state !== 'ACTIVE' || !activeLeaseSelectorMatches(entry.record, selector))
+				continue
+			entry.record = { ...entry.record, state: 'REVOKED', revokedAt: nowSeconds }
+			activeLeasesRevoked += 1
+		}
+		return {
+			grantsRevoked,
+			activeLeasesRevoked,
+			totalRevoked: grantsRevoked + activeLeasesRevoked,
+		}
 	}
 
 	private sweep(nowSeconds: number): void {
 		for (const [digest, entry] of this.entries) {
 			if (entry.expiresAt <= nowSeconds) this.entries.delete(digest)
+		}
+		for (const [leaseId, entry] of this.activeLeases) {
+			if (entry.purgeAt <= nowSeconds) {
+				this.activeLeases.delete(leaseId)
+				continue
+			}
+			if (entry.record.state === 'ACTIVE' && entry.record.expiresAt <= nowSeconds) {
+				entry.record = {
+					...entry.record,
+					state: 'EXPIRED',
+					expiredAt: entry.record.expiresAt,
+				}
+			}
 		}
 	}
 }
@@ -602,6 +882,7 @@ export class IntegrationAwareEmbedAuthorizationAuthority {
 			IntegrationAwareAuthorizationErrorCode.CAPABILITY_DENIED
 		)
 		const bridgeBinding = normalizeBinding(request.bridgeBinding)
+		const parentSessionBinding = identifier(request.parentSessionBinding, 'Parent session binding')
 		const childFrames = this.normalizeChildFrames(
 			request.childFrames,
 			registered.integration,
@@ -653,11 +934,6 @@ export class IntegrationAwareEmbedAuthorizationAuthority {
 			bridgeSessionExp: bridgeSessionExpiresAt,
 			...(childFrames === undefined ? {} : { childFrames }),
 		}
-		const parentSessionBinding =
-			request.parentSessionBinding === undefined
-				? undefined
-				: identifier(request.parentSessionBinding, 'Parent session binding')
-
 		for (let attempt = 0; attempt < 3; attempt += 1) {
 			const policy = randomOpaqueValue(this.config.crypto, MANAGED_EMBED_POLICY_PREFIX)
 			const digest = await digestPolicy(policy, this.config.crypto)
@@ -665,8 +941,9 @@ export class IntegrationAwareEmbedAuthorizationAuthority {
 				digest,
 				{
 					claims,
+					environment: registered.integration.environment,
 					parentSubject: subject,
-					...(parentSessionBinding === undefined ? {} : { parentSessionBinding }),
+					parentSessionBinding,
 					state: 'ISSUED',
 				},
 				bridgeSessionExpiresAt
@@ -744,7 +1021,48 @@ export class IntegrationAwareEmbedAuthorizationAuthority {
 				IntegrationAwareAuthorizationErrorCode.OFFER_MISMATCH
 			)
 		}
-		const consumed = await this.config.store.consume(
+		const leaseTtlSeconds = Math.min(
+			ACTIVE_LEASE_TTL_SECONDS,
+			this.config.bridgeSessionTtlSeconds,
+			registered.integration.maxBridgeSessionTtlSeconds ?? MAX_BRIDGE_SESSION_TTL_SECONDS
+		)
+		const leaseExpiresAt = Math.min(
+			nowSeconds + leaseTtlSeconds,
+			record.claims.bridgeSessionExp,
+			subject.credentialExpiresAt ?? Number.MAX_SAFE_INTEGER
+		)
+		if (leaseExpiresAt <= nowSeconds) this.policyUnavailable()
+		const leaseChildFrames = record.claims.childFrames
+			?.map((frame) => ({
+				id: frame.id,
+				origin: frame.origin,
+				cap: frame.cap.filter((capability) =>
+					capabilities.includes(capability as ParentControllerCapability)
+				),
+			}))
+			.filter((frame) => frame.cap.length > 0)
+		const activeLease: IntegrationAwareActiveLease = {
+			leaseId: randomOpaqueValue(this.config.crypto, ACTIVE_LEASE_ID_PREFIX),
+			policyId: record.claims.jti,
+			state: 'ACTIVE',
+			subject: cloneSubject(subject),
+			environment: registered.integration.environment,
+			integrationId: record.claims.integrationId,
+			parentAppId: record.claims.parentAppId,
+			assistantAppId: record.claims.assistantAppId,
+			configVersion: record.claims.configVersion,
+			parentOrigin,
+			assistantOrigin,
+			targetId: record.claims.targetId,
+			scopeId: record.claims.scopeId,
+			parentSessionBinding: record.parentSessionBinding,
+			bridgeBinding: { ...bridgeBinding },
+			capabilities: [...capabilities],
+			...(leaseChildFrames === undefined ? {} : { childFrames: leaseChildFrames }),
+			issuedAt: nowSeconds,
+			expiresAt: leaseExpiresAt,
+		}
+		const consumed = await this.config.store.consumeAndCreateActiveLease(
 			digest,
 			{
 				policyId,
@@ -756,11 +1074,17 @@ export class IntegrationAwareEmbedAuthorizationAuthority {
 				bridgeBinding,
 				requestedCapabilities: capabilities,
 			},
+			activeLease,
 			nowSeconds
 		)
 		if (!consumed) this.policyUnavailable()
+		const createdLease = consumed.activeLease
 		return {
+			leaseId: createdLease.leaseId,
+			leaseState: 'ACTIVE',
+			leaseIssuedAt: createdLease.issuedAt,
 			policyId: record.claims.jti,
+			environment: registered.integration.environment,
 			integrationId: record.claims.integrationId,
 			parentAppId: record.claims.parentAppId,
 			assistantAppId: record.claims.assistantAppId,
@@ -772,22 +1096,78 @@ export class IntegrationAwareEmbedAuthorizationAuthority {
 			scopeId: record.claims.scopeId,
 			bridgeBinding: { ...bridgeBinding },
 			capabilities,
-			...(record.claims.childFrames === undefined
+			...(createdLease.childFrames === undefined
 				? {}
 				: {
-						childFrames: record.claims.childFrames.map((frame) => ({
+						childFrames: createdLease.childFrames.map((frame) => ({
 							id: frame.id,
 							origin: frame.origin,
 							cap: [...frame.cap],
 						})),
 					}),
 			policyExpiresAt: record.claims.exp,
-			expiresAt: record.claims.bridgeSessionExp,
+			expiresAt: createdLease.expiresAt,
 		}
 	}
 
-	async revoke(selector: IntegrationAwareRevocationSelector): Promise<number> {
-		return this.config.store.revoke(selector, this.now())
+	async getActiveLeaseStatus(
+		context: ManagedAuthExecutionContext,
+		lookup: IntegrationAwareActiveLeaseLookup
+	): Promise<BrowserActiveLeaseStatus> {
+		if (!isRecord(lookup) || (lookup.leaseId === undefined && lookup.policyId === undefined)) {
+			throw new IntegrationAwareAuthorizationError(
+				'ActiveLease lookup is invalid',
+				IntegrationAwareAuthorizationErrorCode.REQUEST_INVALID
+			)
+		}
+		const normalizedLookup = {
+			...(lookup.leaseId === undefined
+				? {}
+				: { leaseId: identifier(lookup.leaseId, 'ActiveLease id') }),
+			...(lookup.policyId === undefined
+				? {}
+				: { policyId: identifier(lookup.policyId, 'Policy id') }),
+			bridgeBinding: normalizeBinding(lookup.bridgeBinding),
+		}
+		const nowSeconds = this.now()
+		const actor = normalizeActor(context?.actor)
+		const subject = normalizeSubject(context?.subject, nowSeconds)
+		const activeLease = await this.config.store.getActiveLease(normalizedLookup, nowSeconds)
+		if (!activeLease) this.activeLeaseUnavailable()
+		const lease = activeLease as IntegrationAwareActiveLease
+		const registered = await this.resolveRegisteredIntegration(lease.integrationId)
+		this.assertActor(actor, registered, actor.role)
+		if (lease.configVersion !== registered.integration.configVersion) {
+			await this.config.store.revoke({ leaseId: lease.leaseId }, nowSeconds)
+			return {
+				leaseId: lease.leaseId,
+				policyId: lease.policyId,
+				state: 'REVOKED',
+				expiresAt: lease.expiresAt,
+				checkedAt: nowSeconds,
+			}
+		}
+		if (
+			lease.environment !== registered.integration.environment ||
+			lease.parentAppId !== registered.integration.parentAppId ||
+			lease.assistantAppId !== registered.integration.assistantAppId ||
+			!sameSubject(lease.subject, subject)
+		) {
+			this.activeLeaseUnavailable()
+		}
+		return {
+			leaseId: lease.leaseId,
+			policyId: lease.policyId,
+			state: lease.state,
+			expiresAt: lease.expiresAt,
+			checkedAt: nowSeconds,
+		}
+	}
+
+	async revoke(
+		selector: IntegrationAwareRevocationSelector
+	): Promise<IntegrationAwareRevocationResult> {
+		return this.config.store.revoke(normalizeRevocationSelector(selector), this.now())
 	}
 
 	private now(): number {
@@ -996,12 +1376,22 @@ export class IntegrationAwareEmbedAuthorizationAuthority {
 			IntegrationAwareAuthorizationErrorCode.POLICY_NOT_FOUND_OR_REPLAYED
 		)
 	}
+
+	private activeLeaseUnavailable(): never {
+		throw new IntegrationAwareAuthorizationError(
+			'ActiveLease is missing or unavailable to this caller',
+			IntegrationAwareAuthorizationErrorCode.ACTIVE_LEASE_NOT_FOUND_OR_DENIED
+		)
+	}
 }
 
 export function toBrowserAuthorizationContext(
 	decision: IntegrationAwareAuthorizationDecision
 ): BrowserAuthorizationContext {
 	return {
+		leaseId: decision.leaseId,
+		leaseState: decision.leaseState,
+		leaseIssuedAt: decision.leaseIssuedAt,
 		policyId: decision.policyId,
 		integrationId: decision.integrationId,
 		parentAppId: decision.parentAppId,

@@ -19,7 +19,8 @@ canonical subject、Integration/ChildTarget 基数以及一次性 opaque policy
 -   [父页面控制器桥接协议](../parent-bridge.zh-CN.md)
 
 本 ADR 只冻结决策，不把仓内合同、领域引擎、内存实现或测试误写成生产
-实现。当前仓库不实现 active-session lease polling；仓内已有的 actor 校验
+实现。当前仓库已提供 ActiveLease 领域状态机、InMemory Store 合同实现和 P/A runtime polling
+参考实现；仓内已有的 actor 校验
 是领域参考实现中的配置/错配保护，不是冻结的生产调用方认证、授权或拒绝
 门禁。生产 Auth、真实 SSO、共享 Store、HA、网络控制和运行手册仍须由对应
 角色团队完成并提供证据。
@@ -160,8 +161,8 @@ authorization context 或 bridge session；不同 scope 分别授权、分别执
     约定、真实 SSO、Registry、共享 Store、HA、kill switch、限流、审计、告警
     和 on-call 仍由生产服务与部署系统实现。
 -   lease API、`ACTIVE`/`REVOKED`/`EXPIRED` 状态、900s TTL、30s ±20% polling、
-    90s fail-closed、abort 与 reconnect 禁止语义尚未在本仓库实现；现有代码
-    不能作为这些生产行为的证据。
+    90s fail-closed、abort 与 reconnect 禁止语义以及同源 status API 在仓内已有
+    参考实现；现有代码仍不能作为生产 Auth/BFF/共享 Store/HA 的生产行为证据。
 -   现有 domain actor 校验只能防止参考实现中的配置/参数错配；它不是冻结的
     生产身份、授权或拒绝门禁，在 AUTH-001 约定下也不能证明实际网络调用方
     身份。生产残余风险不得通过把该校验描述为 mTLS、service JWT 或 caller

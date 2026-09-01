@@ -796,7 +796,10 @@
 
 		<script src="/controller-iife/page-agent-parent-host.iife.min.js"></script>
 		<script type="module">
-			import { createIntegrationAwareManagedEmbedAuthClient } from '/lib/parent-bridge/integration-auth.js'
+			import {
+				createIntegrationAwareActiveLeaseStatusClient,
+				createIntegrationAwareManagedEmbedAuthClient,
+			} from '/lib/parent-bridge/integration-auth.js'
 
 			if (!window.PageAgentParentHost) throw new Error('PageAgentParentHost is unavailable')
 			const { ParentPageControllerHost } = window.PageAgentParentHost
@@ -812,16 +815,17 @@
 			const parentAppId = primaryIntegration ? 'reverse-primary' : 'reverse-secondary'
 			document.querySelector('#parent-origin-value').textContent = location.origin
 			const authorizeBusiness = params.get('authorizeBusiness') !== 'false'
+			const activeLeaseEnabled = params.get('activeLease') !== 'false'
 			const childExpectedParentOrigin = params.get('childExpectedParentOrigin') || location.origin
 			const childPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
 				childExpectedParentOrigin
-			)}&role=target`
+			)}&role=target&activeLease=${activeLeaseEnabled}`
 			const siblingPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
 				location.origin
-			)}&role=sibling`
+			)}&role=sibling&activeLease=${activeLeaseEnabled}`
 			const wrongPath = `/reverse-child.html?expectedParentOrigin=${encodeURIComponent(
 				location.origin
-			)}&role=wrong-source`
+			)}&role=wrong-source&activeLease=${activeLeaseEnabled}`
 			document.querySelector('#assistant-frame').src = `${childOrigin}${childPath}`
 			document.querySelector('#sibling-frame').src = `${childOrigin}${siblingPath}`
 			document.querySelector('#wrong-origin-frame').src = `${childOrigin}${wrongPath}`
@@ -851,6 +855,12 @@
 					'visual',
 				],
 			})
+			const activeLeaseStatusClient = activeLeaseEnabled
+				? createIntegrationAwareActiveLeaseStatusClient({
+						endpoint: '/api/parent-bridge/active-lease',
+						allowInsecureHttp: true,
+					})
+				: null
 
 			const host = new ParentPageControllerHost({
 				iframe: document.querySelector('#assistant-frame'),
@@ -885,6 +895,12 @@
 					requestTimeoutMs: 2_000,
 				},
 				visualFeedback: 'non-blocking',
+				...(activeLeaseStatusClient
+					? {
+							activeLease: { getStatus: activeLeaseStatusClient.getStatus },
+							autoReconnect: false,
+						}
+					: {}),
 				getEmbedPolicy: (context) => managedAuth.getEmbedPolicy(context),
 				verifyEmbedPolicy: (policy, context) =>
 					managedAuth.verifyEmbedPolicy(policy, {

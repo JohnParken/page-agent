@@ -18,7 +18,10 @@ import {
 } from './protocol'
 import { normalizeParentControllerOrigin } from './security'
 
+import type { ParentControllerActiveLeaseCheckContext } from './active-lease'
 import type {
+	BrowserActiveLeaseStatus,
+	BrowserAuthorizationContext,
 	IntegrationAwareManagedEmbedPolicyClaims,
 	IntegrationAwareManagedEmbedPolicyGrant,
 } from './integration-auth-contracts'
@@ -49,6 +52,13 @@ export interface IntegrationAwareManagedEmbedAuthClientOptions {
 	readonly maxPolicyTtlSeconds?: number
 	readonly maxBridgeSessionTtlSeconds?: number
 	readonly now?: ManagedAuthClock
+}
+
+export interface IntegrationAwareActiveLeaseStatusClientOptions {
+	readonly endpoint?: string | URL
+	readonly runtimeOrigin?: string
+	readonly allowInsecureHttp?: boolean
+	readonly fetchImpl?: typeof fetch
 }
 
 function unixNow(): number {
@@ -521,8 +531,145 @@ export class IntegrationAwareManagedEmbedAuthClient {
 	}
 }
 
+function normalizeActiveLeaseStatusClientOptions(
+	options: IntegrationAwareActiveLeaseStatusClientOptions
+) {
+	if (!options) {
+		throw new IntegrationAwareAuthorizationError(
+			'ActiveLease status client options are required',
+			IntegrationAwareAuthorizationErrorCode.CONFIG_INVALID
+		)
+	}
+	const allowInsecureHttp = options.allowInsecureHttp === true
+	const runtimeOrigin = options.runtimeOrigin
+		? exactOrigin(options.runtimeOrigin, 'Runtime origin', allowInsecureHttp)
+		: globalThis.location?.origin
+			? exactOrigin(globalThis.location.origin, 'Runtime origin', allowInsecureHttp)
+			: undefined
+	if (!runtimeOrigin) {
+		throw new IntegrationAwareAuthorizationError(
+			'Runtime origin is required for ActiveLease status polling',
+			IntegrationAwareAuthorizationErrorCode.CONFIG_INVALID
+		)
+	}
+	const endpoint = new URL(
+		options.endpoint ?? '/api/parent-bridge/active-lease',
+		globalThis.location?.href ?? `${runtimeOrigin}/`
+	)
+	if (endpoint.protocol !== 'https:' && !(allowInsecureHttp && endpoint.protocol === 'http:')) {
+		throw new IntegrationAwareAuthorizationError(
+			'ActiveLease status endpoint must use HTTPS',
+			IntegrationAwareAuthorizationErrorCode.CONFIG_INVALID
+		)
+	}
+	if (runtimeOrigin && endpoint.origin !== runtimeOrigin) {
+		throw new IntegrationAwareAuthorizationError(
+			'ActiveLease status endpoint must be same-origin',
+			IntegrationAwareAuthorizationErrorCode.CONFIG_INVALID
+		)
+	}
+	return { ...options, allowInsecureHttp, runtimeOrigin, endpoint }
+}
+
+function normalizeActiveLeaseStatus(value: unknown, policyId: string): BrowserActiveLeaseStatus {
+	try {
+		if (!isRecord(value)) throw new Error('Response is not an object')
+		const state = value.state
+		if (state !== 'ACTIVE' && state !== 'REVOKED' && state !== 'EXPIRED') {
+			throw new Error('State is invalid')
+		}
+		const responsePolicyId = identifier(value.policyId, 'ActiveLease policy id')
+		if (responsePolicyId !== policyId) throw new Error('Policy binding does not match')
+		return {
+			leaseId: identifier(value.leaseId, 'ActiveLease id'),
+			policyId: responsePolicyId,
+			state,
+			expiresAt: integer(value.expiresAt, 'ActiveLease expiry'),
+			checkedAt: integer(value.checkedAt, 'ActiveLease checked-at time'),
+		}
+	} catch {
+		throw new IntegrationAwareAuthorizationError(
+			'ActiveLease status response is invalid or bound to a different policy',
+			IntegrationAwareAuthorizationErrorCode.ACTIVE_LEASE_STATUS_UNAVAILABLE
+		)
+	}
+}
+
+/** Browser client for a P-side or A-side same-origin BFF; it never calls Auth directly. */
+export class IntegrationAwareActiveLeaseStatusClient {
+	private readonly config: ReturnType<typeof normalizeActiveLeaseStatusClientOptions>
+
+	constructor(options: IntegrationAwareActiveLeaseStatusClientOptions) {
+		this.config = normalizeActiveLeaseStatusClientOptions(options)
+	}
+
+	readonly getStatus = async <TAuthorizationContext>(
+		context: ParentControllerActiveLeaseCheckContext<TAuthorizationContext>,
+		signal: AbortSignal
+	): Promise<BrowserActiveLeaseStatus> => {
+		if (signal.aborted) {
+			throw new IntegrationAwareAuthorizationError(
+				'ActiveLease status request was aborted',
+				IntegrationAwareAuthorizationErrorCode.ACTIVE_LEASE_STATUS_UNAVAILABLE
+			)
+		}
+		const fetchImpl = this.config.fetchImpl ?? globalThis.fetch?.bind(globalThis)
+		if (typeof fetchImpl !== 'function') {
+			throw new IntegrationAwareAuthorizationError(
+				'Fetch is required for ActiveLease polling',
+				IntegrationAwareAuthorizationErrorCode.CONFIG_INVALID
+			)
+		}
+		const authorizationContext = context.authorizationContext as
+			| Partial<BrowserAuthorizationContext>
+			| undefined
+		const leaseId =
+			typeof authorizationContext?.leaseId === 'string' ? authorizationContext.leaseId : undefined
+		let response: Response
+		try {
+			response = await fetchImpl(this.config.endpoint, {
+				method: 'POST',
+				credentials: 'same-origin',
+				cache: 'no-store',
+				redirect: 'error',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					policyId: context.policyId,
+					...(leaseId === undefined ? {} : { leaseId }),
+					bridgeBinding: {
+						sessionId: context.sessionId,
+						challenge: context.challenge,
+						hostInstanceId: context.hostInstanceId,
+						frameInstanceId: context.frameInstanceId,
+					},
+				}),
+				signal,
+			})
+		} catch {
+			throw new IntegrationAwareAuthorizationError(
+				'ActiveLease status endpoint is unavailable',
+				IntegrationAwareAuthorizationErrorCode.ACTIVE_LEASE_STATUS_UNAVAILABLE
+			)
+		}
+		if (!response.ok) {
+			throw new IntegrationAwareAuthorizationError(
+				'ActiveLease status endpoint rejected the request',
+				IntegrationAwareAuthorizationErrorCode.ACTIVE_LEASE_STATUS_UNAVAILABLE
+			)
+		}
+		const payload = await response.json().catch(() => null)
+		return normalizeActiveLeaseStatus(payload, context.policyId)
+	}
+}
+
 export function createIntegrationAwareManagedEmbedAuthClient(
 	options: IntegrationAwareManagedEmbedAuthClientOptions
 ): IntegrationAwareManagedEmbedAuthClient {
 	return new IntegrationAwareManagedEmbedAuthClient(options)
+}
+
+export function createIntegrationAwareActiveLeaseStatusClient(
+	options: IntegrationAwareActiveLeaseStatusClientOptions
+): IntegrationAwareActiveLeaseStatusClient {
+	return new IntegrationAwareActiveLeaseStatusClient(options)
 }

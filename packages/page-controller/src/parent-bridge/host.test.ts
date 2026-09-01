@@ -55,6 +55,8 @@ function makeInjectedHost(
 		tagName?: string
 		actionPolicy?: ParentPageControllerHostOptions['actionPolicy']
 		capabilities?: ParentControllerCapability[]
+		handshakeMode?: 'assistant-initiated' | 'parent-initiated'
+		activeLease?: ParentPageControllerHostOptions['activeLease']
 		disposeController?: boolean
 		requestTimeoutMs?: number
 	} = {}
@@ -73,6 +75,8 @@ function makeInjectedHost(
 		...options(iframe, root),
 		capabilities,
 		actionPolicy: config.actionPolicy,
+		...(config.handshakeMode === undefined ? {} : { handshakeMode: config.handshakeMode }),
+		activeLease: config.activeLease,
 		disposeController: config.disposeController,
 		requestTimeoutMs: config.requestTimeoutMs ?? 1_000,
 	})
@@ -114,6 +118,7 @@ function makeInjectedHost(
 	const connection = {
 		policyId: 'policy-1',
 		sessionId: 'session-1',
+		challenge: 'challenge-1',
 		hostInstanceId: 'host-1',
 		frameInstanceId: 'frame-1',
 		frameContext,
@@ -900,6 +905,122 @@ describe('ParentPageControllerHost lifecycle', () => {
 		host.dispose()
 		root.remove()
 		iframe.remove()
+	})
+
+	it('rejects ActiveLease configuration with autoReconnect=true', () => {
+		const root = document.createElement('div')
+		const iframe = document.createElement('iframe')
+		document.body.append(root, iframe)
+		const now = Math.floor(Date.now() / 1000)
+		expect(
+			() =>
+				new ParentPageControllerHost({
+					...options(iframe, root),
+					handshakeMode: 'assistant-initiated',
+					autoReconnect: true,
+					activeLease: {
+						getStatus: async () => ({
+							leaseId: 'lease-1',
+							policyId: 'policy-1',
+							state: 'ACTIVE',
+							expiresAt: now + 120,
+							checkedAt: now,
+						}),
+					},
+				})
+		).toThrow(/autoReconnect must be false when ActiveLease monitoring is enabled/)
+		root.remove()
+		iframe.remove()
+	})
+
+	it('clears activation and settles a started request when ActiveLease is revoked', async () => {
+		vi.useFakeTimers()
+		const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+		try {
+			const now = Math.floor(Date.now() / 1000)
+			let statusCalls = 0
+			const getStatus = vi.fn(async () => {
+				statusCalls += 1
+				return {
+					leaseId: 'lease-1',
+					policyId: 'policy-1',
+					expiresAt: now + 50,
+					checkedAt: now,
+					state: (statusCalls === 1 ? 'ACTIVE' : 'REVOKED') as 'ACTIVE' | 'REVOKED',
+				}
+			})
+			const created = makeInjectedHost({
+				handshakeMode: 'assistant-initiated',
+				requestTimeoutMs: 20_000,
+				activeLease: { getStatus },
+			})
+			;(created.host as unknown as { activated: boolean }).activated = true
+			const startActiveLeaseMonitor = (
+				created.host as unknown as {
+					startActiveLeaseMonitor: (connection: unknown) => void
+				}
+			).startActiveLeaseMonitor
+			startActiveLeaseMonitor.call(created.host, (created as { connection: unknown }).connection)
+			await Promise.resolve()
+			await Promise.resolve()
+			expect(getStatus).toHaveBeenCalledTimes(1)
+
+			const request = requestMessage(created.connection, {
+				requestId: 'request-revoked',
+				method: 'clickElement',
+				capability: 'click',
+				payload: { index: 0 },
+			})
+			const deferredResult = deferred<{ success: boolean; message: string }>()
+			;(
+				created.controller as { clickElement: typeof created.controller.clickElement }
+			).clickElement = vi.fn(async () => deferredResult.promise)
+			;(
+				created.host as unknown as { handlePortMessage: (event: MessageEvent) => void }
+			).handlePortMessage.call(created.host, { data: request } as MessageEvent)
+			await Promise.resolve()
+			await Promise.resolve()
+			expect(
+				created.port.messages.some(
+					(value) =>
+						(value as { type?: string; requestId?: string }).type === 'started' &&
+						(value as { requestId?: string }).requestId === request.requestId
+				)
+			).toBe(true)
+
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(getStatus).toHaveBeenCalledTimes(2)
+
+			const response = created.port.messages.find(
+				(
+					value
+				): value is {
+					type: string
+					requestId: string
+					ok: boolean
+					error: { code: string }
+				} =>
+					(value as { type?: string; requestId?: string }).type === 'response' &&
+					(value as { requestId?: string }).requestId === request.requestId
+			)
+			expect(response).toMatchObject({
+				type: 'response',
+				requestId: request.requestId,
+				ok: false,
+				error: { code: ParentControllerErrorCode.OUTCOME_UNKNOWN },
+			})
+			expect(created.host.activationActive).toBe(false)
+			expect((created.host as unknown as { connection: unknown }).connection).toBeNull()
+			expect(created.host.reconnect()).toBe(false)
+
+			deferredResult.resolve({ success: true, message: 'ok' })
+			created.host.dispose()
+			created.root.remove()
+			created.iframe.remove()
+		} finally {
+			random.mockRestore()
+			vi.useRealTimers()
+		}
 	})
 
 	it('settles a pending approval on cancel without dereferencing the cleared waiter', async () => {

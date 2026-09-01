@@ -7,6 +7,10 @@ import {
 	type PageControllerCallContext,
 } from '../PageController'
 
+import {
+	type ParentControllerActiveLeaseFailure,
+	ParentControllerActiveLeaseMonitor,
+} from './active-lease'
 import { emitParentControllerLog, messageByteLength } from './logger'
 import {
 	ParentFrameProxyController,
@@ -135,6 +139,7 @@ interface ApprovalWaiter {
 interface HostConnection {
 	readonly policyId: string
 	readonly sessionId: string
+	readonly challenge: string
 	readonly hostInstanceId: string
 	readonly frameInstanceId: string
 	readonly frameContext: ParentFrameContext
@@ -324,6 +329,7 @@ export class ParentPageControllerHost extends EventTarget {
 	private readonly visualFeedback: 'non-blocking' | 'none'
 	private readonly handshakeMode: 'assistant-initiated' | 'parent-initiated'
 	private readonly autoReconnect: boolean
+	private readonly activeLeaseMonitor: ParentControllerActiveLeaseMonitor | null
 	private readonly addedNotInteractive: boolean
 	private previousNotInteractive: string | null = null
 	private feedback: HTMLElement | null = null
@@ -355,6 +361,10 @@ export class ParentPageControllerHost extends EventTarget {
 		this.handleWindowMessage(event)
 	private readonly iframeLoadListener = () => {
 		if (this.disposed || !this.started) return
+		if (this.activeLeaseMonitor && this.activated) {
+			this.clearActivation('Assistant navigation invalidated the ActiveLease connection')
+			return
+		}
 		// A new document cannot inherit the previous document's in-memory
 		// activation. Require the new A instance to request another user handshake.
 		this.activated = false
@@ -371,6 +381,10 @@ export class ParentPageControllerHost extends EventTarget {
 	}
 	private readonly navigationListener = () => {
 		if (this.disposed || !this.started) return
+		if (this.activeLeaseMonitor && this.activated) {
+			this.deactivate('Parent navigation invalidated the ActiveLease connection')
+			return
+		}
 		const shouldReconnect = this.activated && this.autoReconnect
 		this.offerGeneration += 1
 		this.offerAbortController?.abort()
@@ -432,8 +446,20 @@ export class ParentPageControllerHost extends EventTarget {
 			throw new TypeError('handshakeMode is invalid')
 		if (options.autoReconnect !== undefined && typeof options.autoReconnect !== 'boolean')
 			throw new TypeError('autoReconnect must be a boolean')
+		if (options.activeLease && typeof options.activeLease.getStatus !== 'function')
+			throw new TypeError('activeLease.getStatus must be a function')
+		if (options.activeLease && options.autoReconnect === true)
+			throw new TypeError('autoReconnect must be false when ActiveLease monitoring is enabled')
+		if (options.activeLease && options.handshakeMode === 'parent-initiated')
+			throw new TypeError('ActiveLease monitoring requires assistant-initiated handshakes')
 		this.handshakeMode = options.handshakeMode ?? 'assistant-initiated'
-		this.autoReconnect = options.autoReconnect ?? true
+		this.autoReconnect = options.autoReconnect ?? options.activeLease === undefined
+		this.activeLeaseMonitor = options.activeLease
+			? new ParentControllerActiveLeaseMonitor({
+					getStatus: options.activeLease.getStatus,
+					onFailure: (failure) => this.failActiveLease(failure),
+				})
+			: null
 		this.validateRoot()
 		const controllerOptions = options.controllerOptions ?? {}
 		const childFrames = options.childFrames
@@ -570,7 +596,7 @@ export class ParentPageControllerHost extends EventTarget {
 	}
 
 	/** Clear the activation lease; the next connection must be requested explicitly by A. */
-	deactivate(): void {
+	deactivate(reason = 'Parent bridge deactivated'): void {
 		if (this.disposed) return
 		const message = {
 			protocol: PARENT_CONTROLLER_PROTOCOL,
@@ -584,10 +610,16 @@ export class ParentPageControllerHost extends EventTarget {
 		} catch {
 			/* A may no longer be ready. */
 		}
-		this.clearActivation()
+		this.clearActivation(reason)
 	}
 
-	private clearActivation(): void {
+	private failActiveLease(failure: ParentControllerActiveLeaseFailure): void {
+		if (this.disposed) return
+		this.dispatchEvent(new CustomEvent('activeleasefailure', { detail: failure }))
+		this.deactivate(`ActiveLease ${failure.reason.toLowerCase()}`)
+	}
+
+	private clearActivation(reason = 'Parent bridge activation cleared'): void {
 		this.activated = false
 		this.offerGeneration += 1
 		this.offerAbortController?.abort()
@@ -598,7 +630,7 @@ export class ParentPageControllerHost extends EventTarget {
 		this.offerChildFrameGrants = []
 		this.seenHandshakeRequestIds.clear()
 		this.emitLog({ event: 'deactivated' })
-		this.dispatchEvent(new Event('deactivated'))
+		this.dispatchEvent(new CustomEvent('deactivated', { detail: { reason } }))
 	}
 
 	private ensureFeedback(): void {
@@ -978,6 +1010,7 @@ export class ParentPageControllerHost extends EventTarget {
 		message: import('./protocol').ParentControllerHandshakeRequestMessage
 	): void {
 		if (!this.started || (message.reason === 'reconnect' && !this.activated)) return
+		if (this.activeLeaseMonitor && this.activated) return
 		if (this.seenHandshakeRequestIds.has(message.requestId)) {
 			if (this.offer?.handshakeRequestId === message.requestId) {
 				try {
@@ -1079,6 +1112,7 @@ export class ParentPageControllerHost extends EventTarget {
 		this.connection = {
 			policyId: offer.policyId,
 			sessionId: offer.sessionId,
+			challenge: offer.challenge,
 			hostInstanceId: offer.hostInstanceId,
 			frameInstanceId: offer.frameInstanceId,
 			frameContext: offer.frameContext,
@@ -1117,10 +1151,29 @@ export class ParentPageControllerHost extends EventTarget {
 				channel.port1 as unknown as Transferable,
 			])
 			this.postConnected()
+			this.startActiveLeaseMonitor(this.connection)
 		} catch {
-			this.resetConnection()
-			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			if (this.activeLeaseMonitor) this.deactivate('Parent bridge connection transfer failed')
+			else {
+				this.resetConnection()
+				if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			}
 		}
+	}
+
+	private startActiveLeaseMonitor(connection: HostConnection | null): void {
+		if (!connection || !this.activeLeaseMonitor) return
+		this.activeLeaseMonitor.start({
+			role: 'parent',
+			policyId: connection.policyId,
+			sessionId: connection.sessionId,
+			challenge: connection.challenge,
+			hostInstanceId: connection.hostInstanceId,
+			frameInstanceId: connection.frameInstanceId,
+			parentOrigin: connection.frameContext.parentOrigin,
+			assistantOrigin: connection.frameContext.assistantOrigin,
+			upperBoundExpiresAt: connection.expiresAt,
+		})
 	}
 
 	private attachPort(port: ParentControllerMessagePort): void {
@@ -1129,11 +1182,15 @@ export class ParentPageControllerHost extends EventTarget {
 		this.portMessageErrorHandler = () => {
 			if (this.disposed || this.port !== port) return
 			this.emitLog({ event: 'error', code: ParentControllerErrorCode.INVALID_MESSAGE })
-			this.resetConnection()
-			this.offer = null
-			this.offerFrameContext = null
-			this.offerChildFrameGrants = []
-			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			if (this.activeLeaseMonitor)
+				this.deactivate('Parent controller port failed during ActiveLease')
+			else {
+				this.resetConnection()
+				this.offer = null
+				this.offerFrameContext = null
+				this.offerChildFrameGrants = []
+				if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			}
 		}
 		if (port.addEventListener) {
 			port.addEventListener('message', this.portMessageHandler)
@@ -1150,11 +1207,15 @@ export class ParentPageControllerHost extends EventTarget {
 		const delay = Math.min(2_147_483_647, Math.max(0, connection.expiresAt * 1000 - Date.now()))
 		this.connectionExpiryTimer = setTimeout(() => {
 			if (this.disposed || this.connection !== connection) return
-			this.resetConnection()
-			this.offer = null
-			this.offerFrameContext = null
-			this.offerChildFrameGrants = []
-			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			if (this.activeLeaseMonitor)
+				this.failActiveLease({ reason: 'EXPIRED', policyId: connection.policyId })
+			else {
+				this.resetConnection()
+				this.offer = null
+				this.offerFrameContext = null
+				this.offerChildFrameGrants = []
+				if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			}
 		}, delay)
 	}
 
@@ -1211,11 +1272,15 @@ export class ParentPageControllerHost extends EventTarget {
 					message.method,
 					ParentControllerErrorCode.POLICY_EXPIRED
 				)
-			this.resetConnection()
-			this.offer = null
-			this.offerFrameContext = null
-			this.offerChildFrameGrants = []
-			if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			if (this.activeLeaseMonitor)
+				this.failActiveLease({ reason: 'EXPIRED', policyId: connection.policyId })
+			else {
+				this.resetConnection()
+				this.offer = null
+				this.offerFrameContext = null
+				this.offerChildFrameGrants = []
+				if (this.activated && this.autoReconnect) this.publishAutomaticReconnect()
+			}
 			return
 		}
 		if (message.type === 'request') {
@@ -1996,6 +2061,7 @@ export class ParentPageControllerHost extends EventTarget {
 	}
 
 	private resetConnection(): void {
+		this.activeLeaseMonitor?.stop()
 		const previousExecutionTail = this.executionTail
 		const immediateCleanup = this.cleanupVisualState()
 		if (this.controller instanceof ParentFrameProxyController)

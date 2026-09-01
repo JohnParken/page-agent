@@ -8,6 +8,7 @@ import type {
 export type ManagedAuthRegistrationStatus = 'enabled' | 'disabled'
 export type ManagedAuthServiceRole = 'parent-bff' | 'assistant-bff'
 export type ManagedAuthGrantState = 'ISSUED' | 'CONSUMED' | 'REVOKED'
+export type ManagedAuthActiveLeaseState = 'ACTIVE' | 'REVOKED' | 'EXPIRED'
 export type ManagedAuthTransportMode = 'https-only' | 'trusted-intranet-http'
 
 /** Canonical user identity produced by a trusted BFF after its own SSO validation. */
@@ -106,7 +107,7 @@ export interface IntegrationAwareIssueRequest {
 	readonly childFrames?: readonly IntegrationAwareChildFrameGrantInput[]
 	readonly bridgeBinding: ParentControllerBridgeBinding
 	/** Opaque digest/reference derived by P BFF; never use a raw browser session token. */
-	readonly parentSessionBinding?: string
+	readonly parentSessionBinding: string
 }
 
 export interface IntegrationAwareAuthorizationOffer extends ParentControllerBridgeBinding {
@@ -128,11 +129,37 @@ export interface IntegrationAwareManagedEmbedPolicyGrant {
 
 export interface IntegrationAwareAuthorizationRecord {
 	readonly claims: IntegrationAwareManagedEmbedPolicyClaims
+	readonly environment: string
 	readonly parentSubject: CanonicalAuthSubject
-	readonly parentSessionBinding?: string
+	readonly parentSessionBinding: string
 	readonly state: ManagedAuthGrantState
 	readonly consumedAt?: number
 	readonly revokedAt?: number
+}
+
+/** Server-side runtime authorization created atomically with Grant consumption. */
+export interface IntegrationAwareActiveLease {
+	readonly leaseId: string
+	readonly policyId: string
+	readonly state: ManagedAuthActiveLeaseState
+	readonly subject: CanonicalAuthSubject
+	readonly environment: string
+	readonly integrationId: string
+	readonly parentAppId: string
+	readonly assistantAppId: string
+	readonly configVersion: number
+	readonly parentOrigin: string
+	readonly assistantOrigin: string
+	readonly targetId: string
+	readonly scopeId: string
+	readonly parentSessionBinding: string
+	readonly bridgeBinding: ParentControllerBridgeBinding
+	readonly capabilities: readonly ParentControllerCapability[]
+	readonly childFrames?: readonly VerifiedEmbedPolicyChildFrameGrant[]
+	readonly issuedAt: number
+	readonly expiresAt: number
+	readonly revokedAt?: number
+	readonly expiredAt?: number
 }
 
 export interface IntegrationAwareConsumeExpectation {
@@ -147,15 +174,53 @@ export interface IntegrationAwareConsumeExpectation {
 }
 
 export interface IntegrationAwareRevocationSelector {
+	readonly leaseId?: string
 	readonly policyId?: string
+	readonly environment?: string
 	readonly integrationId?: string
+	readonly parentAppId?: string
+	readonly assistantAppId?: string
+	readonly configVersion?: number
 	readonly subject?: CanonicalAuthSubject
 	readonly parentSessionBinding?: string
+	readonly scopeId?: string
+	readonly targetId?: string
+	readonly bridgeSessionId?: string
+	readonly hostInstanceId?: string
+	readonly frameInstanceId?: string
+}
+
+export interface IntegrationAwareActiveLeaseLookup {
+	readonly leaseId?: string
+	readonly policyId?: string
+	readonly bridgeBinding: ParentControllerBridgeBinding
+}
+
+export interface IntegrationAwareConsumeAndCreateLeaseResult {
+	readonly authorization: IntegrationAwareAuthorizationRecord
+	readonly activeLease: IntegrationAwareActiveLease
+}
+
+export interface IntegrationAwareRevocationResult {
+	readonly grantsRevoked: number
+	readonly activeLeasesRevoked: number
+	readonly totalRevoked: number
+}
+
+/** Browser-safe status returned by a same-origin P or A BFF. */
+export interface BrowserActiveLeaseStatus {
+	readonly leaseId: string
+	readonly policyId: string
+	readonly state: ManagedAuthActiveLeaseState
+	readonly expiresAt: number
+	readonly checkedAt: number
 }
 
 /**
- * Production implementations must make consume and revoke atomic across Auth
- * replicas and retain state until the record TTL for replay diagnostics.
+ * Production implementations must make Grant consumption plus ActiveLease
+ * creation one atomic operation across Auth replicas. Revocation must also use
+ * conditional atomic updates and terminal records must be retained long enough
+ * for polling and replay diagnostics.
  */
 export interface IntegrationAwareAuthorizationStore {
 	putIfAbsent(
@@ -164,16 +229,29 @@ export interface IntegrationAwareAuthorizationStore {
 		expiresAt: number
 	): Promise<boolean>
 	get(policyDigest: string, nowSeconds: number): Promise<IntegrationAwareAuthorizationRecord | null>
-	consume(
+	consumeAndCreateActiveLease(
 		policyDigest: string,
 		expected: IntegrationAwareConsumeExpectation,
+		activeLease: IntegrationAwareActiveLease,
 		nowSeconds: number
-	): Promise<IntegrationAwareAuthorizationRecord | null>
-	revoke(selector: IntegrationAwareRevocationSelector, nowSeconds: number): Promise<number>
+	): Promise<IntegrationAwareConsumeAndCreateLeaseResult | null>
+	getActiveLease(
+		lookup: IntegrationAwareActiveLeaseLookup,
+		nowSeconds: number
+	): Promise<IntegrationAwareActiveLease | null>
+	/** At least one selector field is required; an empty selector must be rejected. */
+	revoke(
+		selector: IntegrationAwareRevocationSelector,
+		nowSeconds: number
+	): Promise<IntegrationAwareRevocationResult>
 }
 
 export interface IntegrationAwareAuthorizationDecision {
+	readonly leaseId: string
+	readonly leaseState: 'ACTIVE'
+	readonly leaseIssuedAt: number
 	readonly policyId: string
+	readonly environment: string
 	readonly integrationId: string
 	readonly parentAppId: string
 	readonly assistantAppId: string
@@ -192,6 +270,9 @@ export interface IntegrationAwareAuthorizationDecision {
 
 /** Safe subset that an A BFF may return to its own browser runtime. */
 export interface BrowserAuthorizationContext {
+	readonly leaseId: string
+	readonly leaseState: 'ACTIVE'
+	readonly leaseIssuedAt: number
 	readonly policyId: string
 	readonly integrationId: string
 	readonly parentAppId: string

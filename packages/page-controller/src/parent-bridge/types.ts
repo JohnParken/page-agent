@@ -11,6 +11,7 @@ import type {
 	PageControllerConfig,
 	ScrollOptions,
 } from '../PageController'
+import type { ParentControllerActiveLeaseOptions } from './active-lease'
 import type {
 	ParentControllerBridgeBinding,
 	ParentControllerCapability,
@@ -260,6 +261,8 @@ export interface ParentPageControllerHostOptions {
 	readonly handshakeMode?: 'assistant-initiated' | 'parent-initiated'
 	/** Allow P to reconnect automatically after the first successful activation. */
 	readonly autoReconnect?: boolean
+	/** Required in managed ActiveLease mode. Automatic reconnect is then forbidden. */
+	readonly activeLease?: ParentControllerActiveLeaseOptions
 	readonly transformState?: ParentControllerTransformState
 	readonly actionPolicy?: ParentControllerActionPolicy
 	/** Explicit parent-brokered child iframe targets. Claims remain authoritative. */
@@ -280,6 +283,8 @@ export interface ParentControllerAdapterOptions<TAuthorizationContext = unknown>
 	readonly authorizeOffer: AuthorizeOffer<TAuthorizationContext>
 	/** Accept P-initiated reconnect offers after this adapter has been activated. */
 	readonly autoReconnect?: boolean
+	/** Required in managed ActiveLease mode. Automatic reconnect is then forbidden. */
+	readonly activeLease?: ParentControllerActiveLeaseOptions<TAuthorizationContext>
 	/** Required one-use approval callback for action policy prompts. */
 	readonly onApprovalRequired: OnApprovalRequired
 	readonly handshakeTimeoutMs?: number
@@ -311,6 +316,14 @@ export interface ParentControllerAdapterCallContext extends PageControllerCallCo
 export type ParentControllerAdapterContract = IndexedPageControllerAdapter
 
 /** Keep imports above type-only: this file must have no runtime DOM side effects. */
+export type {
+	ParentControllerActiveLeaseOptions,
+	ParentControllerActiveLeaseCheckContext,
+	ParentControllerActiveLeaseFailure,
+	ParentControllerActiveLeaseFailureReason,
+	ParentControllerActiveLeaseStatusProvider,
+} from './active-lease'
+
 export type {
 	BrowserState,
 	HorizontalScrollOptions,

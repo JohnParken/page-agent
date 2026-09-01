@@ -2,3 +2,4 @@
 export * from './integration-auth-contracts'
 export * from './integration-auth-authority'
 export * from './integration-auth-client'
+export * from './active-lease'

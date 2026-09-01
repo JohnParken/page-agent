@@ -424,11 +424,11 @@ HTTPS 的计划。没有该记录时，生产默认拒绝 HTTP。
 -   `parent-bridge/integration-auth` 已提供独立 Auth 服务可复用的合同和领域引擎：包含
     `AssistantApp`、`ParentApp`、`Integration`、`ChildTarget`、canonical subject、P/A `serviceActor`
     元数据、issue/exchange、原子 Grant Store 和撤销接口。内存 Registry/Store 仅用于合同测试和 demo，
-    不包含生产 ActiveLease Store 或 lease poll API。
+    包含仓内 ActiveLease 状态机与 lease poll 参考实现，但不包含生产 ActiveLease Store。
 -   integration-aware Authority 已按 `integrationId` 隔离多 P/多 scope 配置，比较 P/A subject，限制每个
     Integration 的 origin、capability 和 `childTargets` maximum，并在所有校验成功后一次性核销 Grant；
-    当前领域参考实现还包含 actor 配置错配检查，但该检查不是冻结的生产身份/授权门禁，且当前没有与
-    核销同原子创建 ActiveLease 的实现。
+    当前领域参考实现还包含 actor 配置错配检查，但该检查不是冻结的生产身份/授权门禁，且当前已将
+    grant consume 与 ActiveLease 创建在同一原子中实现。
 -   P Host 会在 issue 前生成 `sessionId`、`challenge`、`hostInstanceId`、`frameInstanceId`，通过
     `getEmbedPolicy(context)` 交给 P BFF/Auth 做真实预绑定；policy offer TTL 与 bridge session
     TTL 分离。
@@ -441,18 +441,17 @@ HTTPS 的计划。没有该记录时，生产默认拒绝 HTTP。
     引用的安全上下文。旧 `parent-bridge/managed-auth` API 保留一个版本并已标记 deprecated。
 -   审批 timeout/cancel 的空引用和队列阻断已修复，并有 cancel、timeout、后续请求继续执行的
     回归测试；共享逻辑 A/多 P/不同 B、主体错配、当前参考实现的 actor 配置错配、B 子集和 Grant
-    重放已进入单测/E2E。actor 错配测试不构成冻结的生产调用方认证要求；当前也没有 ActiveLease
-    轮询、撤销传播或 fail-close 回归。这些是仓内参考覆盖，不等于生产环境已完成多租户并发、跨副本
-    或完整基数矩阵验收。
+    重放已进入单测/E2E。actor 错配测试不构成冻结的生产调用方认证要求；ActiveLease
+    轮询与 fail-close 回归已在仓内覆盖，当前版本仍缺失生产环境多租户并发、跨副本与跨节点 revoke
+    一致性以及完整基数矩阵验收，不等于生产环境已完成。
 
-当前实现的边界必须明确：`integration-auth-contracts.ts` 的 `ManagedAuthGrantState` 只有
-`ISSUED | CONSUMED | REVOKED`；`integration-auth-authority.ts` 的 InMemory Store `revoke()` 只
-处理尚未核销的 `ISSUED` Grant，`sweep()` 清理过期记录但没有 `EXPIRED` ActiveLease 状态。
-`exchange()` 只完成 Grant consume，既不与 ActiveLease 创建同原子，也没有 lease status/poll API。
-`host.ts` 的 `scheduleConnectionExpiry()` 在 activation 仍为真时可发布 automatic reconnect；当前
-reconnect 还会生成新的 bridge binding/policy，而仓内没有把它重新绑定到原 ActiveLease 且保持原
-`expiresAt` 的接口。因此生产所需的 ActiveLease、30 秒 ±20% 轮询、90 秒 stale fail-close、撤销后的
-activation/connection 清理、禁止 automatic reconnect 和不延长 lease 的 rebind 尚未由仓内代码实现。
+当前实现的边界必须明确：`ManagedAuthGrantState` 仍为 `ISSUED | CONSUMED | REVOKED`，独立的
+`ManagedAuthActiveLeaseState` 为 `ACTIVE | REVOKED | EXPIRED`，两个状态机不混用。
+`integration-auth-authority.ts` 的 InMemory Store 可撤销 `ISSUED` Grant 和 `ACTIVE` lease；`sweep()`
+负责把到期 lease 迁移为 `EXPIRED` 并按参考保留期清理。`exchange()` 已在同一原子操作中完成 Grant
+consume 与 ActiveLease 创建，并通过 status API 提供三态查询。`host.ts` 与
+`ParentPageControllerAdapter.ts` 在 ActiveLease 模式下禁止 automatic reconnect；`rebind` 的时机、
+退避和竞态处理仍属于 AUTH-010 P1，当前实现未冻结。
 
 ### 尚未达到生产公共 Auth 的部分
 
@@ -466,7 +465,7 @@ Redis/数据库、HA 和运维能力必须在独立服务仓库实现并部署�
 | P0     | 独立生产 Auth 服务尚未建设                     | 在独立服务仓库接入真实 P/A BFF endpoint、SSO subject 解析、逻辑 `serviceActor` 配置/审计、秘密管理、ActiveLease poll/revoke API；浏览器只能访问自己的 BFF，不得直连 Auth                                                                                                                                                                            |
 | P0     | 生产 Registry、Store、HA 和 kill switch 未落地 | 用配置数据库和生产共享原子 TTL store 实现合同接口，验证 Grant 原子核销与 ActiveLease 创建、ActiveLease 状态/TTL/撤销/过期、轮询、限流、指标、审计、容量、灾备和故障失败关闭；禁止 `InMemory*`，首版采用单区域强一致                                                                                                                                 |
 | P0     | 真实 SSO/subject 规范化尚未接线                | P/A BFF 必须忽略浏览器身份字段，各自验证登录态并产生严格 canonical subject 三元组；`serviceActor` 来自双方固定环境配置，仅作配置选择/路由/审计，不得依赖请求自报或 actor 匹配来证明技术调用方                                                                                                                                                       |
-| P0     | ActiveLease 运行时适配尚未完成                 | P/A runtime 分别以 30 秒 ±20%（24–36 秒）轮询自己的同源 BFF；`REVOKED`/`EXPIRED` 或 90 秒无正向 `ACTIVE` 必须立即失败关闭，清除 activation/connection、settle/abort pending work，并禁止 automatic reconnect；恢复须 A 用户显式连接并 fresh issue/exchange/lease                                                                                    |
+| P0     | ActiveLease 生产接线与故障验证尚未完成         | 仓内 Host/Adapter 参考适配已实现 30 秒 ±20% polling、90 秒 stale fail-close 与 automatic reconnect 禁止；生产仍须接入双方真实同源 BFF，并在真实域名验证 `REVOKED`/`EXPIRED`、status 超时、pending work settle/abort 和 A 用户显式恢复                                                                                                               |
 | P1     | 应用运行时上下文隔离仍由 A 产品实现            | 每个 P 页面/标签页的 A iframe runtime instance 独立拥有 session、channel、activation、任务和 per-Host auth client；服务端/仅内存上下文按 `environment + assistantAppId + issuer + tenantId + userId + parentAppId + integrationId + scopeId + targetId + bridgeSessionId + hostInstanceId + frameInstanceId` 隔离；浏览器只获得最小无身份授权上下文 |
 | P1     | A JWT audience、短 token、刷新和存储策略待定   | 固定 `aud=A-BFF`，不转发浏览器 JWT；在发布前决定短 TTL、刷新、内存/会话存储和登出失效行为                                                                                                                                                                                                                                                           |
 | P1     | 生产级故障与浏览器矩阵尚未验证                 | 在真实域名覆盖注销/reload、跨节点并发核销、ActiveLease 撤销/过期与 poll 延迟、Redis/SSO/Auth 故障、cookie/CSP/sandbox、HTTP 风险模式、限流与 kill switch；仓内 E2E 不能替代生产环境验收                                                                                                                                                             |
@@ -514,7 +513,7 @@ V2 仍不能改变 A→P→B 的浏览器路由和 B 最终业务拒绝权。迁
 1. **已完成的仓内基线**：integration-aware 合同、Registry/Authority/Store 接口、主体与逻辑
    `serviceActor` 元数据合同、每个 Integration 的 B maximum、A 显式首次握手、Host 预绑定、旧 API
    兼容层、审批阻断修复和仓内多 P/主体/replay 测试；当前 actor 配置错配检查只是参考实现，
-   ActiveLease/poll/fail-close 尚未实现。
+   ActiveLease/poll/fail-close 已在仓内参考实现覆盖，生产化与 HA/共享 Store 仍未完成。
 2. **P0 生产基础设施**：在独立服务仓库部署公共 Auth、生产共享原子 TTL Store、单区域强一致优先、HA、
    ActiveLease poll/revoke、审计、限流、指标、告警和 kill switch；失败关闭，禁止 demo server、静态身份
    和 `InMemory*` store 进入生产。V1 不把 mTLS、service JWT 或其他技术调用方认证列为部署前置条件。

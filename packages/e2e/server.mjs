@@ -67,6 +67,8 @@ let mockTlSessionSequence = 0
 
 const PARENT_BRIDGE_POLICY_PATH = '/api/parent-bridge/embed-policy'
 const PARENT_BRIDGE_AUTHORIZE_PATH = '/api/parent-bridge/authorize-offer'
+const PARENT_BRIDGE_ACTIVE_LEASE_PATH = '/api/parent-bridge/active-lease'
+const PARENT_BRIDGE_REVOKE_ACTIVE_LEASE_PATH = '/api/parent-bridge/revoke-active-lease'
 const PARENT_BRIDGE_ASSISTANT_ORIGIN = 'http://127.0.0.1:4174'
 const PARENT_BRIDGE_BUSINESS_ORIGIN = 'http://127.0.0.1:4176'
 const PARENT_BRIDGE_PARENT_ORIGINS = ['http://127.0.0.1:4173', 'http://127.0.0.1:4175']
@@ -360,6 +362,79 @@ async function serveManagedOfferAuthorization(request, response, requestURL) {
 	}
 }
 
+function activeLeaseExecutionContext(request, requestURL) {
+	if (PARENT_BRIDGE_PARENT_ORIGINS.includes(requestURL.origin)) {
+		const registered = parentIntegration(requestURL)
+		return {
+			actor: {
+				actorId: registered.actorId,
+				appId: registered.parentAppId,
+				environment: 'e2e',
+				role: 'parent-bff',
+			},
+			subject: e2eCanonicalSubject(request),
+		}
+	}
+	if (requestURL.origin === PARENT_BRIDGE_ASSISTANT_ORIGIN) {
+		return {
+			actor: {
+				actorId: 'reverse-assistant-bff',
+				appId: 'reverse-assistant',
+				environment: 'e2e',
+				role: 'assistant-bff',
+			},
+			subject: e2eCanonicalSubject(request),
+		}
+	}
+	throw new Error('ActiveLease status origin is not registered')
+}
+
+async function serveActiveLeaseStatus(request, response, requestURL) {
+	if (
+		request.method !== 'POST' ||
+		(!PARENT_BRIDGE_PARENT_ORIGINS.includes(requestURL.origin) &&
+			requestURL.origin !== PARENT_BRIDGE_ASSISTANT_ORIGIN)
+	) {
+		response.writeHead(404).end('Not found')
+		return
+	}
+	try {
+		if (requestOrigin(request, requestURL.origin) !== requestURL.origin) {
+			throw new Error('ActiveLease status origin mismatch')
+		}
+		const body = await readJsonRequest(request)
+		const context = activeLeaseExecutionContext(request, requestURL)
+		const status = await parentBridgeAuthorizationService.getActiveLeaseStatus(context, {
+			policyId: body.policyId,
+			...(body.leaseId === undefined ? {} : { leaseId: body.leaseId }),
+			// Keep all binding fields in the BFF-to-Auth lookup; the authority
+			// validates the binding rather than trusting a partial browser key.
+			bridgeBinding: body.bridgeBinding,
+		})
+		writeJson(response, 200, status)
+	} catch (error) {
+		managedAuthorizationError(response, error)
+	}
+}
+
+/** Local-only test control; production BFFs must protect revocation separately. */
+async function serveTestActiveLeaseRevoke(request, response, requestURL) {
+	if (request.method !== 'POST' || !PARENT_BRIDGE_PARENT_ORIGINS.includes(requestURL.origin)) {
+		response.writeHead(404).end('Not found')
+		return
+	}
+	try {
+		if (requestOrigin(request, requestURL.origin) !== requestURL.origin) {
+			throw new Error('ActiveLease revoke origin mismatch')
+		}
+		const selector = await readJsonRequest(request)
+		const result = await parentBridgeAuthorizationService.revoke(selector)
+		writeJson(response, 200, result)
+	} catch (error) {
+		managedAuthorizationError(response, error)
+	}
+}
+
 function headerTokens(value) {
 	if (typeof value !== 'string') return new Set()
 	return new Set(
@@ -541,6 +616,16 @@ function createFixtureServer(port) {
 
 			if (requestURL.pathname === PARENT_BRIDGE_AUTHORIZE_PATH) {
 				await serveManagedOfferAuthorization(request, response, requestURL)
+				return
+			}
+
+			if (requestURL.pathname === PARENT_BRIDGE_ACTIVE_LEASE_PATH) {
+				await serveActiveLeaseStatus(request, response, requestURL)
+				return
+			}
+
+			if (requestURL.pathname === PARENT_BRIDGE_REVOKE_ACTIVE_LEASE_PATH) {
+				await serveTestActiveLeaseRevoke(request, response, requestURL)
 				return
 			}
 
