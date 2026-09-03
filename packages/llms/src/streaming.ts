@@ -135,19 +135,12 @@ export interface SseParseResult {
 }
 
 /** Split SSE frames from a raw body into `{ eventType, data }` entries. */
-function splitSseFrames(
-	rawContent: string,
-	debugLabel: string
-): { eventType: string; data: string }[] {
+function splitSseFrames(rawContent: string): { eventType: string; data: string }[] {
 	const normalized = rawContent.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
 	const frames: { eventType: string; data: string }[] = []
 
 	for (const block of normalized.split('\n\n')) {
 		if (!block.trim()) continue
-		// Keep the original SSE frame visible in the browser debug console. This
-		// is intentionally logged before parsing so malformed server frames can
-		// also be diagnosed from test-page.html.
-		console.debug(`[${debugLabel}] 📥 SSE event\n${block}\n`)
 
 		let eventType = 'message'
 		const dataLines: string[] = []
@@ -176,7 +169,7 @@ export function parseChatbbcSseContent(
 ): SseParseResult {
 	let accumulatedContent = ''
 
-	for (const { eventType, data } of splitSseFrames(rawContent, debugLabel)) {
+	for (const { eventType, data } of splitSseFrames(rawContent)) {
 		if (data === '[DONE]' || eventType === 'done' || eventType === 'end') break
 		if (eventType === 'message') continue
 		if (eventType === 'error') {
@@ -219,7 +212,7 @@ export function parseOpenAISseContent(
 	let accumulatedContent = ''
 	let usage: unknown
 
-	for (const { eventType, data } of splitSseFrames(rawContent, debugLabel)) {
+	for (const { eventType, data } of splitSseFrames(rawContent)) {
 		if (eventType === 'error') {
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_RESPONSE,

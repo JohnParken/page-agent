@@ -213,7 +213,7 @@ export interface LLMConfig {
 	trVersion?: string
 
 	/**
-	 * Tl-specific failure logger. Defaults to a structured console.error entry.
+	 * Tl-specific failure logger. The default console entry contains metadata only.
 	 * Browser clients can inspect it locally; Node hosts can append the entry to a file.
 	 * Entries contain raw model responses and must be stored as sensitive data.
 	 */

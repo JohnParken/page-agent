@@ -79,15 +79,6 @@ export class OpenAIClient implements LLMClient {
 			requestHeaders.Authorization = `Bearer ${this.config.apiKey}`
 		}
 
-		console.info(
-			'[OpenAIClient] Request payload:',
-			JSON.stringify(
-				{ url, method: 'POST', headers: requestHeaders, body: finalRequestBody },
-				null,
-				2
-			)
-		)
-
 		// 2. Call API
 		let response: Response
 		try {
@@ -99,7 +90,6 @@ export class OpenAIClient implements LLMClient {
 			})
 		} catch (error: unknown) {
 			if ((error as any)?.name === 'AbortError') throw error
-			console.error(error)
 			throw new InvokeError(InvokeErrorTypes.NETWORK_ERROR, 'Network request failed', error)
 		}
 
@@ -153,15 +143,6 @@ export class OpenAIClient implements LLMClient {
 				error
 			)
 		}
-
-		console.info(
-			'[OpenAIClient] Response payload:',
-			JSON.stringify(
-				{ status: response.status, statusText: response.statusText, body: data },
-				null,
-				2
-			)
-		)
 
 		const choice = data.choices?.[0]
 		if (!choice) {

@@ -20,7 +20,7 @@ const contentTypes = {
 	'.map': 'application/json; charset=utf-8',
 }
 
-const builder = spawn(npmCommand, ['run', 'build:demo', '--', '--watch'], {
+const builder = spawn(npmCommand, ['run', 'build:demo', '--', '--watch', '--mode', 'development'], {
 	cwd: pageAgentDir,
 	stdio: 'inherit',
 })

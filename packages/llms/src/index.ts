@@ -94,29 +94,16 @@ export class LLM extends EventTarget {
 		abortSignal: AbortSignal,
 		options?: InvokeOptions
 	): Promise<InvokeResult> {
-		// Log request messages
-		console.log('[LLM] 📤 Request messages:', JSON.stringify(messages, null, 2))
-
-		return await withRetry(
-			async () => {
-				const result = await this.client.invoke(messages, tools, abortSignal, options)
-
-				// Log response
-				console.log('[LLM] 📥 Response:', JSON.stringify(result, null, 2))
-
-				return result
+		return await withRetry(() => this.client.invoke(messages, tools, abortSignal, options), {
+			maxRetries: this.config.maxRetries,
+			onRetry: (attempt, lastError) => {
+				this.dispatchEvent(
+					new CustomEvent('retry', {
+						detail: { attempt, maxAttempts: this.config.maxRetries, lastError },
+					})
+				)
 			},
-			{
-				maxRetries: this.config.maxRetries,
-				onRetry: (attempt, lastError) => {
-					this.dispatchEvent(
-						new CustomEvent('retry', {
-							detail: { attempt, maxAttempts: this.config.maxRetries, lastError },
-						})
-					)
-				},
-			}
-		)
+		})
 	}
 }
 
@@ -140,7 +127,6 @@ async function withRetry<T>(
 			attempt++
 			if (attempt > settings.maxRetries) throw error
 
-			console.debug('[LLM] retryable failure, will retry:', error)
 			settings.onRetry(attempt, error as Error)
 
 			await new Promise((resolve) => setTimeout(resolve, 100))

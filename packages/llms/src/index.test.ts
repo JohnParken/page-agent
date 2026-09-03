@@ -39,6 +39,21 @@ describe('LLM.invoke retry behavior', () => {
 		expect(retryListener).not.toHaveBeenCalled()
 	})
 
+	it('does not log prompt or response contents', async () => {
+		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+		const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+		client.invoke.mockResolvedValueOnce({ privateResponse: 'response-secret' })
+
+		try {
+			await llm.invoke([{ role: 'user', content: 'prompt-secret' }], {}, signal)
+			expect(logSpy).not.toHaveBeenCalled()
+			expect(debugSpy).not.toHaveBeenCalled()
+		} finally {
+			logSpy.mockRestore()
+			debugSpy.mockRestore()
+		}
+	})
+
 	it('retries up to maxRetries on retryable errors, then throws last error', async () => {
 		const retryable = new InvokeError(InvokeErrorTypes.NETWORK_ERROR, 'boom')
 		client.invoke

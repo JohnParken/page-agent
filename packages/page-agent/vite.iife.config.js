@@ -17,7 +17,7 @@ dotenvConfig({ path: resolve(__dirname, '../../.env') })
 // - alias all local packages so that they can be build in
 // - no external
 // - no d.ts. dts does not work with monorepo aliasing
-export default defineConfig(() => ({
+export default defineConfig(({ mode }) => ({
 	plugins: [
 		injectCssByJs('page-agent-demo'),
 		...(process.env.ANALYZE === 'true'
@@ -31,6 +31,10 @@ export default defineConfig(() => ({
 			: []),
 	],
 	publicDir: resolve(__dirname, 'demo'),
+	esbuild: {
+		// dev:demo explicitly uses development mode; production builds emit no console output.
+		drop: mode === 'development' ? [] : ['console', 'debugger'],
+	},
 	build: {
 		lib: {
 			entry: resolve(__dirname, 'src/demo.ts'),

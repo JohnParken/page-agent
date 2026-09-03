@@ -340,7 +340,7 @@ export class PageAgentCore<
 					if (actionName === 'done') {
 						const success = action.input?.success ?? false
 						const data = action.input?.text || 'no text provided'
-						console.log(chalk.green.bold('Task completed'), success, data)
+						console.log(chalk.green.bold('Task completed'), success)
 						taskResult = { success, data, history: this.history }
 						this.#lastResult = taskResult
 						finalStatus = 'completed'
@@ -350,7 +350,7 @@ export class PageAgentCore<
 					// catch block must not throw error. otherwise the error may be overridden if finally block also throws error.
 
 					const isAbortError = (error as any)?.name === 'AbortError'
-					if (!isAbortError) console.error('Task failed', error)
+					if (!isAbortError) console.error('Task failed')
 					const message = isAbortError ? 'Task aborted' : String(error)
 					this.#emitActivity({ type: 'error', message: message })
 					this.#emitHistoryChange({ type: 'error', message: message, rawResponse: error })
@@ -413,30 +413,16 @@ export class PageAgentCore<
 				const signal = this.#abortController.signal
 				signal.throwIfAborted()
 
-				console.log(chalk.blue.bold('MacroTool input'), input)
 				const action = input.action
 
 				const toolName = Object.keys(action)[0]
 				const toolInput = action[toolName]
 
-				// Build reflection text, only include non-empty fields
-				const reflectionLines: string[] = []
-				if (input.evaluation_previous_goal)
-					reflectionLines.push(`✅: ${input.evaluation_previous_goal}`)
-				if (input.memory) reflectionLines.push(`💾: ${input.memory}`)
-				if (input.next_goal) reflectionLines.push(`🎯: ${input.next_goal}`)
-
-				const reflectionText = reflectionLines.length > 0 ? reflectionLines.join('\n') : ''
-
-				if (reflectionText) {
-					console.log(reflectionText)
-				}
-
 				// Find the corresponding tool
 				const tool = tools.get(toolName)
 				assert(tool, `Tool ${toolName} not found`)
 
-				console.log(chalk.blue.bold(`Executing tool: ${toolName}`), toolInput)
+				console.log(chalk.blue.bold(`Executing tool: ${toolName}`))
 
 				// Emit executing activity
 				this.#emitActivity({ type: 'executing', tool: toolName, input: toolInput })
@@ -448,7 +434,7 @@ export class PageAgentCore<
 				signal.throwIfAborted()
 
 				const duration = Date.now() - startTime
-				console.log(chalk.green.bold(`Tool (${toolName}) executed for ${duration}ms`), result)
+				console.log(chalk.green.bold(`Tool (${toolName}) executed for ${duration}ms`))
 
 				// Emit executed activity
 				this.#emitActivity({
@@ -585,11 +571,8 @@ an inner action tool directly and do not place the AgentOutput object in assista
 		if (instructions?.getPageInstructions && url) {
 			try {
 				pageInstructions = instructions.getPageInstructions(url)?.trim()
-			} catch (error) {
-				console.error(
-					chalk.red('[PageAgent] Failed to execute getPageInstructions callback:'),
-					error
-				)
+			} catch {
+				console.error(chalk.red('[PageAgent] Failed to execute getPageInstructions callback'))
 			}
 		}
 
@@ -655,7 +638,6 @@ an inner action tool directly and do not place the AgentOutput object in assista
 		if (this.#observations.length > 0) {
 			for (const content of this.#observations) {
 				this.history.push({ type: 'observation', content })
-				console.log(chalk.cyan('Observation:'), content)
 			}
 			this.#observations = []
 			this.#emitHistoryChange()

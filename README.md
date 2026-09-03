@@ -118,6 +118,9 @@ Start the demo server:
 npm run dev:demo
 ```
 
+`dev:demo` builds in development mode and keeps the demo lifecycle messages at `console.debug` level.
+The default `build:demo` production build removes all console and debugger statements.
+
 Then open [http://localhost:5174/test-page.html](http://localhost:5174/test-page.html) and give Page Agent the following task:
 
 ```text
@@ -225,20 +228,57 @@ is invalid JSON, TlClient makes one fresh-session correction request with the or
 assistant content, and parser error. The proxy remains a transparent transport and never mutates the model
 response.
 
-If production uses a prebuilt IIFE bundle, provide `LLM_*` variables while building it:
+For a bookmarklet production deployment, use the dedicated Tl-only IIFE build. It requires a full
+`http://` or `https://` endpoint URL and does not accept runtime query-parameter overrides:
+
+Create `.env.production` in the repository root (dotenv files do not use trailing `\` characters):
+
+```dotenv
+LLM_ENDPOINT_AGENT=https://tl.example.com
+LLM_MODEL_NAME=my-production-model
+LLM_MAX_RETRIES=1
+LLM_APP_ID=my-app
+LLM_TR_CODE=my-transaction
+LLM_TR_VERSION=1.0
+LLM_TOOL_CALLING_MODE=system_prompt
+TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt
+PAGE_AGENT_LANGUAGE=zh-CN
+PAGE_AGENT_MAX_STEPS=20
+```
+
+Then build with one command:
 
 ```bash
-LLM_PROVIDER=tl \
-LLM_ENDPOINT_AGENT=https://tl.example.com \
-LLM_MODEL_NAME=my-production-model \
-LLM_MAX_RETRIES=1 \
-LLM_APP_ID=my-app \
-LLM_TR_CODE=my-transaction \
-LLM_TR_VERSION=1.0 \
-LLM_TOOL_CALLING_MODE=system_prompt \
-TL_SYSTEM_PROMPT_VARIABLE_NAME=system_prompt \
-npm run build:demo -w page-agent
+npm run build:bookmarklet -w page-agent
 ```
+
+The build writes two files to `packages/page-agent/dist/iife/`:
+
+- `page-agent.bookmarklet.iife.min.js` — the production IIFE
+- `install.html` — a self-contained page whose button can be dragged to the browser bookmarks bar
+
+Only `LLM_ENDPOINT_AGENT` and `LLM_MODEL_NAME` are required. The production entry fixes `provider` to
+`tl`, disables `experimentalScriptExecutionTool` and `experimentalLlmsTxt`, strips console/debugger
+calls, omits source maps, and replaces any existing `window.pageAgent` when loaded again. It never reads
+`LLM_API_KEY`, and its endpoint/model cannot be changed through the script URL. HTTP endpoints remain
+supported for private networks, although an HTTPS page will normally block calls to an HTTP endpoint as
+mixed content.
+
+The repository ignores `.env` and `.env.*`, so `.env.production` remains local by default. Shell or CI
+environment variables override values from the dotenv files. Every selected value is compiled into the
+browser-readable IIFE; use only non-secret identifiers and keep credentials on a trusted server.
+
+Host both files in the same versioned directory, open `install.html`, and drag its Page Agent button to
+the bookmarks bar. The install page derives the IIFE URL from its own URL, so no deployment hostname is
+hard-coded. If dragging is unavailable, use the page's copy button or manually create a bookmark with:
+
+```text
+javascript:(()=>{const s=document.createElement('script');s.src='https://static.example.com/page-agent/1.12.2/page-agent.bookmarklet.iife.min.js';s.referrerPolicy='no-referrer';s.onload=()=>s.remove();s.onerror=()=>{s.remove();alert('Page Agent failed to load')};(document.head||document.documentElement).appendChild(s)})()
+```
+
+See [Production bookmarklet deployment](docs/production-bookmarklet.zh-CN.md) for an Nginx example,
+verification steps, rollback, and browser security limitations. The demo IIFE remains for local testing
+and must not be used as the production bookmarklet.
 
 The browser calls `${endpointAgent}/chatbbc/init_session` and `${endpointAgent}/chatbbc/chat` directly.
 The production endpoint therefore needs HTTPS when the page uses HTTPS and must allow the page origin via

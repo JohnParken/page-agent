@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>安装 Page Agent</title>
+		<style>
+			:root {
+				color-scheme: light;
+				font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+				color: #172033;
+				background: #f4f7fb;
+			}
+
+			body {
+				margin: 0;
+				min-height: 100vh;
+				display: grid;
+				place-items: center;
+			}
+
+			main {
+				width: min(92vw, 680px);
+				margin: 32px 0;
+				padding: 40px;
+				background: #fff;
+				border: 1px solid #e4eaf3;
+				border-radius: 20px;
+				box-shadow: 0 16px 45px rgb(31 53 91 / 10%);
+			}
+
+			h1 {
+				margin: 0 0 12px;
+				font-size: clamp(28px, 5vw, 42px);
+			}
+
+			.intro,
+			.status {
+				color: #526078;
+				line-height: 1.7;
+			}
+
+			.install {
+				display: inline-block;
+				margin: 20px 0 12px;
+				padding: 16px 26px;
+				color: #fff;
+				background: #1769e0;
+				border-radius: 12px;
+				font-size: 18px;
+				font-weight: 700;
+				text-decoration: none;
+				cursor: grab;
+				user-select: none;
+			}
+
+			.install:active {
+				cursor: grabbing;
+			}
+
+			.steps {
+				display: grid;
+				gap: 12px;
+				margin: 28px 0;
+				padding: 0;
+				list-style: none;
+				counter-reset: step;
+			}
+
+			.steps li {
+				counter-increment: step;
+				padding: 14px 16px 14px 52px;
+				position: relative;
+				background: #f6f8fc;
+				border-radius: 10px;
+				line-height: 1.6;
+			}
+
+			.steps li::before {
+				content: counter(step);
+				position: absolute;
+				left: 16px;
+				top: 14px;
+				width: 24px;
+				height: 24px;
+				color: #1769e0;
+				background: #dceaff;
+				border-radius: 50%;
+				font-weight: 700;
+				line-height: 24px;
+				text-align: center;
+			}
+
+			.fallback {
+				display: flex;
+				gap: 10px;
+				flex-wrap: wrap;
+				align-items: center;
+			}
+
+			button {
+				padding: 9px 14px;
+				color: #1769e0;
+				background: #fff;
+				border: 1px solid #9bbcf0;
+				border-radius: 8px;
+				font: inherit;
+				cursor: pointer;
+			}
+
+			code {
+				display: block;
+				max-height: 5em;
+				overflow: auto;
+				margin-top: 12px;
+				padding: 12px;
+				color: #526078;
+				background: #f6f8fc;
+				border-radius: 8px;
+				font-size: 12px;
+				word-break: break-all;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>安装 Page Agent</h1>
+			<p class="intro">把下面的按钮拖到浏览器书签栏，即可在任意网页中使用 Page Agent。</p>
+			<a id="install" class="install" href="#" draggable="true">拖我到书签栏安装</a>
+			<p id="status" class="status" role="status">准备就绪：请拖拽上方按钮。</p>
+
+			<ol class="steps">
+				<li>显示书签栏（通常可按 <strong>Ctrl/Cmd + Shift + B</strong>）。</li>
+				<li>按住“拖我到书签栏安装”，拖到书签栏后松开。</li>
+				<li>打开目标网页，点击书签即可启动 Page Agent。</li>
+			</ol>
+
+			<section class="fallback" aria-label="复制备用方案">
+				<button id="copy" type="button">复制安装代码</button>
+				<span class="status">拖拽不可用？复制后新建书签并粘贴到网址栏。</span>
+			</section>
+			<code id="code" hidden></code>
+		</main>
+		<script>
+			;(() => {
+				const install = document.querySelector('#install')
+				const copy = document.querySelector('#copy')
+				const code = document.querySelector('#code')
+				const status = document.querySelector('#status')
+				const iifeUrl = new URL('./__PAGE_AGENT_BOOKMARKLET_FILE__', window.location.href)
+				const loader = `javascript:(()=>{const s=document.createElement('script');s.src=${JSON.stringify(iifeUrl.href)};s.referrerPolicy='no-referrer';s.onload=()=>s.remove();s.onerror=()=>{s.remove();alert('Page Agent 加载失败，请检查书签代码或网络连接。')};document.head.appendChild(s)})()`
+
+				install.href = loader
+				code.textContent = loader
+
+				install.addEventListener('click', (event) => {
+					event.preventDefault()
+					status.textContent = '请将按钮拖到浏览器书签栏，不要直接点击。'
+				})
+
+				install.addEventListener('dragstart', (event) => {
+					event.dataTransfer.setData('text/uri-list', loader)
+					event.dataTransfer.setData('text/plain', loader)
+					event.dataTransfer.effectAllowed = 'copy'
+					status.textContent = '松开鼠标，将 Page Agent 保存到书签栏。'
+				})
+
+				copy.addEventListener('click', async () => {
+					try {
+						await navigator.clipboard.writeText(loader)
+					} catch {
+						const input = document.createElement('textarea')
+						input.value = loader
+						input.style.position = 'fixed'
+						input.style.opacity = '0'
+						document.body.append(input)
+						input.select()
+						document.execCommand('copy')
+						input.remove()
+					}
+					code.hidden = false
+					status.textContent = '安装代码已复制，请新建书签并粘贴到网址栏。'
+				})
+			})()
+		</script>
+	</body>
+</html>

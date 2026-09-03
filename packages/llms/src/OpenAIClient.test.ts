@@ -119,6 +119,20 @@ describe('OpenAIClient.invoke — request construction', () => {
 		expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
 	})
 
+	it('does not log authorization, prompt, or response contents', async () => {
+		const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+		try {
+			await setup.client.invoke([{ role: 'user', content: 'private-prompt' }], tools, signal)
+			expect(infoSpy).not.toHaveBeenCalled()
+			expect(errorSpy).not.toHaveBeenCalled()
+		} finally {
+			infoSpy.mockRestore()
+			errorSpy.mockRestore()
+		}
+	})
+
 	it('applies transformRequestBody (in-place form, returns undefined)', async () => {
 		const { client, fetchMock } = makeClient({
 			transformRequestBody: (body) => {

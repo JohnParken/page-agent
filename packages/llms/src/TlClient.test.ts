@@ -259,71 +259,61 @@ describe('TlAiClient.invoke — request construction', () => {
 	})
 })
 
-// ---------- Wire logging ----------
+// ---------- Sensitive logging ----------
 
-describe('TlAiClient — wire logging', () => {
-	it('logs client send and receive packets with titles distinct from TlProxy', async () => {
+describe('TlAiClient — sensitive logging', () => {
+	it('does not log request prompts or response bodies on success', async () => {
 		const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 		const { client, fetchMock } = makeClient()
-		setupSession(fetchMock, 'logged-session')
-		const rawChatResponse = JSON.stringify({
-			tool_name: 'greet',
-			parameters: { name: 'logged' },
-		})
-		fetchMock.mockResolvedValueOnce(chatResponse(rawChatResponse))
+		setupSession(fetchMock, 'private-session')
+		fetchMock.mockResolvedValueOnce(
+			chatResponse(JSON.stringify({ tool_name: 'greet', parameters: { name: 'private-response' } }))
+		)
 
 		try {
 			await client.invoke(
 				[
-					{ role: 'system', content: 'Wire logging system prompt' },
-					{ role: 'user', content: 'show the wire packets' },
+					{ role: 'system', content: 'private-system-prompt' },
+					{ role: 'user', content: 'private-user-prompt' },
 				],
 				{ greet: makeTool() },
 				signal
 			)
 
-			expect(infoSpy).toHaveBeenCalledTimes(4)
-			expect(infoSpy).toHaveBeenNthCalledWith(
-				1,
-				'[TlClient] 📤 INIT_SESSION request:',
-				expect.objectContaining({
-					url: 'http://localhost:8089/chatbbc/init_session',
-					method: 'POST',
-					body: expect.objectContaining({ requestId: expect.any(String) }),
-				})
-			)
-			expect(infoSpy).toHaveBeenNthCalledWith(
-				2,
-				'[TlClient] 📥 INIT_SESSION response:',
-				expect.objectContaining({
-					status: 200,
-					body: initSessionBody('logged-session'),
-				})
-			)
-			expect(infoSpy).toHaveBeenNthCalledWith(
-				3,
-				'[TlClient] 📤 CHAT request:',
-				expect.objectContaining({
-					url: 'http://localhost:8089/chatbbc/chat',
-					body: expect.objectContaining({
-						data: expect.objectContaining({
-							session_id: 'logged-session',
-							txt: 'show the wire packets',
-							stream: true,
-						}),
-					}),
-				})
-			)
-			expect(infoSpy).toHaveBeenNthCalledWith(
-				4,
-				'[TlClient] 📥 CHAT response:',
-				expect.objectContaining({ status: 200, body: rawChatResponse })
-			)
-			for (const [title] of infoSpy.mock.calls) {
-				expect(title).not.toContain('[TlProxy]')
-			}
+			expect(infoSpy).not.toHaveBeenCalled()
+			expect(errorSpy).not.toHaveBeenCalled()
 		} finally {
 			infoSpy.mockRestore()
+			errorSpy.mockRestore()
+		}
+	})
+
+	it('logs only non-sensitive metadata for default failure logging', async () => {
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		const { client, fetchMock } = makeClient({ toolCallingMode: 'api' })
+		setupSession(fetchMock, 'private-session')
+		fetchMock.mockResolvedValueOnce(textStreamResponse('private-response-body'))
+
+		try {
+			await expect(
+				client.invoke(
+					[
+						{ role: 'system', content: 'private-system-prompt' },
+						{ role: 'user', content: 'private-user-prompt' },
+					],
+					{ greet: makeTool() },
+					signal
+				)
+			).rejects.toMatchObject({ type: InvokeErrorTypes.INVALID_RESPONSE })
+
+			expect(errorSpy).toHaveBeenCalledWith('[TlAiClient] Tool invocation failed', {
+				stage: 'response_parse',
+				status: 200,
+				errorType: InvokeErrorTypes.INVALID_RESPONSE,
+			})
+		} finally {
+			errorSpy.mockRestore()
 		}
 	})
 })
@@ -428,17 +418,19 @@ describe('TlAiClient.invoke — success', () => {
 			])
 		)
 
-		const result = await client.invoke(defaultMessages, { greet: tool }, signal)
+		try {
+			const result = await client.invoke(defaultMessages, { greet: tool }, signal)
 
-		expect(fetchMock.mock.calls[1][1]?.headers).toEqual({
-			'Content-Type': 'application/json',
-			Accept: 'text/event-stream',
-		})
-		expect(result.toolCall).toEqual({ name: 'greet', args: { name: 'SSE' } })
-		expect(result.toolResult).toBe('hello SSE')
-		expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('event: chunk'))
-		expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('data: {"finished":true}'))
-		debugSpy.mockRestore()
+			expect(fetchMock.mock.calls[1][1]?.headers).toEqual({
+				'Content-Type': 'application/json',
+				Accept: 'text/event-stream',
+			})
+			expect(result.toolCall).toEqual({ name: 'greet', args: { name: 'SSE' } })
+			expect(result.toolResult).toBe('hello SSE')
+			expect(debugSpy).not.toHaveBeenCalled()
+		} finally {
+			debugSpy.mockRestore()
+		}
 	})
 
 	it('parses SSE correctly when lines and UTF-8 characters cross network chunks', async () => {

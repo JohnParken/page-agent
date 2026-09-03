@@ -21,7 +21,7 @@ if (autoInit && window.pageAgent) {
 // Mount to global window object
 window.PageAgent = PageAgent
 
-console.log('🚀 page-agent.js loaded!')
+console.debug('🚀 page-agent.js loaded!')
 
 const DEMO_MODEL = 'qwen3.5-plus'
 const DEMO_BASE_URL = 'https://page-ag-testing-ohftxirgbn.cn-shanghai.fcapp.run'
@@ -189,7 +189,7 @@ if (autoInit) {
 				experimentalScriptExecutionTool: experimentalScriptExecutionTool === 'true',
 			}
 		} else {
-			console.log('🚀 page-agent.js no current script detected, using default demo config')
+			console.debug('🚀 page-agent.js no current script detected, using default demo config')
 			config = {
 				provider: initialProvider,
 				model: import.meta.env.LLM_MODEL_NAME ? import.meta.env.LLM_MODEL_NAME : DEMO_MODEL,
@@ -215,6 +215,6 @@ if (autoInit) {
 			window.pageAgent.panel.show()
 		}
 
-		console.log('🚀 page-agent.js initialized with config:', window.pageAgent.config)
+		console.debug('🚀 page-agent.js initialized')
 	})
 }

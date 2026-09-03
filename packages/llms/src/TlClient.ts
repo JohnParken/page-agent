@@ -49,7 +49,7 @@ export interface TlAiConfig {
 	customFetch?: typeof globalThis.fetch
 	/**
 	 * Called once for each received chat response that fails during parsing, validation, or tool execution.
-	 * Defaults to a structured console.error log. Node hosts may use this callback to write a local file.
+	 * Defaults to a metadata-only console.error log. Node hosts may use this callback to write a local file.
 	 * Entries contain raw model responses and must be stored as sensitive data.
 	 */
 	failureLogger?: TlFailureLogger
@@ -93,8 +93,6 @@ interface ChatRequest {
 	}
 }
 
-type TlOperation = 'INIT_SESSION' | 'CHAT'
-
 interface TlInvocationPrompt {
 	chatText: string
 	promptVariables: { name: string; value: string }[]
@@ -127,27 +125,6 @@ export class TlAiClient implements LLMClient {
 		Pick<TlAiConfig, 'customFetch' | 'failureLogger'>
 	private fetch: typeof globalThis.fetch
 	private failureLogger: TlFailureLogger
-
-	private logRequest(operation: TlOperation, url: string, body: unknown): void {
-		console.info(`[TlClient] 📤 ${operation} request:`, {
-			url,
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				...(operation === 'CHAT' ? { Accept: 'text/event-stream' } : {}),
-			},
-			body,
-		})
-	}
-
-	private logResponse(operation: TlOperation, response: Response, body: unknown): void {
-		console.info(`[TlClient] 📥 ${operation} response:`, {
-			status: response.status,
-			statusText: response.statusText,
-			contentType: response.headers.get('content-type') ?? '',
-			body,
-		})
-	}
 
 	constructor(config: TlAiConfig) {
 		if (!config.endpointAgent || !config.model) {
@@ -195,7 +172,11 @@ export class TlAiClient implements LLMClient {
 		this.failureLogger =
 			config.failureLogger ??
 			((entry) => {
-				console.error('[TlAiClient] Tool invocation failed', entry)
+				console.error('[TlAiClient] Tool invocation failed', {
+					stage: entry.stage,
+					status: entry.response.status,
+					errorType: entry.error.type,
+				})
 			})
 	}
 
@@ -230,8 +211,6 @@ export class TlAiClient implements LLMClient {
 				prompt_variables: promptVariables,
 			},
 		}
-		this.logRequest('INIT_SESSION', url, requestBody)
-
 		let response: Response
 		try {
 			response = await this.fetch(url, {
@@ -272,8 +251,6 @@ export class TlAiClient implements LLMClient {
 		} catch (error: unknown) {
 			parseError = error
 		}
-		this.logResponse('INIT_SESSION', response, parseError ? rawBody : data)
-
 		if (parseError && response.ok) {
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_RESPONSE,
@@ -438,7 +415,6 @@ export class TlAiClient implements LLMClient {
 	): Promise<{ toolName: string; toolArgs: unknown }> {
 		const rawContent = await readStreamResponse(response, abortSignal)
 		trace.rawBody = rawContent
-		this.logResponse('CHAT', response, rawContent)
 
 		const contentType = trace.contentType
 		const isSseResponse = /^(?:\uFEFF)?(?:id|event|data|retry):/m.test(rawContent)
@@ -595,8 +571,6 @@ export class TlAiClient implements LLMClient {
 
 		// 3. Call chat endpoint.
 		const url = `${this.config.endpointAgent}/chatbbc/chat`
-		this.logRequest('CHAT', url, requestBody)
-
 		let response: Response
 		try {
 			response = await this.fetch(url, {
@@ -624,14 +598,11 @@ export class TlAiClient implements LLMClient {
 			let errorData: unknown
 			try {
 				const rawErrorBody = await response.text()
-				let responseBody: unknown = rawErrorBody
 				try {
 					errorData = JSON.parse(rawErrorBody)
-					responseBody = errorData
 				} catch {
 					errorData = {}
 				}
-				this.logResponse('CHAT', response, responseBody)
 			} catch {
 				errorData = {}
 			}
