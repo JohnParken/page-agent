@@ -82,7 +82,8 @@ await agent.execute('点击登录按钮')
 
 跨域 iframe 协作接入请参阅[iframe bridge 中文集成指南](./cross-origin-iframe-bridge.zh-CN.md)（[English](./cross-origin-iframe-bridge.md)）；
 普通 `<script>` 页面请参阅[IIFE 接入指南](./cross-origin-iframe-bridge-script.zh-CN.md)；
-使用收藏夹加载 TlClient 生产包请参阅[生产收藏夹脚本部署](./production-bookmarklet.zh-CN.md)。
+使用收藏夹加载 TlClient 生产包请参阅[生产收藏夹脚本部署](./production-bookmarklet.zh-CN.md)；
+对接内部 TlClient 大模型服务请参阅[TlClient 集成指南](./integrate-tl-client.zh-CN.md)。
 
 ### 在现有测试应用中接入跨域 iframe
 
