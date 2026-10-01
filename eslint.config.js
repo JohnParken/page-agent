@@ -55,6 +55,7 @@ export default [
 			'packages/*/src/components/ui',
 			'**/.wxt',
 			'**/.output',
+			'docs/**',
 		],
 	},
 	{

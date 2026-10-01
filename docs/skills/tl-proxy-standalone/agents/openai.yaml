@@ -1,0 +1,4 @@
+interface:
+  display_name: "TL Proxy Standalone"
+  short_description: "Build a TypeScript TL test proxy with live debug logs"
+  default_prompt: "Use $tl-proxy-standalone to implement a TypeScript/Node.js TL test simulator with real-time forwarding, default debug message logs, prompt-defined output and no native tool_calls."
