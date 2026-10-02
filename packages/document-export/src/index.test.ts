@@ -73,6 +73,52 @@ describe('createDocumentExportTools', () => {
 			tools.generate_document.execute.call(fakeAgent, { format: 'docx' }, { signal: abort.signal })
 		).rejects.toMatchObject({ name: 'AbortError' })
 	})
+
+	it('extract_form_data formats required, disabled, and readOnly flags in output', async () => {
+		const tools = createDocumentExportTools({
+			onConvertDocument: vi.fn(),
+		})
+
+		const fakeAgent: any = {
+			pageController: {
+				extractFormData: vi.fn().mockResolvedValue([
+					{
+						index: 1,
+						tagName: 'input',
+						type: 'text',
+						name: 'phone',
+						label: 'Phone Number',
+						required: true,
+					},
+					{
+						index: 2,
+						tagName: 'input',
+						type: 'text',
+						name: 'order_id',
+						value: 'ORD-999',
+						readOnly: true,
+					},
+					{
+						index: 3,
+						tagName: 'select',
+						name: 'status',
+						disabled: true,
+						options: ['Active', 'Archived'],
+					},
+				]),
+			},
+		}
+
+		const ac = new AbortController()
+		const result = await tools.extract_form_data.execute.call(fakeAgent, {}, { signal: ac.signal })
+
+		expect(result).toContain('required')
+		expect(result).toContain('readOnly')
+		expect(result).toContain('disabled')
+		expect(result).toContain('[1] <input type=text name="phone"> label="Phone Number" required')
+		expect(result).toContain('[2] <input type=text name="order_id"> value="ORD-999" readOnly')
+		expect(result).toContain('[3] <select name="status"> disabled options=[Active, Archived]')
+	})
 })
 
 describe('DOCUMENT_EXPORT_PROMPT', () => {

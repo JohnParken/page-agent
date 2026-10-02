@@ -966,5 +966,58 @@ describe('PageController', () => {
 				'Select a country',
 			])
 		})
+
+		it('extracts disabled, readOnly, and required metadata accurately', async () => {
+			document.body.innerHTML = `
+				<section id="scope">
+					<input id="f1" name="normal_field" value="editable" />
+					<input id="f2" name="disabled_aria" value="aria-dis" aria-disabled="true" />
+					<input id="f3" name="readonly_aria" value="aria-ro" aria-readonly="true" />
+					<input id="f4" name="required_native" value="req" required />
+					<input id="f5" name="required_aria" value="aria-req" aria-required="true" />
+					<input id="f6" name="dynamic_disabled" value="dyn-dis" />
+					<input id="f7" name="dynamic_readonly" value="dyn-ro" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			for (const input of scope.querySelectorAll('input')) {
+				makeVisible(input)
+			}
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+
+			// Dynamically set disabled and readOnly after tree update
+			const f6 = scope.querySelector<HTMLInputElement>('#f6')!
+			const f7 = scope.querySelector<HTMLInputElement>('#f7')!
+			f6.disabled = true
+			f7.readOnly = true
+
+			const fields = await controller.extractFormData()
+
+			const normal = fields.find((f) => f.name === 'normal_field')
+			expect(normal).toBeDefined()
+			expect(normal!.disabled).toBeUndefined()
+			expect(normal!.readOnly).toBeUndefined()
+			expect(normal!.required).toBeUndefined()
+
+			const disAria = fields.find((f) => f.name === 'disabled_aria')
+			expect(disAria?.disabled).toBe(true)
+
+			const roAria = fields.find((f) => f.name === 'readonly_aria')
+			expect(roAria?.readOnly).toBe(true)
+
+			const reqNative = fields.find((f) => f.name === 'required_native')
+			expect(reqNative?.required).toBe(true)
+
+			const reqAria = fields.find((f) => f.name === 'required_aria')
+			expect(reqAria?.required).toBe(true)
+
+			const dynDisabled = fields.find((f) => f.name === 'dynamic_disabled')
+			expect(dynDisabled?.disabled).toBe(true)
+
+			const dynReadOnly = fields.find((f) => f.name === 'dynamic_readonly')
+			expect(dynReadOnly?.readOnly).toBe(true)
+		})
 	})
 })

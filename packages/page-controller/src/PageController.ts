@@ -141,6 +141,12 @@ export interface FormField {
 	options?: string[]
 	/** Whether a checkbox / radio is checked */
 	checked?: boolean
+	/** Whether the field is disabled (native or aria-disabled) */
+	disabled?: boolean
+	/** Whether the field is read-only (native or aria-readonly) */
+	readOnly?: boolean
+	/** Whether the field is required (native or aria-required) */
+	required?: boolean
 }
 
 export interface PageControllerAdapter {
@@ -1020,6 +1026,25 @@ export class PageController extends EventTarget implements IndexedPageController
 			if (placeholder) field.placeholder = placeholder
 
 			field.label = resolveLabel(element)
+
+			const isDisabled =
+				(element as HTMLInputElement).disabled ||
+				element.hasAttribute('disabled') ||
+				element.getAttribute('aria-disabled') === 'true' ||
+				Boolean(element.closest('fieldset[disabled]'))
+			if (isDisabled) field.disabled = true
+
+			const isReadOnly =
+				(element as HTMLInputElement).readOnly ||
+				element.hasAttribute('readonly') ||
+				element.getAttribute('aria-readonly') === 'true'
+			if (isReadOnly) field.readOnly = true
+
+			const isRequired =
+				(element as HTMLInputElement).required ||
+				element.hasAttribute('required') ||
+				element.getAttribute('aria-required') === 'true'
+			if (isRequired) field.required = true
 
 			// Extract value and candidate options, filtering out blocked <option> elements.
 			if (tagName === 'select') {
