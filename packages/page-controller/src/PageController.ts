@@ -117,6 +117,32 @@ export interface HorizontalScrollOptions {
  * Implementations may be local or remote. The optional call context lets remote
  * implementations cancel pending observation and action requests cooperatively.
  */
+/**
+ * Structured form field extracted from the current page.
+ * Respects `data-page-agent-sensitive` (excluded from DOM tree entirely) and
+ * `data-page-agent-no-export` (visible to agent but excluded from extraction).
+ */
+export interface FormField {
+	/** Element index matching the `[index]` in simplifiedHTML */
+	index: number
+	/** HTML tag: input | select | textarea */
+	tagName: string
+	/** Input type attribute (text, email, checkbox, radio, …) */
+	type?: string
+	/** The `name` attribute */
+	name?: string
+	/** Associated label text (via `for`/`id` or ancestor `<label>`) */
+	label?: string
+	/** Current value */
+	value?: string
+	/** Placeholder text */
+	placeholder?: string
+	/** Available options for `<select>` elements */
+	options?: string[]
+	/** Whether a checkbox / radio is checked */
+	checked?: boolean
+}
+
 export interface PageControllerAdapter {
 	getCurrentUrl(context?: PageControllerCallContext): Promise<string>
 	getLastUpdateTime(context?: PageControllerCallContext): Promise<number>
@@ -140,6 +166,13 @@ export interface PageControllerAdapter {
 		context?: PageControllerCallContext
 	): Promise<PageActionResult>
 	executeJavascript(script: string, signal?: AbortSignal): Promise<PageActionResult>
+	/**
+	 * Extract structured form field data from the current page.
+	 * Fields marked with `data-page-agent-no-export` are excluded.
+	 * Fields already excluded by `data-page-agent-sensitive` / `contentBlacklist`
+	 * never appear because they are not in the DOM tree at all.
+	 */
+	extractFormData(context?: PageControllerCallContext): Promise<FormField[]>
 	showMask(): Promise<void>
 	hideMask(): Promise<void>
 	dispose(): void
@@ -710,6 +743,313 @@ export class PageController extends EventTarget implements IndexedPageController
 				message: `❌ Error executing JavaScript: ${error}`,
 			}
 		}
+	}
+
+	// ======= Form Data Extraction =======
+
+	/**
+	 * Extract structured form field data from the current indexed DOM tree.
+	 *
+	 * Extraction reuses the existing `selectorMap` built by `updateTree()`, so
+	 * fields already excluded by `data-page-agent-sensitive` or `contentBlacklist`
+	 * never appear (they are not part of the flat tree at all).
+	 *
+	 * Fields marked with `data-page-agent-no-export` are explicitly skipped:
+	 * the agent can still see and interact with them, but they will not be
+	 * included in the extraction result — preventing accidental export of data
+	 * that the integrator wants to keep off reports.
+	 */
+	async extractFormData(context?: PageControllerCallContext): Promise<FormField[]> {
+		throwIfAborted(context?.signal)
+		this.assertIndexed()
+
+		// Re-resolve the currently configured root element. If the root is
+		// unavailable or disconnected, no valid form fields can be extracted.
+		let currentRoot: Element
+		try {
+			currentRoot = this.resolveConfiguredRoot()
+		} catch {
+			return []
+		}
+
+		// Resolve the configured contentBlacklist to concrete Elements once,
+		// so every helper below can check against the same set.
+		const resolvedContentBlacklist: Element[] = []
+		for (const item of this.config.contentBlacklist ?? []) {
+			const el = typeof item === 'function' ? item() : item
+			if (el) resolvedContentBlacklist.push(el)
+		}
+
+		/**
+		 * Traverse up the composed DOM tree (piercing Shadow DOM boundaries via shadowRoot.host).
+		 */
+		const getComposedParent = (node: Node): Node | null => {
+			if (node.parentNode) {
+				return node.parentNode
+			}
+			if (node instanceof ShadowRoot) {
+				return node.host
+			}
+			const rootNode = node.getRootNode ? node.getRootNode() : null
+			if (rootNode instanceof ShadowRoot && rootNode !== node) {
+				return rootNode.host
+			}
+			return null
+		}
+
+		/**
+		 * Checks whether `target` is contained within `root` in the composed DOM tree
+		 * (i.e. correctly traversing through open Shadow DOM boundaries).
+		 */
+		const isContainedInRoot = (root: Element, target: Node | null): boolean => {
+			let curr = target
+			while (curr) {
+				if (curr === root) return true
+				curr = getComposedParent(curr)
+			}
+			return false
+		}
+
+		const SENSITIVE_SELECTOR =
+			'input[type="password"], [autocomplete="new-password"], [autocomplete="current-password"], [autocomplete="one-time-code"], [data-page-agent-sensitive], [data-page-agent-no-export], [name*="password" i], [name*="token" i], [id*="password" i], [id*="token" i]'
+
+		/**
+		 * Checks whether a single Element directly matches sensitive criteria
+		 * (mirroring the observation-phase rules in updateTree).
+		 */
+		const isElementDirectlySensitive = (el: Element): boolean => {
+			// Password input (by property or attribute)
+			const type =
+				(el as HTMLInputElement).type?.toLowerCase() || el.getAttribute('type')?.toLowerCase()
+			if (type === 'password') return true
+
+			// Explicit agent markers
+			if (el.hasAttribute('data-page-agent-sensitive')) return true
+			if (el.hasAttribute('data-page-agent-no-export')) return true
+
+			// Sensitive selector matching (autocomplete, name, id)
+			try {
+				if (el.matches(SENSITIVE_SELECTOR)) return true
+			} catch {
+				// Fallback if browser/jsdom matches() throws on complex selector
+			}
+
+			// Attribute fallback
+			const name = el.getAttribute('name') ?? ''
+			const id = el.getAttribute('id') ?? ''
+			const autocomplete = el.getAttribute('autocomplete') ?? ''
+			if (/password|token/i.test(name) || /password|token/i.test(id)) return true
+			if (/password|one-time-code/i.test(autocomplete)) return true
+
+			// In resolved contentBlacklist
+			if (resolvedContentBlacklist.includes(el)) return true
+
+			return false
+		}
+
+		/**
+		 * Unified block-check used by every text-reading and field-boundary path.
+		 * Traverses the composed tree upward so that fields inside sensitive
+		 * containers (or sensitive shadow hosts) are properly blocked.
+		 */
+		const isNodeBlocked = (node: Node): boolean => {
+			let curr: Node | null = node
+			while (curr) {
+				if (curr instanceof Element) {
+					if (isElementDirectlySensitive(curr)) {
+						return true
+					}
+					for (const blocked of resolvedContentBlacklist) {
+						if (blocked === curr || blocked.contains(curr)) {
+							return true
+						}
+					}
+				}
+				curr = getComposedParent(curr)
+			}
+			return false
+		}
+
+		/**
+		 * Recursively collect visible text from a live DOM node.
+		 *
+		 * Traverses the original live DOM tree directly (avoiding cloneNode which
+		 * breaks identity-based checks against `contentBlacklist`):
+		 *   - Skips form controls (input, select, textarea)
+		 *   - Skips any Element where `isNodeBlocked(child)` is true
+		 *   - Gathers text content from Text nodes
+		 */
+		const collectSafeText = (rootNode: Node): string => {
+			let text = ''
+			for (const child of rootNode.childNodes) {
+				if (child.nodeType === Node.TEXT_NODE) {
+					text += child.nodeValue ?? ''
+				} else if (child.nodeType === Node.ELEMENT_NODE) {
+					const el = child as HTMLElement
+					const tag = el.tagName.toLowerCase()
+					if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+						continue
+					}
+					if (isNodeBlocked(el)) {
+						continue
+					}
+					text += collectSafeText(el)
+				}
+			}
+			return text
+		}
+
+		/**
+		 * Safely read text from a label-like element.
+		 * If the element itself is blocked, returns undefined.
+		 * Otherwise, collects safe text while omitting blocked child subtrees.
+		 */
+		const safeTextFromElement = (el: HTMLElement): string | undefined => {
+			if (isNodeBlocked(el)) return undefined
+			const text = collectSafeText(el).trim()
+			return text || undefined
+		}
+
+		/**
+		 * Resolve a visible label string for a form element.
+		 * All four standard mechanisms are tried in priority order.
+		 * Enforces root boundaries and sensitive filtering on all label targets.
+		 */
+		const resolveLabel = (element: HTMLElement): string | undefined => {
+			// 1. Explicit <label for="id">
+			const id = element.getAttribute('id')
+			if (id) {
+				// CSS.escape may not be available in all environments (e.g. jsdom).
+				// Fall back to basic character escaping when absent.
+				const escapedId =
+					typeof CSS !== 'undefined' && CSS.escape
+						? CSS.escape(id)
+						: id.replace(/([^\w-])/g, '\\$1')
+				const rootScope = element.getRootNode() as Document | ShadowRoot
+				const label =
+					(rootScope.querySelector &&
+						rootScope.querySelector<HTMLLabelElement>(`label[for="${escapedId}"]`)) ||
+					element.ownerDocument.querySelector<HTMLLabelElement>(`label[for="${escapedId}"]`)
+				// Crucial boundary check: label must be inside configured root
+				if (label && isContainedInRoot(currentRoot, label)) {
+					const text = safeTextFromElement(label)
+					if (text) return text
+				}
+			}
+
+			// 2. Ancestor <label>
+			const parentLabel = element.closest<HTMLElement>('label')
+			// Crucial boundary check: parent label must be inside configured root
+			if (parentLabel && isContainedInRoot(currentRoot, parentLabel)) {
+				const text = safeTextFromElement(parentLabel)
+				if (text) return text
+			}
+
+			// 3. aria-label attribute value — not DOM text, safe to read directly.
+			const ariaLabel = element.getAttribute('aria-label')
+			if (ariaLabel?.trim()) return ariaLabel.trim()
+
+			// 4. aria-labelledby — each referenced element is checked individually.
+			//    Both the ref element itself and any blocked subtrees inside it are
+			//    filtered: the ref passes through safeTextFromElement which strips
+			//    sensitive/blacklisted child nodes before reading text.
+			const labelledBy = element.getAttribute('aria-labelledby')
+			if (labelledBy) {
+				const rootScope = element.getRootNode() as Document | ShadowRoot
+				const parts = labelledBy
+					.split(/\s+/)
+					.map((refId) => {
+						const ref =
+							(rootScope.getElementById && rootScope.getElementById(refId)) ||
+							element.ownerDocument.getElementById(refId)
+						// Crucial boundary check: referenced element must be inside configured root
+						if (!ref || !isContainedInRoot(currentRoot, ref)) return undefined
+						return safeTextFromElement(ref)
+					})
+					.filter(Boolean)
+				if (parts.length > 0) return parts.join(' ')
+			}
+
+			return undefined
+		}
+
+		const FORM_TAGS = new Set(['input', 'select', 'textarea'])
+		const fields: FormField[] = []
+
+		for (const [index, node] of this.selectorMap) {
+			const element = node.ref
+			if (!element || !element.isConnected) continue
+
+			// Re-verify that the element is still part of the active DOM root.
+			// Uses composed traversal so that elements inside Shadow DOM are retained.
+			if (!isContainedInRoot(currentRoot, element)) continue
+
+			// Re-verify that the element itself has not become blocked (e.g. dynamically
+			// changed to password, marked sensitive, or added to contentBlacklist).
+			if (isNodeBlocked(element)) continue
+
+			const tagName = element.tagName.toLowerCase()
+			if (!FORM_TAGS.has(tagName)) continue
+
+			const field: FormField = { index, tagName }
+
+			const type = element.getAttribute('type')
+			if (type) field.type = type.toLowerCase()
+
+			const name = element.getAttribute('name')
+			if (name) field.name = name
+
+			const placeholder = element.getAttribute('placeholder')
+			if (placeholder) field.placeholder = placeholder
+
+			field.label = resolveLabel(element)
+
+			// Extract value and candidate options, filtering out blocked <option> elements.
+			if (tagName === 'select') {
+				const select = element as HTMLSelectElement
+
+				// options: display text for candidate options, omitting blocked ones
+				const safeOptions = Array.from(select.options).filter((opt) => !isNodeBlocked(opt))
+				field.options = safeOptions.map((opt) => opt.text.trim())
+
+				if (select.multiple) {
+					// Collect programmatic values (.value) of all non-blocked selected options
+					const safeSelected = Array.from(select.selectedOptions).filter(
+						(opt) => !isNodeBlocked(opt)
+					)
+					field.value = safeSelected.map((opt) => opt.value).join(', ')
+				} else {
+					// For single-select, find currently selected option element
+					const selectedOpt =
+						(select.selectedOptions && select.selectedOptions[0]) ||
+						(select.selectedIndex >= 0 ? select.options[select.selectedIndex] : undefined)
+
+					if (selectedOpt) {
+						if (isNodeBlocked(selectedOpt)) {
+							field.value = ''
+						} else {
+							field.value = selectedOpt.value
+						}
+					} else {
+						field.value = select.value || ''
+					}
+				}
+			} else if (tagName === 'textarea') {
+				field.value = (element as HTMLTextAreaElement).value
+			} else {
+				const input = element as HTMLInputElement
+				if (field.type === 'checkbox' || field.type === 'radio') {
+					field.checked = input.checked
+					if (input.value && input.value !== 'on') field.value = input.value
+				} else {
+					field.value = input.value
+				}
+			}
+
+			fields.push(field)
+		}
+
+		return fields
 	}
 
 	// ======= Mask Operations =======

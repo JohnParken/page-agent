@@ -8,6 +8,7 @@
         "packages/ui",
         "packages/llms",
         "packages/core",
+        "packages/document-export",
         "packages/page-agent",
         "packages/e2e"
     ],

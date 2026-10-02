@@ -169,6 +169,7 @@ function createController(overrides: Partial<FrameBridgePolicyController> = {}) 
 		scroll: vi.fn(async () => ({ success: true, message: 'scrolled' })),
 		scrollHorizontally: vi.fn(async () => ({ success: true, message: 'scrolled horizontally' })),
 		executeJavascript: vi.fn(async () => ({ success: true, message: 'executed' })),
+		extractFormData: vi.fn(async () => []),
 		showMask: vi.fn(async () => undefined),
 		hideMask: vi.fn(async () => undefined),
 		dispose: vi.fn(),

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+-   **Form observation and document export** - Added `@page-agent/document-export` package providing `extract_form_data`, `append_to_report`, and `generate_document` tools with task-scoped report buffering and abortable Markdown-to-document converter callbacks.
+-   **Form field inspection API** - Added `PageController.extractFormData()` to extract structured form fields (`input`, `select`, `textarea`) with Composed DOM Tree / Shadow DOM penetration, live sensitive / dynamic password / token suppression, `data-page-agent-no-export` support, label sanitization, and scope boundary confinement.
+-   **Experimental document export config** - Added `experimentalDocumentExport` option to `PageAgent` for one-step tool registration and prompt augmentation.
 -   **Integration-aware parent-bridge authorization** - Added public Auth contracts and a reusable domain engine for registered Assistant/Parent apps, per-P Integrations and child targets, logical P/A service-actor metadata, canonical-subject matching, one-use opaque grants, pre-exchange revocation, and atomic Store adapters. The controlled-intranet production decision does not treat actor metadata as authenticated caller identity.
 -   **Issue-time bridge binding** - The parent Host now supplies a pre-generated session, challenge, and host/frame instances to `getEmbedPolicy(context)`, so Auth can bind the grant before the wire-protocol offer while keeping policy-offer and bridge-session lifetimes separate.
 -   **Multi-P Auth conformance coverage** - Added unit and E2E scenarios for one shared A across multiple P applications, different B allow-lists, subject and service-actor mismatches, capability escalation, revocation, expiry, and replay.

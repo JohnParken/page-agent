@@ -337,4 +337,504 @@ describe('PageController', () => {
 			expect(container.children.length).toBe(0)
 		})
 	})
+
+	describe('extractFormData', () => {
+		const makeVisible = (element: HTMLElement) => {
+			Object.defineProperties(element, {
+				offsetWidth: { configurable: true, value: 120 },
+				offsetHeight: { configurable: true, value: 32 },
+			})
+		}
+
+		it('extracts basic form fields with name, value, and label', async () => {
+			document.body.innerHTML = `
+				<section id="scope">
+					<label for="username">Username</label>
+					<input id="username" name="user" value="alice" />
+					<select name="role">
+						<option>Admin</option>
+						<option selected>Editor</option>
+					</select>
+					<textarea name="notes">some notes</textarea>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('input')!)
+			makeVisible(scope.querySelector<HTMLElement>('select')!)
+			makeVisible(scope.querySelector<HTMLElement>('textarea')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			expect(fields.length).toBe(3)
+
+			const inputField = fields.find((f) => f.name === 'user')
+			expect(inputField).toBeDefined()
+			expect(inputField!.tagName).toBe('input')
+			expect(inputField!.value).toBe('alice')
+			expect(inputField!.label).toBe('Username')
+
+			const selectField = fields.find((f) => f.name === 'role')
+			expect(selectField).toBeDefined()
+			expect(selectField!.tagName).toBe('select')
+			expect(selectField!.options).toContain('Admin')
+			expect(selectField!.options).toContain('Editor')
+
+			const textareaField = fields.find((f) => f.name === 'notes')
+			expect(textareaField).toBeDefined()
+			expect(textareaField!.tagName).toBe('textarea')
+			expect(textareaField!.value).toBe('some notes')
+		})
+
+		it('excludes fields marked with data-page-agent-no-export', async () => {
+			document.body.innerHTML = `
+				<section id="scope">
+					<input name="visible" value="ok" />
+					<input name="hidden" value="secret" data-page-agent-no-export />
+					<div data-page-agent-no-export>
+						<input name="nested-hidden" value="also-secret" />
+					</div>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			for (const el of scope.querySelectorAll<HTMLElement>('input')) makeVisible(el)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			expect(fields.some((f) => f.name === 'visible')).toBe(true)
+			expect(fields.some((f) => f.name === 'hidden')).toBe(false)
+			expect(fields.some((f) => f.name === 'nested-hidden')).toBe(false)
+		})
+
+		it('handles checkbox and radio fields', async () => {
+			document.body.innerHTML = `
+				<section id="scope">
+					<input type="checkbox" name="agree" checked />
+					<input type="radio" name="color" value="red" />
+					<input type="radio" name="color" value="blue" checked />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			for (const el of scope.querySelectorAll<HTMLElement>('input')) makeVisible(el)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const checkbox = fields.find((f) => f.name === 'agree')
+			expect(checkbox).toBeDefined()
+			expect(checkbox!.checked).toBe(true)
+
+			const radios = fields.filter((f) => f.name === 'color')
+			expect(radios.length).toBe(2)
+			const checkedRadio = radios.find((f) => f.checked)
+			expect(checkedRadio!.value).toBe('blue')
+		})
+
+		it('returns empty array when no form fields exist', async () => {
+			document.body.innerHTML = `
+				<section id="scope">
+					<button>Click me</button>
+					<a href="#">Link</a>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('button')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			expect(fields).toEqual([])
+		})
+
+		it('throws when tree is not indexed', async () => {
+			document.body.innerHTML = '<section id="scope"><input /></section>'
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const controller = new PageController({ root: scope })
+
+			await expect(controller.extractFormData()).rejects.toThrow('not indexed')
+		})
+
+		it('suppresses label text that is inside a data-page-agent-sensitive subtree', async () => {
+			// Bug 1 regression: resolveLabel must not leak text from sensitive nodes
+			document.body.innerHTML = `
+				<section id="scope">
+					<label for="field-a">
+						<span data-page-agent-sensitive>SECRET</span>
+						Public Label
+					</label>
+					<input id="field-a" name="field-a" value="v" />
+					<label for="field-b" data-page-agent-sensitive>Fully Sensitive Label</label>
+					<input id="field-b" name="field-b" value="w" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			for (const el of scope.querySelectorAll<HTMLElement>('input')) makeVisible(el)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const fieldA = fields.find((f) => f.name === 'field-a')
+			expect(fieldA?.label).toBe('Public Label')
+			// The sensitive span text must NOT appear in the label
+			expect(fieldA?.label).not.toContain('SECRET')
+
+			const fieldB = fields.find((f) => f.name === 'field-b')
+			// Entire label is sensitive — should produce no label text
+			expect(fieldB?.label).toBeUndefined()
+		})
+
+		it('suppresses label text inside a data-page-agent-no-export subtree', async () => {
+			// Bug 1 regression: no-export boundary must also be respected for labels
+			document.body.innerHTML = `
+				<section id="scope">
+					<label for="field-c" data-page-agent-no-export>No-Export Label</label>
+					<input id="field-c" name="field-c" value="x" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('input')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const fieldC = fields.find((f) => f.name === 'field-c')
+			expect(fieldC?.label).toBeUndefined()
+		})
+
+		it('captures all selected options for a multi-select element', async () => {
+			// Bug 5 regression: select.value only returns first selected item
+			document.body.innerHTML = `
+				<section id="scope">
+					<select name="tags" multiple>
+						<option value="a">Alpha</option>
+						<option value="b" selected>Beta</option>
+						<option value="c" selected>Gamma</option>
+						<option value="d">Delta</option>
+					</select>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('select')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const selectField = fields.find((f) => f.name === 'tags')
+			expect(selectField).toBeDefined()
+			// Both selected options must appear in the value string using their option values
+			expect(selectField!.value).toContain('b')
+			expect(selectField!.value).toContain('c')
+			// Non-selected options must not appear in the value
+			expect(selectField!.value).not.toContain('a')
+			expect(selectField!.value).not.toContain('d')
+			// All options (candidates) must still be listed with their display texts
+			expect(selectField!.options).toEqual(['Alpha', 'Beta', 'Gamma', 'Delta'])
+		})
+
+		it('strips sensitive text nested inside an aria-labelledby target element', async () => {
+			// P1-1 regression: aria-labelledby ref containing sensitive child nodes
+			// must not leak those nodes' text into the extracted label.
+			document.body.innerHTML = `
+				<section id="scope">
+					<span id="label-with-secret">
+						Public text
+						<span data-page-agent-sensitive>SECRET</span>
+					</span>
+					<input id="field-x" name="field-x" aria-labelledby="label-with-secret" value="v" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('input')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'field-x')
+			expect(field?.label).toContain('Public text')
+			expect(field?.label).not.toContain('SECRET')
+		})
+
+		it('suppresses entire aria-labelledby label when the ref element itself is blocked', async () => {
+			// P1-1 regression: when the ref element is fully sensitive the label must be undefined.
+			document.body.innerHTML = `
+				<section id="scope">
+					<span id="sensitive-label" data-page-agent-sensitive>Fully Secret Label</span>
+					<input id="field-y" name="field-y" aria-labelledby="sensitive-label" value="w" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('input')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'field-y')
+			expect(field?.label).toBeUndefined()
+		})
+
+		it('excludes sensitive <option> elements from field.options and field.value', async () => {
+			// P1-2 regression: <option data-page-agent-sensitive> text must not
+			// appear in the extracted options list or selected value.
+			document.body.innerHTML = `
+				<section id="scope">
+					<select name="color" multiple>
+						<option value="a">Alpha</option>
+						<option value="s" data-page-agent-sensitive selected>SECRET OPTION</option>
+						<option value="b" selected>Beta</option>
+					</select>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('select')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'color')
+			expect(field).toBeDefined()
+			// Sensitive option must not appear in candidates list
+			expect(field!.options).not.toContain('SECRET OPTION')
+			expect(field!.options).toContain('Alpha')
+			expect(field!.options).toContain('Beta')
+			// Sensitive option must not appear in the selected value
+			expect(field!.value).not.toContain('s')
+			expect(field!.value).toContain('b')
+		})
+
+		it('suppresses selected value when the selected option is marked sensitive', async () => {
+			// P1-2 regression: single-select where the currently selected option is
+			// sensitive must not leak the value.
+			document.body.innerHTML = `
+				<section id="scope">
+					<select name="tier">
+						<option value="a">Public</option>
+						<option value="s" selected data-page-agent-sensitive>Secret Tier</option>
+					</select>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('select')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'tier')
+			expect(field).toBeDefined()
+			expect(field!.value).toBe('')
+			expect(field!.options).not.toContain('Secret Tier')
+			expect(field!.options).toContain('Public')
+		})
+
+		it('strips child nodes matching contentBlacklist from label text', async () => {
+			// Issue 1 regression: spans in contentBlacklist inside <label> must not leak text
+			document.body.innerHTML = `
+				<section id="scope">
+					<label for="field-secret-child">
+						Visible Label
+						<span id="secret-span">SECRET</span>
+					</label>
+					<input id="field-secret-child" name="field-secret-child" value="hello" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const secretSpan = document.querySelector<HTMLElement>('#secret-span')!
+			makeVisible(scope.querySelector<HTMLElement>('input')!)
+
+			const controller = new PageController({
+				root: scope,
+				contentBlacklist: [secretSpan],
+			})
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'field-secret-child')
+			expect(field).toBeDefined()
+			expect(field!.label).toContain('Visible Label')
+			expect(field!.label).not.toContain('SECRET')
+		})
+
+		it('excludes fields marked sensitive after tree update', async () => {
+			// Issue 2 regression: element dynamically marked sensitive after indexing
+			document.body.innerHTML = `
+				<section id="scope">
+					<input id="dynamic-field" name="dynamic-field" value="secret-val" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const input = scope.querySelector<HTMLElement>('input')!
+			makeVisible(input)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+
+			// Dynamically mark sensitive after indexing, before extractFormData is called
+			input.setAttribute('data-page-agent-sensitive', '')
+
+			const fields = await controller.extractFormData()
+			const field = fields.find((f) => f.name === 'dynamic-field')
+			expect(field).toBeUndefined()
+		})
+
+		it('excludes fields moved outside root after tree update', async () => {
+			// Issue 2 regression: element moved outside configured root after indexing
+			document.body.innerHTML = `
+				<div id="outside"></div>
+				<section id="scope">
+					<input id="moved-field" name="moved-field" value="outside-val" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const outside = document.querySelector<HTMLElement>('#outside')!
+			const input = scope.querySelector<HTMLElement>('input')!
+			makeVisible(input)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+
+			// Move element outside configured root
+			outside.appendChild(input)
+
+			const fields = await controller.extractFormData()
+			const field = fields.find((f) => f.name === 'moved-field')
+			expect(field).toBeUndefined()
+		})
+
+		it('extracts programmatic option value and preserves display text in field.options', async () => {
+			// Issue 3 regression: <option value="42">Account</option> returns value="42"
+			document.body.innerHTML = `
+				<section id="scope">
+					<select name="account-type">
+						<option value="42" selected>Account</option>
+						<option value="99">Savings</option>
+					</select>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			makeVisible(scope.querySelector<HTMLElement>('select')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'account-type')
+			expect(field).toBeDefined()
+			expect(field!.value).toBe('42')
+			expect(field!.options).toEqual(['Account', 'Savings'])
+		})
+
+		it('excludes dynamically mutated password and token fields', async () => {
+			// Issue 1 regression: input dynamically mutated to password after indexing
+			document.body.innerHTML = `
+				<section id="scope">
+					<input id="pwd-field" name="regular-name" value="secret-password-123" />
+					<input id="token-field" name="user-token" value="sensitive-jwt-token" />
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const pwdInput = scope.querySelector<HTMLInputElement>('#pwd-field')!
+			const tokenInput = scope.querySelector<HTMLInputElement>('#token-field')!
+			makeVisible(pwdInput)
+			makeVisible(tokenInput)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+
+			// Mutate pwd field to password dynamically
+			pwdInput.type = 'password'
+
+			const fields = await controller.extractFormData()
+			expect(fields.find((f) => f.name === 'regular-name')).toBeUndefined()
+			expect(fields.find((f) => f.name === 'user-token')).toBeUndefined()
+		})
+
+		it('ignores label references located outside the configured root', async () => {
+			// Issue 2 regression: aria-labelledby or label[for] pointing to elements outside root
+			document.body.innerHTML = `
+				<header id="external-header">
+					<span id="external-title">External Header Text</span>
+					<label for="scoped-input">External Explicit Label</label>
+				</header>
+				<main id="scoped-main">
+					<input id="scoped-input" name="scoped-input" aria-labelledby="external-title" value="v1" />
+				</main>
+			`
+			const main = document.querySelector<HTMLElement>('#scoped-main')!
+			const input = main.querySelector<HTMLElement>('#scoped-input')!
+			makeVisible(input)
+
+			const controller = new PageController({ root: main })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'scoped-input')
+			expect(field).toBeDefined()
+			// Neither external aria-labelledby nor external label[for] should be read
+			expect(field?.label).toBeUndefined()
+		})
+
+		it('retains form fields inside open Shadow DOM within the configured root', async () => {
+			// Issue 3 regression: fields inside open ShadowRoot must not be dropped by boundary check
+			document.body.innerHTML = `
+				<section id="scope">
+					<div id="shadow-host"></div>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const host = scope.querySelector<HTMLElement>('#shadow-host')!
+			const shadow = host.attachShadow({ mode: 'open' })
+			const shadowInput = document.createElement('input')
+			shadowInput.setAttribute('id', 'shadow-input')
+			shadowInput.setAttribute('name', 'shadow-field')
+			shadowInput.value = 'shadow-value'
+			shadow.appendChild(shadowInput)
+
+			makeVisible(host)
+			makeVisible(shadowInput)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'shadow-field')
+			expect(field).toBeDefined()
+			expect(field?.value).toBe('shadow-value')
+		})
+
+		it('blocks fields inside a shadow root when the shadow host is marked sensitive', async () => {
+			// Issue 3 + 1 regression: host element marked sensitive blocks its shadow DOM descendants
+			document.body.innerHTML = `
+				<section id="scope">
+					<div id="sensitive-host" data-page-agent-sensitive></div>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const host = scope.querySelector<HTMLElement>('#sensitive-host')!
+			const shadow = host.attachShadow({ mode: 'open' })
+			const shadowInput = document.createElement('input')
+			shadowInput.setAttribute('name', 'nested-sensitive')
+			shadowInput.value = 'should-not-export'
+			shadow.appendChild(shadowInput)
+
+			makeVisible(host)
+			makeVisible(shadowInput)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			expect(fields.find((f) => f.name === 'nested-sensitive')).toBeUndefined()
+		})
+	})
 })

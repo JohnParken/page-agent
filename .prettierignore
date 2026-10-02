@@ -9,6 +9,9 @@
 # Vendored
 **/components/ui
 
+# Cache directories
+.mypy_cache
+
 # Playwright generated reports
 packages/e2e/test-results
 packages/e2e/playwright-report

@@ -16,6 +16,7 @@
         "packages/page-controller/src/**/*",
         "packages/ui/src/**/*",
         "packages/core/src/**/*",
+        "packages/document-export/src/**/*",
         "packages/page-agent/src/**/*"
     ]
 }

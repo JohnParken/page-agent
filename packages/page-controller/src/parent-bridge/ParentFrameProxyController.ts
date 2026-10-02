@@ -17,6 +17,7 @@ import { secureParentControllerId } from './security'
 
 import type {
 	BrowserState,
+	FormField,
 	HorizontalScrollOptions,
 	IndexedBrowserState,
 	IndexedPageControllerAdapter,
@@ -453,6 +454,10 @@ export class ParentFrameProxyController implements IndexedPageControllerAdapter 
 
 	executeJavascript(script: string, signal?: AbortSignal): Promise<PageActionResult> {
 		return this.localController.executeJavascript(script, signal)
+	}
+
+	extractFormData(context?: PageControllerCallContext): Promise<FormField[]> {
+		return this.localController.extractFormData(context)
 	}
 
 	showMask(): Promise<void> {

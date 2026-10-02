@@ -110,6 +110,7 @@
     },
     "dependencies": {
         "@page-agent/core": "1.12.2",
+        "@page-agent/document-export": "1.12.2",
         "@page-agent/llms": "1.12.2",
         "@page-agent/page-controller": "1.12.2",
         "@page-agent/ui": "1.12.2"

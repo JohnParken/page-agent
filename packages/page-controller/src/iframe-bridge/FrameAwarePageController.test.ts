@@ -27,6 +27,7 @@ function createLocalController(): IndexedPageControllerAdapter {
 		scroll: vi.fn(async () => ({ success: true, message: 'local scroll' })),
 		scrollHorizontally: vi.fn(async () => ({ success: true, message: 'local hscroll' })),
 		executeJavascript: vi.fn(async () => ({ success: true, message: 'local js' })),
+		extractFormData: vi.fn(async () => []),
 		showMask: vi.fn(async () => undefined),
 		hideMask: vi.fn(async () => undefined),
 		dispose: vi.fn(),

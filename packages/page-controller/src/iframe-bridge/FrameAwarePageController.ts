@@ -12,6 +12,7 @@ import { BridgeErrorCode } from './protocol'
 
 import type {
 	BrowserState,
+	FormField,
 	HorizontalScrollOptions,
 	IndexedBrowserState,
 	PageActionResult,
@@ -411,6 +412,33 @@ export class FrameAwarePageController extends EventTarget implements PageControl
 
 	async executeJavascript(script: string, signal?: AbortSignal): Promise<PageActionResult> {
 		return this.localController.executeJavascript(script, signal)
+	}
+
+	async extractFormData(context?: PageControllerCallContext): Promise<FormField[]> {
+		// FrameAwarePageController aggregates observations from both the local
+		// document and one or more remote cross-origin iframes. When remote frames
+		// are registered their form fields appear in the combined browser state and
+		// can be operated on, but their raw DOM is not accessible from this side.
+		//
+		// If no remote frames have joined the session yet we can safely delegate
+		// to the local controller. If any remote frames are active we reject
+		// loudly rather than silently returning only local fields — partial results
+		// would be misleading and could cause the agent to generate an incomplete
+		// report without any visible error.
+		//
+		// To extract forms from a remote frame, run extractFormData() inside that
+		// frame's own PageController (e.g. via the iframe-bridge child adapter).
+		if (this.records.size > 0) {
+			return Promise.reject(
+				new Error(
+					'[CAPABILITY_DENIED] extractFormData is not supported when cross-origin ' +
+						'frames are active in FrameAwarePageController. Remote frame DOM is not ' +
+						'accessible from the parent side. Call extractFormData() inside the child ' +
+						'frame using its own local PageController instead.'
+				)
+			)
+		}
+		return this.localController.extractFormData(context)
 	}
 
 	async showMask(): Promise<void> {

@@ -1,0 +1,62 @@
+{
+    "name": "@page-agent/document-export",
+    "private": false,
+    "version": "1.12.2",
+    "type": "module",
+    "main": "./src/index.ts",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./src/index.ts"
+        }
+    },
+    "publishConfig": {
+        "main": "./dist/esm/document-export.js",
+        "module": "./dist/esm/document-export.js",
+        "types": "./dist/esm/index.d.ts",
+        "exports": {
+            ".": {
+                "types": "./dist/esm/index.d.ts",
+                "import": "./dist/esm/document-export.js",
+                "default": "./dist/esm/document-export.js"
+            }
+        }
+    },
+    "files": [
+        "dist/"
+    ],
+    "description": "Form observation, analysis, and document export tools for page-agent",
+    "keywords": [
+        "page-agent",
+        "form-extraction",
+        "document-export",
+        "docx",
+        "xlsx",
+        "report-generation"
+    ],
+    "author": "Simon<gaomeng1900>",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/alibaba/page-agent.git",
+        "directory": "packages/document-export"
+    },
+    "homepage": "https://alibaba.github.io/page-agent/",
+    "scripts": {
+        "build": "vite build && tsup --config tsup.config.js",
+        "test": "vitest run",
+        "prepublishOnly": "node ../../scripts/pre-publish.js",
+        "postpublish": "node ../../scripts/post-publish.js"
+    },
+    "dependencies": {
+        "@page-agent/core": "1.12.2",
+        "@page-agent/page-controller": "1.12.2"
+    },
+    "peerDependencies": {
+        "zod": "^3.25.0"
+    },
+    "devDependencies": {
+        "zod": "^3.25.0"
+    }
+}

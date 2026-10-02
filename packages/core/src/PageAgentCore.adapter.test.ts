@@ -64,6 +64,7 @@ function createAdapter() {
 		scroll: vi.fn(async () => ({ success: true, message: 'scrolled' })),
 		scrollHorizontally: vi.fn(async () => ({ success: true, message: 'scrolled horizontally' })),
 		executeJavascript: vi.fn(async () => ({ success: true, message: 'executed' })),
+		extractFormData: vi.fn(async () => []),
 		showMask: contextAware(() => {}),
 		hideMask: contextAware(() => {}),
 		dispose: vi.fn(),

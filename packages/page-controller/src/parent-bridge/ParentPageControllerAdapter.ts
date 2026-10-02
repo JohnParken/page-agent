@@ -37,6 +37,7 @@ import type {
 	ParentControllerOffer,
 } from './types'
 import type {
+	FormField,
 	HorizontalScrollOptions,
 	IndexedBrowserState,
 	IndexedPageControllerAdapter,
@@ -1104,6 +1105,22 @@ export class ParentPageControllerAdapter<TAuthorizationContext = unknown>
 				'❌ [CAPABILITY_DENIED] executeJavascript is unavailable through the parent controller bridge.',
 		})
 	}
+
+	extractFormData(_context?: PageControllerCallContext): Promise<FormField[]> {
+		// Form data extraction requires direct DOM access on the child page.
+		// The parent-controller bridge operates over a serialized message
+		// channel and cannot traverse the child's live DOM. Use a local
+		// PageController inside the child frame to call extractFormData()
+		// instead of routing through this adapter.
+		return Promise.reject(
+			new Error(
+				'[CAPABILITY_DENIED] extractFormData is not supported through the parent controller ' +
+					'bridge. Run extract_form_data inside the child frame where the form lives, ' +
+					'or use a local PageController in that frame.'
+			)
+		)
+	}
+
 	showMask(): Promise<void> {
 		return this.request('showMask', 'visual', undefined).then(() => undefined)
 	}
