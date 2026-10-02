@@ -879,7 +879,7 @@ export class PageController extends EventTarget implements IndexedPageController
 		 *
 		 * Traverses the original live DOM tree directly (avoiding cloneNode which
 		 * breaks identity-based checks against `contentBlacklist`):
-		 *   - Skips form controls (input, select, textarea)
+		 *   - Skips form controls (input, select, textarea) and script/style
 		 *   - Skips any Element where `isNodeBlocked(child)` is true
 		 *   - Gathers text content from Text nodes
 		 */
@@ -891,7 +891,13 @@ export class PageController extends EventTarget implements IndexedPageController
 				} else if (child.nodeType === Node.ELEMENT_NODE) {
 					const el = child as HTMLElement
 					const tag = el.tagName.toLowerCase()
-					if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+					if (
+						tag === 'input' ||
+						tag === 'select' ||
+						tag === 'textarea' ||
+						tag === 'script' ||
+						tag === 'style'
+					) {
 						continue
 					}
 					if (isNodeBlocked(el)) {
@@ -904,13 +910,20 @@ export class PageController extends EventTarget implements IndexedPageController
 		}
 
 		/**
+		 * Strips and collapses ASCII whitespace in accordance with WHATWG HTML standards.
+		 */
+		const collapseWhitespace = (str: string): string => {
+			return str.replace(/[\t\n\f\r ]+/g, ' ').trim()
+		}
+
+		/**
 		 * Safely read text from a label-like element.
 		 * If the element itself is blocked, returns undefined.
 		 * Otherwise, collects safe text while omitting blocked child subtrees.
 		 */
 		const safeTextFromElement = (el: HTMLElement): string | undefined => {
 			if (isNodeBlocked(el)) return undefined
-			const text = collectSafeText(el).trim()
+			const text = collapseWhitespace(collectSafeText(el))
 			return text || undefined
 		}
 
@@ -1012,15 +1025,18 @@ export class PageController extends EventTarget implements IndexedPageController
 			if (tagName === 'select') {
 				const select = element as HTMLSelectElement
 
-				// Safely read display text for an option, stripping blocked child subtrees.
+				// Safely read display text for an option, stripping blocked child subtrees
+				// and collapsing ASCII whitespace in accordance with WHATWG HTML standards.
 				const safeOptionLabel = (opt: HTMLOptionElement): string => {
-					return collectSafeText(opt).trim()
+					return collapseWhitespace(collectSafeText(opt))
 				}
 
 				// Safely read programmatic value for an option.
-				// If no explicit value attribute was specified, HTML defaults option.value
-				// to option.text, so we fall back to the sanitized safeOptionLabel to avoid leaking
-				// sensitive descendant text into field.value.
+				// If an explicit value attribute was specified, return opt.value.
+				// If not, WHATWG HTML standard specifies that option.value defaults to option.text
+				// (which strips and collapses ASCII whitespace). We return safeOptionLabel(opt)
+				// to ensure blocked descendant subtrees are stripped while perfectly matching
+				// the browser's native option.value calculation.
 				const safeOptionValue = (opt: HTMLOptionElement): string => {
 					if (opt.hasAttribute('value')) {
 						return opt.value

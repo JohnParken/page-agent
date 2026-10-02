@@ -921,5 +921,50 @@ describe('PageController', () => {
 			// Controller must be invalidated
 			await expect(controller.extractFormData()).rejects.toThrow('not indexed')
 		})
+
+		it('collapses whitespace for options without explicit value to match browser native value', async () => {
+			// Regression: options without explicit value must match native option.value and select.value
+			document.body.innerHTML = `
+				<section id="scope">
+					<select name="country">
+						<option selected>
+							United
+							States
+						</option>
+						<option>
+							United
+							Kingdom
+						</option>
+						<option value="ca">
+							Canada
+						</option>
+						<option value="">
+							Select a country
+						</option>
+					</select>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const select = scope.querySelector<HTMLSelectElement>('select')!
+			makeVisible(select)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'country')
+			expect(field).toBeDefined()
+			// Native browser select.value is "United States"
+			expect(select.value).toBe('United States')
+			// field.value must match browser's actual value exactly
+			expect(field!.value).toBe(select.value)
+			// Candidate option labels must also have ASCII whitespace stripped and collapsed
+			expect(field!.options).toEqual([
+				'United States',
+				'United Kingdom',
+				'Canada',
+				'Select a country',
+			])
+		})
 	})
 })
