@@ -763,14 +763,10 @@ export class PageController extends EventTarget implements IndexedPageController
 		throwIfAborted(context?.signal)
 		this.assertIndexed()
 
-		// Re-resolve the currently configured root element. If the root is
-		// unavailable or disconnected, no valid form fields can be extracted.
-		let currentRoot: Element
-		try {
-			currentRoot = this.resolveConfiguredRoot()
-		} catch {
-			return []
-		}
+		// Re-resolve the currently configured root element before extraction.
+		// If the root is invalid, disconnected, or changed, fail closed and
+		// invalidate the tree (consistent with all other indexed operations).
+		const currentRoot = this.resolveActionRoot()
 
 		// Resolve the configured contentBlacklist to concrete Elements once,
 		// so every helper below can check against the same set.
@@ -818,10 +814,18 @@ export class PageController extends EventTarget implements IndexedPageController
 		 * (mirroring the observation-phase rules in updateTree).
 		 */
 		const isElementDirectlySensitive = (el: Element): boolean => {
-			// Password input (by property or attribute)
-			const type =
-				(el as HTMLInputElement).type?.toLowerCase() || el.getAttribute('type')?.toLowerCase()
-			if (type === 'password') return true
+			// Password input (by property or attribute) - only check .type property on INPUT elements
+			// to avoid HTMLFormElement named property collisions when a form contains an input named "type".
+			if (el.tagName.toLowerCase() === 'input') {
+				const input = el as HTMLInputElement
+				if (typeof input.type === 'string' && input.type.toLowerCase() === 'password') {
+					return true
+				}
+			}
+			const typeAttr = el.getAttribute('type')
+			if (typeof typeAttr === 'string' && typeAttr.toLowerCase() === 'password') {
+				return true
+			}
 
 			// Explicit agent markers
 			if (el.hasAttribute('data-page-agent-sensitive')) return true
@@ -1008,16 +1012,32 @@ export class PageController extends EventTarget implements IndexedPageController
 			if (tagName === 'select') {
 				const select = element as HTMLSelectElement
 
-				// options: display text for candidate options, omitting blocked ones
+				// Safely read display text for an option, stripping blocked child subtrees.
+				const safeOptionLabel = (opt: HTMLOptionElement): string => {
+					return collectSafeText(opt).trim()
+				}
+
+				// Safely read programmatic value for an option.
+				// If no explicit value attribute was specified, HTML defaults option.value
+				// to option.text, so we fall back to the sanitized safeOptionLabel to avoid leaking
+				// sensitive descendant text into field.value.
+				const safeOptionValue = (opt: HTMLOptionElement): string => {
+					if (opt.hasAttribute('value')) {
+						return opt.value
+					}
+					return safeOptionLabel(opt)
+				}
+
+				// Candidate options: display text for candidate options, omitting blocked ones
 				const safeOptions = Array.from(select.options).filter((opt) => !isNodeBlocked(opt))
-				field.options = safeOptions.map((opt) => opt.text.trim())
+				field.options = safeOptions.map(safeOptionLabel)
 
 				if (select.multiple) {
-					// Collect programmatic values (.value) of all non-blocked selected options
+					// Collect programmatic values of all non-blocked selected options
 					const safeSelected = Array.from(select.selectedOptions).filter(
 						(opt) => !isNodeBlocked(opt)
 					)
-					field.value = safeSelected.map((opt) => opt.value).join(', ')
+					field.value = safeSelected.map(safeOptionValue).join(', ')
 				} else {
 					// For single-select, find currently selected option element
 					const selectedOpt =
@@ -1028,7 +1048,7 @@ export class PageController extends EventTarget implements IndexedPageController
 						if (isNodeBlocked(selectedOpt)) {
 							field.value = ''
 						} else {
-							field.value = selectedOpt.value
+							field.value = safeOptionValue(selectedOpt)
 						}
 					} else {
 						field.value = select.value || ''

@@ -836,5 +836,90 @@ describe('PageController', () => {
 
 			expect(fields.find((f) => f.name === 'nested-sensitive')).toBeUndefined()
 		})
+
+		it('strips sensitive descendant text inside options and falls back to safe text for value', async () => {
+			// Issue 1 regression: option dynamically appended with sensitive child elements
+			document.body.innerHTML = `
+				<section id="scope">
+					<select name="tier">
+						<option id="opt-standard" selected>Standard </option>
+						<option id="opt-vip" value="vip">VIP </option>
+					</select>
+				</section>
+			`
+			const scope = document.querySelector<HTMLElement>('#scope')!
+			const optStandard = scope.querySelector<HTMLOptionElement>('#opt-standard')!
+			const optVip = scope.querySelector<HTMLOptionElement>('#opt-vip')!
+
+			// Dynamically append sensitive child nodes
+			const noExportSpan = document.createElement('span')
+			noExportSpan.setAttribute('data-page-agent-no-export', '')
+			noExportSpan.textContent = 'INTERNAL NOTE'
+			optStandard.appendChild(noExportSpan)
+
+			const sensitiveSpan = document.createElement('span')
+			sensitiveSpan.setAttribute('data-page-agent-sensitive', '')
+			sensitiveSpan.textContent = 'SECRET'
+			optVip.appendChild(sensitiveSpan)
+
+			makeVisible(scope.querySelector<HTMLElement>('select')!)
+
+			const controller = new PageController({ root: scope })
+			await controller.updateTree()
+			const fields = await controller.extractFormData()
+
+			const field = fields.find((f) => f.name === 'tier')
+			expect(field).toBeDefined()
+			// Options display text must strip sensitive child text
+			expect(field!.options).toEqual(['Standard', 'VIP'])
+			// Without explicit value attribute, value must use safe text rather than leaking INTERNAL NOTE
+			expect(field!.value).toBe('Standard')
+		})
+
+		it('does not crash when a form contains an input named "type"', async () => {
+			// Issue 2 regression: HTMLFormElement named getter form.type shadows property
+			document.body.innerHTML = `
+				<form id="scope">
+					<input name="type" value="user-type-data" />
+					<input name="email" value="user@example.com" />
+				</form>
+			`
+			const form = document.querySelector<HTMLFormElement>('#scope')!
+			for (const input of form.querySelectorAll('input')) makeVisible(input)
+
+			const controller = new PageController({ root: form })
+			await controller.updateTree()
+
+			// Must not throw TypeError: (el as HTMLInputElement).type?.toLowerCase is not a function
+			let fields: any[] = []
+			await expect(
+				(async () => {
+					fields = await controller.extractFormData()
+				})()
+			).resolves.not.toThrow()
+
+			expect(fields.find((f) => f.name === 'type')?.value).toBe('user-type-data')
+			expect(fields.find((f) => f.name === 'email')?.value).toBe('user@example.com')
+		})
+
+		it('fails closed and invalidates tree when root becomes unavailable', async () => {
+			// Issue 3 regression: dynamic root getter returning null must throw DomRootUnavailableError
+			let currentRoot: HTMLElement | null = document.createElement('div')
+			document.body.appendChild(currentRoot)
+			currentRoot.innerHTML = '<input name="test-field" value="test-val" />'
+			makeVisible(currentRoot.querySelector('input')!)
+
+			const controller = new PageController({ root: () => currentRoot })
+			await controller.updateTree()
+
+			// Disconnect root element so getter returns null or disconnected
+			document.body.removeChild(currentRoot)
+			currentRoot = null
+
+			// extractFormData must throw DomRootUnavailableError rather than masking as []
+			await expect(controller.extractFormData()).rejects.toThrow()
+			// Controller must be invalidated
+			await expect(controller.extractFormData()).rejects.toThrow('not indexed')
+		})
 	})
 })
